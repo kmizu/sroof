@@ -8,7 +8,7 @@ import parsley.token.descriptions.*
 import parsley.token.Basic
 import parsley.expr.chain
 import parsley.syntax.zipped.*
-import parsley.character.digit
+import parsley.character.{digit, char, stringOfMany}
 
 /** Parser for the sproof surface syntax, built with Parsley 5.0.0-M9.
   *
@@ -44,7 +44,22 @@ object Parser:
 
   // ---- Token helpers ----
 
-  private val identifier = lexer.lexeme.names.identifier
+  private val regularIdentifier = lexer.lexeme.names.identifier
+
+  /** Backtick-quoted identifier: `any content except backtick`.
+   *  Allows spaces, symbols, Unicode — anything that can't appear in a regular identifier.
+   *  Consumes trailing whitespace via `ws`.
+   */
+  private lazy val backtickIdentifier: Parsley[String] =
+    atomic(
+      char('`') *> stringOfMany(_ != '`') <* char('`')
+    ) <* ws
+
+  /** Any identifier: backtick-quoted (tried first) or regular. */
+  private lazy val anyIdentifier: Parsley[String] =
+    backtickIdentifier <|> regularIdentifier
+
+  private val identifier = regularIdentifier
   private def keyword(kw: String) = lexer.lexeme.symbol(kw)
   private def op(o: String) = lexer.lexeme.symbol(o)
   private val ws = lexer.space.whiteSpace
@@ -190,10 +205,11 @@ object Parser:
     }
 
   /** Primary expression: identifier, or identifier.identifier (constructor/field access).
+   *  Supports backtick-quoted identifiers for names with spaces/symbols/Unicode.
    *  Constructors consume their first arg-list here; plain variables do not.
    */
   private lazy val primaryExpr: Parsley[SExpr] =
-    identifier.flatMap { first =>
+    anyIdentifier.flatMap { first =>
       option(op(".") *> identifier).flatMap {
         case Some(ctorName) =>
           // Constructor: parse first arg-list inline (Type.ctor(...) syntax)
@@ -303,7 +319,7 @@ object Parser:
 
   /** def name[A, B](params): retTpe = body  OR  def name(params): retTpe { body } */
   private lazy val defDecl: Parsley[SDecl] =
-    keyword("def") *> identifier.flatMap { name =>
+    keyword("def") *> anyIdentifier.flatMap { name =>
       option(typeParamList).map(_.getOrElse(Nil)).flatMap { tparams =>
         paramList.flatMap { params =>
           (op(":") *> fwd(typeExpr)).flatMap { retTpe =>
@@ -322,7 +338,7 @@ object Parser:
 
   /** defspec name[A](params): prop { by tactic } */
   private lazy val defspecDecl: Parsley[SDecl] =
-    keyword("defspec") *> identifier.flatMap { name =>
+    keyword("defspec") *> anyIdentifier.flatMap { name =>
       option(typeParamList).map(_.getOrElse(Nil)).flatMap { tparams =>
         paramList.flatMap { params =>
           (op(":") *> propType).flatMap { prop =>

@@ -708,3 +708,59 @@ class ParserSuite extends FunSuite:
     val STactic.SCalc(steps) = result.toOption.get: @unchecked
     assertEquals(steps.length, 1)
   }
+
+  // ===== Unicode and backtick identifiers =====
+
+  test("direct Unicode identifier in def name") {
+    val result = Parser.parseDecl("def 加算(n: Nat): Nat = n")
+    assert(result.isRight, s"Parse failed: $result")
+    val SDecl.SDef(name, _, _, _) = result.toOption.get: @unchecked
+    assertEquals(name, "加算")
+  }
+
+  test("direct Unicode identifier in defspec name") {
+    val result = Parser.parseDecl("defspec 交換法則(n: Nat): n = n { by sorry }")
+    assert(result.isRight, s"Parse failed: $result")
+    val SDecl.SDefspec(name, _, _, _) = result.toOption.get: @unchecked
+    assertEquals(name, "交換法則")
+  }
+
+  test("backtick identifier: simple ASCII name") {
+    val result = Parser.parseExpr("`myFunc`")
+    assertEquals(result, Right(SExpr.SEVar("myFunc")))
+  }
+
+  test("backtick identifier: Japanese name") {
+    val result = Parser.parseExpr("`交換法則`")
+    assertEquals(result, Right(SExpr.SEVar("交換法則")))
+  }
+
+  test("backtick identifier: name with spaces") {
+    val result = Parser.parseExpr("`plus is commutative`")
+    assertEquals(result, Right(SExpr.SEVar("plus is commutative")))
+  }
+
+  test("backtick identifier in def name") {
+    val result = Parser.parseDecl("def `交換法則`(n: Nat): Nat = n")
+    assert(result.isRight, s"Parse failed: $result")
+    val SDecl.SDef(name, _, _, _) = result.toOption.get: @unchecked
+    assertEquals(name, "交換法則")
+  }
+
+  test("backtick identifier: name with symbols") {
+    val result = Parser.parseExpr("`a + b = b + a`")
+    assertEquals(result, Right(SExpr.SEVar("a + b = b + a")))
+  }
+
+  test("backtick identifier in defspec") {
+    val input = "defspec `交換法則`(n: Nat): n = n { by sorry }"
+    val result = Parser.parseDecl(input)
+    assert(result.isRight, s"Parse failed: $result")
+    val SDecl.SDefspec(name, _, _, _) = result.toOption.get: @unchecked
+    assertEquals(name, "交換法則")
+  }
+
+  test("backtick identifier used as function call") {
+    val result = Parser.parseExpr("`plus`(x, y)")
+    assertEquals(result, Right(SExpr.SEApp(SExpr.SEVar("plus"), List(SExpr.SEVar("x"), SExpr.SEVar("y")))))
+  }
