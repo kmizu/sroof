@@ -1,0 +1,27 @@
+[error] -- [E006] Not Found Error: /home/mizushima/repo/sproof/tactic/src/main/scala/sproof/tactic/TacticM.scala:18:44 
+[error] 18 |type TacticM[A] = EitherT[State[ProofState, *], TacticError, A]
+[error]    |                                            ^
+[error]    |                                            Not found: type *
+[error]    |
+[error]    | longer explanation available when compiling with `-explain`
+[error] -- [E008] Not Found Error: /home/mizushima/repo/sproof/tactic/src/main/scala/sproof/tactic/Builtins.scala:30:20 
+[error] 30 |      (mv, goal) <- TacticM.currentGoal
+[error]    |                    ^^^^^^^^^^^^^^^^^^^
+[error]    |value withFilter is not a member of sproof.tactic.TacticM[(sproof.tactic.MetaVar, sproof.tactic.Goal)]
+[error] -- [E008] Not Found Error: /home/mizushima/repo/sproof/tactic/src/main/scala/sproof/tactic/Builtins.scala:60:20 
+[error] 60 |      (mv, goal) <- TacticM.currentGoal
+[error]    |                    ^^^^^^^^^^^^^^^^^^^
+[error]    |value withFilter is not a member of sproof.tactic.TacticM[(sproof.tactic.MetaVar, sproof.tactic.Goal)]
+[error] -- [E008] Not Found Error: /home/mizushima/repo/sproof/tactic/src/main/scala/sproof/tactic/Builtins.scala:89:20 
+[error] 89 |      (mv, goal) <- TacticM.currentGoal
+[error]    |                    ^^^^^^^^^^^^^^^^^^^
+[error]    |value withFilter is not a member of sproof.tactic.TacticM[(sproof.tactic.MetaVar, sproof.tactic.Goal)]
+[error] -- [E172] Type Error: /home/mizushima/repo/sproof/tactic/src/main/scala/sproof/tactic/TacticM.scala:25:19 
+[error] 25 |    EitherT.pure(a)
+[error]    |                   ^
+[error]    |Ambiguous given instances: both method catsInstancesForOption in object Invariant and method catsBimonadForFunction0 in object Invariant match type cats.Applicative[F] of parameter F of method apply in class PurePartiallyApplied
+[error] -- [E172] Type Error: /home/mizushima/repo/sproof/tactic/src/main/scala/sproof/tactic/TacticM.scala:28:22 
+[error] 28 |    EitherT.leftT(err)
+[error]    |                      ^
+[error]    |Ambiguous given instances: both method catsInstancesForOption in object Invariant and method catsBimonadForFunction0 in object Invariant match type cats.Applicative[F] of parameter F of method apply in class LeftTPartiallyApplied
+[error] 6 errors found

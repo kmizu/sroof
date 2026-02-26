@@ -1,0 +1,6 @@
+[debug] [zinc] IncrementalCompile -----------
+[debug] IncrementalCompile.incrementalCompile
+[debug] previous = Stamps for: 2 products, 2 sources, 3 libraries
+[debug] current source = Set(${BASE}/tactic/src/test/scala/sproof/tactic/BuiltinsSuite.scala, ${BASE}/tactic/src/test/scala/sproof/tactic/TacticMSuite.scala)
+[debug] > initialChanges = InitialChanges(Changes(added = Set(), removed = Set(), changed = Set(), unmodified = ...),Set(),Set(),API Changes: Set())
+[debug] No changes

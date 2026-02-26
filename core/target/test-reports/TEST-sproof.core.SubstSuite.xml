@@ -1,0 +1,36 @@
+<?xml version='1.0' encoding='UTF-8'?>
+<testsuite hostname="NUKO" name="sproof.core.SubstSuite" tests="13" errors="0" failures="0" skipped="0" time="0.022" timestamp="2026-02-26T09:16:25">
+          <properties>
+      <property name="java.specification.version" value="25"/><property name="sun.jnu.encoding" value="UTF-8"/><property name="java.class.path" value="/home/mizushima/.cache/sbt/boot/sbt-launch/1.11.3/sbt-launch-1.11.3.jar"/><property name="java.vm.vendor" value="Eclipse Adoptium"/><property name="sun.arch.data.model" value="64"/><property name="jline.shutdownhook" value="false"/><property name="java.vendor.url" value="https://adoptium.net/"/><property name="user.timezone" value="Asia/Tokyo"/><property name="java.vm.specification.version" value="25"/><property name="os.name" value="Linux"/><property name="sun.java.launcher" value="SUN_STANDARD"/><property name="user.country" value="JP"/><property name="sun.boot.library.path" value="/home/mizushima/.sdkman/candidates/java/25.0.1-tem/lib"/><property name="sun.java.command" value="/home/mizushima/.cache/sbt/boot/sbt-launch/1.11.3/sbt-launch-1.11.3.jar core/test; nbe/test; checker/test; tactic/test; kernel/test"/><property name="jdk.debug" value="release"/><property name="sun.cpu.endian" value="little"/><property name="user.home" value="/home/mizushima"/><property name="user.language" value="ja"/><property name="sbt.script" value="/usr/bin/sbt"/><property name="java.specification.vendor" value="Oracle Corporation"/><property name="sbt.ipcsocket.tmpdir" value="/run/user/1000/.sbt8abaaa4e/ipcsocket"/><property name="swoval.tmpdir" value="/run/user/1000/.sbt8abaaa4e/swoval"/><property name="java.version.date" value="2025-10-21"/><property name="java.home" value="/home/mizushima/.sdkman/candidates/java/25.0.1-tem"/><property name="file.separator" value="/"/><property name="java.vm.compressedOopsMode" value="32-bit"/><property name="line.separator" value="
+"/><property name="java.vm.specification.vendor" value="Oracle Corporation"/><property name="java.specification.name" value="Java Platform API Specification"/><property name="jline.esc.timeout" value="0"/><property name="sun.management.compiler" value="HotSpot 64-Bit Tiered Compilers"/><property name="java.runtime.version" value="25.0.1+8-LTS"/><property name="user.name" value="mizushima"/><property name="stdout.encoding" value="UTF-8"/><property name="path.separator" value=":"/><property name="os.version" value="6.6.87.2-microsoft-standard-WSL2"/><property name="jna.nosys" value="true"/><property name="java.runtime.name" value="OpenJDK Runtime Environment"/><property name="log4j.ignoreTCL" value="true"/><property name="file.encoding" value="UTF-8"/><property name="jnidispatch.path" value="/home/mizushima/.cache/JNA/temp/jna6434503840305288337.tmp"/><property name="java.vm.name" value="OpenJDK 64-Bit Server VM"/><property name="jna.platform.library.path" value="/usr/lib/x86_64-linux-gnu:/lib/x86_64-linux-gnu:/usr/lib64:/lib64:/usr/lib:/lib:/lib32:/usr/local/cuda/targets/x86_64-linux/lib:/usr/lib/wsl/lib:/usr/lib/x86_64-linux-gnu/libfakeroot"/><property name="java.vendor.version" value="Temurin-25.0.1+8"/><property name="jna.loaded" value="true"/><property name="java.vendor.url.bug" value="https://github.com/adoptium/adoptium-support/issues"/><property name="java.io.tmpdir" value="/tmp"/><property name="java.version" value="25.0.1"/><property name="user.dir" value="/home/mizushima/repo/sproof"/><property name="os.arch" value="amd64"/><property name="java.vm.specification.name" value="Java Virtual Machine Specification"/><property name="native.encoding" value="UTF-8"/><property name="java.library.path" value="/usr/local/cuda/lib64:/usr/lib/wsl/lib:/usr/lib/wsl/lib::/usr/java/packages/lib:/usr/lib64:/lib64:/lib:/usr/lib"/><property name="java.vm.info" value="mixed mode, sharing"/><property name="stderr.encoding" value="UTF-8"/><property name="java.vendor" value="Eclipse Adoptium"/><property name="java.vm.version" value="25.0.1+8-LTS"/><property name="stdin.encoding" value="UTF-8"/><property name="scala.ext.dirs" value="/home/mizushima/.sbt/1.0/java9-rt-ext-eclipse_adoptium_25_0_1"/><property name="sun.io.unicode.encoding" value="UnicodeLittle"/><property name="java.class.version" value="69.0"/>
+    </properties>
+          <testcase classname="sproof.core.SubstSuite" name="shift: universe is unchanged" time="0.013">
+                      
+                    </testcase><testcase classname="sproof.core.SubstSuite" name="shift: Var(0) → Var(1)" time="0.002">
+                      
+                    </testcase><testcase classname="sproof.core.SubstSuite" name="shift: Var(2) → Var(3) with d=1" time="0.0">
+                      
+                    </testcase><testcase classname="sproof.core.SubstSuite" name="shift: bound var in Lam stays bound" time="0.001">
+                      
+                    </testcase><testcase classname="sproof.core.SubstSuite" name="shift: free Var(1) under Lam gets shifted" time="0.0">
+                      
+                    </testcase><testcase classname="sproof.core.SubstSuite" name="shift: nested Pi both sides" time="0.001">
+                      
+                    </testcase><testcase classname="sproof.core.SubstSuite" name="subst: replace Var(0) with Uni(0)" time="0.0">
+                      
+                    </testcase><testcase classname="sproof.core.SubstSuite" name="subst: Var(1) &gt; 0 becomes Var(0) (shift down)" time="0.001">
+                      
+                    </testcase><testcase classname="sproof.core.SubstSuite" name="subst: Var(0) &lt; 0 impossible; index exactly 0 replaced" time="0.001">
+                      
+                    </testcase><testcase classname="sproof.core.SubstSuite" name="subst: inside Lam, index shifts up by 1" time="0.001">
+                      
+                    </testcase><testcase classname="sproof.core.SubstSuite" name="shiftFrom: cutoff below var" time="0.001">
+                      
+                    </testcase><testcase classname="sproof.core.SubstSuite" name="subst: App with no occurrence of 0" time="0.001">
+                      
+                    </testcase><testcase classname="sproof.core.SubstSuite" name="substN: substitute index 1" time="0.0">
+                      
+                    </testcase>
+          <system-out><![CDATA[]]></system-out>
+          <system-err><![CDATA[]]></system-err>
+        </testsuite>

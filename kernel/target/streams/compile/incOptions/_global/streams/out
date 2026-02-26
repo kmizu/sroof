@@ -1,0 +1,2 @@
+[debug] Created transactional ClassFileManager with tempDir = /home/mizushima/repo/sproof/kernel/target/scala-3.3.6/classes.bak
+[debug] Removing the temporary directory used for backing up class files: /home/mizushima/repo/sproof/kernel/target/scala-3.3.6/classes.bak

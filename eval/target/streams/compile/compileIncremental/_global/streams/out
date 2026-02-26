@@ -1,0 +1,6 @@
+[debug] [zinc] IncrementalCompile -----------
+[debug] IncrementalCompile.incrementalCompile
+[debug] previous = Stamps for: 30 products, 3 sources, 2 libraries
+[debug] current source = Set(${BASE}/eval/src/main/scala/sproof/eval/Quote.scala, ${BASE}/eval/src/main/scala/sproof/eval/Eval.scala, ${BASE}/eval/src/main/scala/sproof/eval/Semantic.scala)
+[debug] > initialChanges = InitialChanges(Changes(added = Set(), removed = Set(), changed = Set(), unmodified = ...),Set(),Set(),API Changes: Set())
+[debug] No changes

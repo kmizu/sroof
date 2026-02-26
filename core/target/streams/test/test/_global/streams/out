@@ -1,0 +1,5 @@
+[debug] Running TaskDef(sproof.core.SubstSuite, CustomFingerprint{suite='munit.Suite'}, false, [SuiteSelector])
+[debug] Summary for munit not available.
+[info] Passed: Total 13, Failed 0, Errors 0, Passed 13
+[debug] Passed tests:
+[debug] 	sproof.core.SubstSuite
