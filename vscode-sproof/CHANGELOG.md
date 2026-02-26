@@ -1,0 +1,15 @@
+# Changelog
+
+## [0.1.0] — 2026-02-26
+
+### Added
+- Syntax highlighting for `.sproof` files via TextMate grammar
+  - Keywords: `inductive`, `def`, `defspec`, `case`, `match`, `by`, `program`, `fun`
+  - Tactic keywords: `trivial`, `triv`, `assume`, `apply`, `simplify`, `simp`, `induction`, `sorry`, `have`, `calc`, `ring`
+  - Type keywords: `Type`, `Type0`, `Type1`, `Type2`, `Pi`
+  - Operators, comments, numbers, qualified constructor names
+- Language configuration (bracket matching, comment toggling, auto-indent)
+- Snippets for common patterns (inductive types, theorems, tactics)
+- Hover documentation for all sproof keywords
+- Document outline showing `def`, `defspec`, and `inductive` definitions
+- LSP server stub (ready for future expansion)

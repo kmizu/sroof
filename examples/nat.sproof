@@ -1,0 +1,19 @@
+// Natural numbers
+inductive Nat {
+  case zero: Nat
+  case succ(n: Nat): Nat
+}
+
+def plus(n: Nat, m: Nat): Nat {
+  match n {
+    case Nat.zero => m
+    case Nat.succ(k) => Nat.succ(plus(k, m))
+  }
+}
+
+defspec refl(n: Nat): n = n program = {
+  by induction n {
+    case zero => trivial
+    case succ k => trivial
+  }
+}

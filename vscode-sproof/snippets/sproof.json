@@ -1,0 +1,90 @@
+{
+  "Inductive Type": {
+    "prefix": "inductive",
+    "body": [
+      "inductive ${1:Name} {",
+      "  case ${2:ctor}: ${1:Name}",
+      "}"
+    ],
+    "description": "Define an inductive data type"
+  },
+  "Inductive Type with Parameter": {
+    "prefix": "inductivep",
+    "body": [
+      "inductive ${1:Name}(${2:param}: ${3:ParamType}) {",
+      "  case ${4:ctor}: ${1:Name}(${2:param})",
+      "}"
+    ],
+    "description": "Define a parameterized inductive data type"
+  },
+  "Function Definition": {
+    "prefix": "def",
+    "body": [
+      "def ${1:name}(${2:params}): ${3:RetType} = ${4:body}"
+    ],
+    "description": "Define a function"
+  },
+  "Defspec (theorem)": {
+    "prefix": "defspec",
+    "body": [
+      "defspec ${1:name}(${2:params}): ${3:proposition} program = {",
+      "  by ${4:trivial}",
+      "}"
+    ],
+    "description": "Define a theorem with a proof"
+  },
+  "Match expression": {
+    "prefix": "match",
+    "body": [
+      "match ${1:expr} {",
+      "  case ${2:Type}.${3:ctor} => ${4:body}",
+      "}"
+    ],
+    "description": "Pattern match expression"
+  },
+  "Induction tactic": {
+    "prefix": "induction",
+    "body": [
+      "induction ${1:n} {",
+      "  case zero => ${2:trivial}",
+      "  case succ ${3:k} => ${4:trivial}",
+      "}"
+    ],
+    "description": "Induction tactic for natural numbers"
+  },
+  "Assume tactic": {
+    "prefix": "assume",
+    "body": [
+      "assume ${1:x}: ${2:Type}"
+    ],
+    "description": "Introduce a Pi-bound variable into the context"
+  },
+  "Apply tactic": {
+    "prefix": "apply",
+    "body": [
+      "apply ${1:lemma}"
+    ],
+    "description": "Apply a function or lemma to reduce the current goal"
+  },
+  "Have tactic": {
+    "prefix": "have",
+    "body": [
+      "have ${1:h}: ${2:Type} = ${3:proof}"
+    ],
+    "description": "Introduce an intermediate result"
+  },
+  "Pi type": {
+    "prefix": "Pi",
+    "body": [
+      "Pi(${1:x}: ${2:A}, ${3:B})"
+    ],
+    "description": "Pi (dependent function) type"
+  },
+  "Fun lambda": {
+    "prefix": "fun",
+    "body": [
+      "fun ${1:x}: ${2:Type} => ${3:body}"
+    ],
+    "description": "Lambda abstraction"
+  }
+}

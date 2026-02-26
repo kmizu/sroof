@@ -1,0 +1,5 @@
+// Booleans
+inductive Bool {
+  case true: Bool
+  case false: Bool
+}

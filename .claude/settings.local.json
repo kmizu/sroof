@@ -1,0 +1,10 @@
+{
+  "enabledMcpjsonServers": [
+    "usb-webcam",
+    "system-temperature",
+    "wifi-cam",
+    "memory",
+    "secretary"
+  ],
+  "enableAllProjectMcpServers": true
+}

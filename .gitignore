@@ -3,3 +3,7 @@ target/
 .metals/
 .idea/
 *.class
+.scala-build/
+core-native/
+node_modules/
+out/

@@ -1,0 +1,64 @@
+{
+  "name": "vscode-sproof",
+  "displayName": "sproof",
+  "description": "Language support for the sproof theorem prover",
+  "version": "0.1.0",
+  "publisher": "sproof",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/kmizu/sproof"
+  },
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Programming Languages"
+  ],
+  "activationEvents": [
+    "onLanguage:sproof"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "languages": [
+      {
+        "id": "sproof",
+        "aliases": [
+          "sproof",
+          "Sproof"
+        ],
+        "extensions": [
+          ".sproof"
+        ],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "sproof",
+        "scopeName": "source.sproof",
+        "path": "./syntaxes/sproof.tmLanguage.json"
+      }
+    ],
+    "snippets": [
+      {
+        "language": "sproof",
+        "path": "./snippets/sproof.json"
+      }
+    ]
+  },
+  "scripts": {
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "package": "vsce package"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@types/vscode": "^1.85.0",
+    "typescript": "^5.0.0",
+    "vscode-languageserver": "^9.0.1",
+    "vscode-languageserver-textdocument": "^1.0.12"
+  },
+  "dependencies": {
+    "vscode-languageclient": "^9.0.0"
+  }
+}
