@@ -39,6 +39,10 @@ object TacticM:
   def modify(f: ProofState => ProofState): TacticM[Unit] =
     EitherT.liftF[StatePS, TacticError, Unit](State.modify(f))
 
+  /** Lift an Either into TacticM. */
+  def liftEither[A](e: Either[TacticError, A]): TacticM[A] =
+    EitherT.fromEither[StatePS](e)
+
   // ---- Goal operations ----
 
   /** Return the current (first) goal, or fail with NoGoals. */
