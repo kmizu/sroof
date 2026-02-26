@@ -73,7 +73,7 @@ object Main:
          |Enter declarations:
          |  inductive Nat { case zero: Nat  case succ(n: Nat): Nat }
          |  def plus(n: Nat, m: Nat): Nat { match n { ... } }
-         |  defspec refl(n: Nat): n = n program = { by trivial }
+         |  defspec refl(n: Nat): n = n { by trivial }
          |
          |Multi-line input is supported: keep typing when a '{' is open.
          |""".stripMargin

@@ -32,7 +32,7 @@ object Parser:
     ),
     symbolDesc = SymbolDesc.plain.copy(
       hardKeywords = Set(
-        "inductive", "def", "defspec", "case", "match", "by", "program",
+        "inductive", "def", "defspec", "case", "match", "by",
         "trivial", "triv", "assume", "apply", "simplify", "simp",
         "induction", "sorry", "fun", "Pi", "Type",
       ),
@@ -246,12 +246,12 @@ object Parser:
     braces(fwd(expr)),
   )
 
-  /** defspec name(params): prop program = { by tactic } */
+  /** defspec name(params): prop { by tactic } */
   private lazy val defspecDecl: Parsley[SDecl] =
     keyword("defspec") *> identifier.flatMap { name =>
       paramList.flatMap { params =>
         (op(":") *> propType).flatMap { prop =>
-          (keyword("program") *> op("=") *> braces(proof)).map { prf =>
+          braces(proof).map { prf =>
             SDecl.SDefspec(name, params, prop, prf)
           }
         }
@@ -309,7 +309,7 @@ object Parser:
     }
 
   private val keywords = Set(
-    "inductive", "def", "defspec", "case", "match", "by", "program",
+    "inductive", "def", "defspec", "case", "match", "by",
     "trivial", "triv", "assume", "apply", "simplify", "simp",
     "induction", "sorry", "fun", "Pi", "Type",
   )

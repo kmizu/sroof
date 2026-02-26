@@ -26,7 +26,7 @@ def or(b1: Bool, b2: Bool): Bool {
 }
 
 // Double negation: not(not(b)) = b
-defspec not_not(b: Bool): not(not(b)) = b program = {
+defspec not_not(b: Bool): not(not(b)) = b {
   by induction b {
     case true  => trivial
     case false => trivial
@@ -34,7 +34,7 @@ defspec not_not(b: Bool): not(not(b)) = b program = {
 }
 
 // Idempotence of and: and(b, b) = b
-defspec and_idem(b: Bool): and(b, b) = b program = {
+defspec and_idem(b: Bool): and(b, b) = b {
   by induction b {
     case true  => trivial
     case false => trivial
@@ -42,7 +42,7 @@ defspec and_idem(b: Bool): and(b, b) = b program = {
 }
 
 // and with true on the right: and(b, Bool.true) = b
-defspec and_true(b: Bool): and(b, Bool.true) = b program = {
+defspec and_true(b: Bool): and(b, Bool.true) = b {
   by induction b {
     case true  => trivial
     case false => trivial
@@ -50,7 +50,7 @@ defspec and_true(b: Bool): and(b, Bool.true) = b program = {
 }
 
 // or with false on the right: or(b, Bool.false) = b
-defspec or_false(b: Bool): or(b, Bool.false) = b program = {
+defspec or_false(b: Bool): or(b, Bool.false) = b {
   by induction b {
     case true  => trivial
     case false => trivial
@@ -58,7 +58,7 @@ defspec or_false(b: Bool): or(b, Bool.false) = b program = {
 }
 
 // and with false on the right: and(b, Bool.false) = Bool.false
-defspec and_false(b: Bool): and(b, Bool.false) = Bool.false program = {
+defspec and_false(b: Bool): and(b, Bool.false) = Bool.false {
   by induction b {
     case true  => trivial
     case false => trivial
@@ -66,7 +66,7 @@ defspec and_false(b: Bool): and(b, Bool.false) = Bool.false program = {
 }
 
 // or with true on the right: or(b, Bool.true) = Bool.true
-defspec or_true(b: Bool): or(b, Bool.true) = Bool.true program = {
+defspec or_true(b: Bool): or(b, Bool.true) = Bool.true {
   by induction b {
     case true  => trivial
     case false => trivial

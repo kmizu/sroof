@@ -157,7 +157,7 @@ class ParserSuite extends FunSuite:
   }
 
   test("parse defspec with trivial") {
-    val input = """defspec refl(n: Nat): n = n program = { by trivial }"""
+    val input = """defspec refl(n: Nat): n = n { by trivial }"""
     val result = Parser.parseDecl(input)
     assert(result.isRight, s"Parse failed: $result")
     val SDecl.SDefspec(name, params, prop, proof) = result.toOption.get: @unchecked
@@ -169,7 +169,7 @@ class ParserSuite extends FunSuite:
 
   test("parse defspec with induction") {
     val input =
-      """defspec plus_zero(n: Nat): plus(n, Nat.zero) = n program = {
+      """defspec plus_zero(n: Nat): plus(n, Nat.zero) = n {
         |  by induction n {
         |    case zero => trivial
         |    case succ k ih => simplify [plus, ih]
@@ -263,7 +263,7 @@ class ParserSuite extends FunSuite:
 
   test("parse defspec proposition as equality type") {
     // The proposition "plus(n, Nat.zero) = n" is an equality type
-    val input = """defspec test(n: Nat): plus(n, Nat.zero) = n program = { by sorry }"""
+    val input = """defspec test(n: Nat): plus(n, Nat.zero) = n { by sorry }"""
     val result = Parser.parseDecl(input)
     assert(result.isRight, s"Parse failed: $result")
   }

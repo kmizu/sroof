@@ -122,7 +122,7 @@ class ElaboratorSuite extends FunSuite:
   test("elaborate defspec preserves proof") {
     val input =
       """inductive Nat { case zero: Nat case succ(n: Nat): Nat }
-        |defspec refl(n: Nat): n = n program = { by trivial }""".stripMargin
+        |defspec refl(n: Nat): n = n { by trivial }""".stripMargin
     val result = parseAndElab(input)
     assert(result.isRight, s"Elaboration failed: $result")
     val elab = result.toOption.get
@@ -140,7 +140,7 @@ class ElaboratorSuite extends FunSuite:
         |    case Nat.succ(k) => Nat.succ(plus(k, m))
         |  }
         |}
-        |defspec plus_zero(n: Nat): plus(n, Nat.zero) = n program = {
+        |defspec plus_zero(n: Nat): plus(n, Nat.zero) = n {
         |  by induction n {
         |    case zero => trivial
         |    case succ k ih => simplify [plus, ih]
