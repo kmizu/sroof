@@ -5,6 +5,13 @@ enum SDecl:
   case SInductive(name: String, params: List[SParam], ctors: List[SCtor])
   case SDef(name: String, params: List[SParam], retTpe: SType, body: SExpr)
   case SDefspec(name: String, params: List[SParam], prop: SType, proof: SProof)
+  /** Type class / record type: structure Foo { field: Type } */
+  case SStructure(name: String, fields: List[SParam])
+  /** Type class instance: instance instName: StructName { field = expr } */
+  case SInstance(name: String, structName: String, bindings: List[(String, SExpr)])
+  /** Typed binary operator (type annotations mandatory):
+   *  operator (x: T1) + (y: T2): T3 = body */
+  case SOperator(lhsParam: SParam, opSymbol: String, rhsParam: SParam, retTpe: SType, body: SExpr)
 
 /** Surface parameter (name: type). */
 case class SParam(name: String, tpe: SType)
@@ -28,6 +35,8 @@ enum SExpr:
   case SELam(params: List[SParam], body: SExpr)
   case SEMatch(scrutinee: SExpr, cases: List[SMatchCase])
   case SECon(typeName: String, ctorName: String, args: List[SExpr])
+  /** Infix operator expression: x + y */
+  case SInfix(lhs: SExpr, op: String, rhs: SExpr)
 
 /** Match case in surface syntax. */
 case class SMatchCase(ctor: String, bindings: List[String], body: SExpr)

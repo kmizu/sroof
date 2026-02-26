@@ -69,6 +69,44 @@ object Elaborator:
                 case Left(err)    => return Left(err)
                 case Right(propT) => defspecs = defspecs + (name -> (elabParams, propT, proof))
 
+        case SDecl.SStructure(name, fields) =>
+          if env.lookupInd(name).isDefined || env.lookupStruct(name).isDefined then
+            return Left(ElabError(s"Duplicate structure name: $name"))
+          elabStructure(name, fields, env) match
+            case Left(err) => return Left(err)
+            case Right((indDef, structDef, accessors)) =>
+              env = env.addInd(indDef).addStruct(structDef)
+              for acc <- accessors do
+                env = env.addDef(acc)
+                defs = defs + (acc.name -> acc.body)
+
+        case SDecl.SInstance(name, structName, bindings) =>
+          if defs.contains(name) then
+            return Left(ElabError(s"Duplicate definition: $name"))
+          elabInstance(name, structName, bindings, env) match
+            case Left(err)   => return Left(err)
+            case Right(entry) =>
+              defs = defs + (name -> entry.body)
+              env = env.addDef(entry)
+
+        case SDecl.SOperator(lhsParam, opSymbol, rhsParam, retTpe, body) =>
+          if env.lookupOperator(opSymbol).isDefined then
+            return Left(ElabError(s"Duplicate operator: $opSymbol"))
+          val defName = s"__opr_${mangleOp(opSymbol)}"
+          val asDef = SDecl.SDef(defName, List(lhsParam, rhsParam), retTpe, body)
+          asDef match
+            case SDecl.SDef(n, ps, rt, bd) =>
+              elabDef(n, ps, rt, bd, env) match
+                case Left(err)   => return Left(err)
+                case Right(term) =>
+                  val fullTpe = term match
+                    case Term.Fix(_, tpe, _) => tpe
+                    case _                   => elabType(rt, env, Nil).getOrElse(Term.Meta(-1))
+                  val entry = DefEntry(defName, fullTpe, term)
+                  defs = defs + (defName -> term)
+                  env = env.addDef(entry).addOperator(opSymbol, defName)
+            case _ => () // cannot happen
+
     Right(ElabResult(env, defs, defspecs))
 
   // ---- Inductive elaboration ----
@@ -257,6 +295,124 @@ object Elaborator:
           scrT <- elabExpr(scrutinee, env, nameEnv, selfName)
           casesT <- elabMatchCases(cases, env, nameEnv, selfName)
         yield Term.Mat(scrT, casesT, Term.Meta(-1)) // return type inferred later
+
+      case SExpr.SInfix(lhs, op, rhs) =>
+        env.lookupOperator(op) match
+          case None        => Left(ElabError(s"Unknown operator: $op (no operator declaration found)"))
+          case Some(defName) =>
+            env.lookupDef(defName) match
+              case None    => Left(ElabError(s"Internal: operator $op maps to unknown def $defName"))
+              case Some(opEntry) =>
+                for
+                  lT <- elabExpr(lhs, env, nameEnv, selfName)
+                  rT <- elabExpr(rhs, env, nameEnv, selfName)
+                yield Term.App(Term.App(opEntry.body, lT), rT)
+
+  // ---- Structure / Instance / Operator helpers ----
+
+  /** Elaborate a `structure` declaration.
+   *
+   *  Returns:
+   *  - The `IndDef` (inductive type with single `mk` constructor)
+   *  - The `StructDef` (field registry)
+   *  - Field accessor `DefEntry` list
+   */
+  private def elabStructure(
+    name:   String,
+    fields: List[SParam],
+    env:    GlobalEnv,
+  ): Either[ElabError, (IndDef, StructDef, List[DefEntry])] =
+    // Elaborate field types
+    val fieldTypesE: Either[ElabError, List[(String, Term)]] =
+      fields.foldLeft[Either[ElabError, List[(String, Term)]]](Right(Nil)) { (acc, p) =>
+        acc.flatMap { lst =>
+          elabType(p.tpe, env, Nil).map(tpe => lst :+ (p.name, tpe))
+        }
+      }
+
+    fieldTypesE.map { fieldTypes =>
+      val n = fieldTypes.length
+
+      // Inductive type: inductive Name { case mk(f1: T1, f2: T2, ...): Name }
+      val mkCtor = CtorDef("mk", fieldTypes.map(_._2))
+      val indDef = IndDef(name, Nil, List(mkCtor), 0)
+
+      // Struct registry
+      val structDef = StructDef(name, fieldTypes)
+
+      // Field accessors: def Name_fieldI(d: Name): Ti = match d { case mk(n bindings) => Var(n-1-i) }
+      val indTpe = Term.Ind(name, Nil, Nil)
+      val accessors = fieldTypes.zipWithIndex.map { case ((fieldName, fieldTpe), i) =>
+        val accessorName = s"${name}_${fieldName}"
+        val body = Term.Fix(
+          accessorName,
+          Term.Pi("d", indTpe, fieldTpe),
+          Term.Lam("d", indTpe,
+            Term.Mat(
+              Term.Var(0),
+              List(MatchCase("mk", n, Term.Var(n - 1 - i))),
+              Term.Meta(-1),
+            )
+          ),
+        )
+        DefEntry(accessorName, Term.Pi("d", indTpe, fieldTpe), body)
+      }
+
+      (indDef, structDef, accessors)
+    }
+
+  /** Elaborate an `instance` declaration.
+   *
+   *  Validates that all fields are provided (no missing, no extra),
+   *  then produces a constant `DefEntry` whose body is `Con("mk", structName, [...])`.
+   */
+  private def elabInstance(
+    name:       String,
+    structName: String,
+    bindings:   List[(String, SExpr)],
+    env:        GlobalEnv,
+  ): Either[ElabError, DefEntry] =
+    env.lookupStruct(structName) match
+      case None => Left(ElabError(s"Unknown structure: $structName"))
+      case Some(structDef) =>
+        val fieldNames = structDef.fields.map(_._1)
+        val bindingMap = bindings.toMap
+
+        // Validate: no missing fields
+        val missing = fieldNames.filterNot(bindingMap.contains)
+        if missing.nonEmpty then
+          return Left(ElabError(s"Missing fields in instance $name: ${missing.mkString(", ")}"))
+
+        // Validate: no extra fields
+        val extra = bindings.map(_._1).filterNot(fieldNames.contains)
+        if extra.nonEmpty then
+          return Left(ElabError(s"Unknown fields in instance $name: ${extra.mkString(", ")}"))
+
+        // Elaborate each field expression in field-declaration order
+        val argTermsE: Either[ElabError, List[Term]] =
+          fieldNames.foldLeft[Either[ElabError, List[Term]]](Right(Nil)) { (acc, fn) =>
+            acc.flatMap { lst =>
+              elabExpr(bindingMap(fn), env, Nil, "") match
+                case Left(err)  => Left(err)
+                case Right(t)   => Right(lst :+ t)
+            }
+          }
+
+        argTermsE.map { argTerms =>
+          val instTpe  = Term.Ind(structName, Nil, Nil)
+          val body     = Term.Con("mk", structName, argTerms)
+          DefEntry(name, instTpe, body)
+        }
+
+  /** Sanitize operator symbol to a valid identifier fragment. */
+  private def mangleOp(sym: String): String =
+    sym.map {
+      case '+' => "plus"
+      case '*' => "times"
+      case '-' => "minus"
+      case '/' => "div"
+      case c   => c.toString
+    }.mkString
 
   private def elabMatchCases(
     cases:    List[SMatchCase],

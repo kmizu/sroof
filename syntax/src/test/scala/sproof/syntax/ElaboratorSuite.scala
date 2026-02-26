@@ -217,3 +217,161 @@ class ElaboratorSuite extends FunSuite:
     assert(elab.env.lookupInd("Nat").isDefined, "Nat should be in env")
     assert(elab.env.lookupInd("Bool").isDefined, "Bool should be in env")
   }
+
+  // ===== Structure elaboration =====
+
+  test("elaborate structure desugars to inductive with mk constructor") {
+    val input =
+      """inductive Nat { case zero: Nat case succ(n: Nat): Nat }
+        |structure Wrap { value: Nat }""".stripMargin
+    val result = parseAndElab(input)
+    assert(result.isRight, s"Elaboration failed: $result")
+    val elab = result.toOption.get
+    val wrapInd = elab.env.lookupInd("Wrap")
+    assert(wrapInd.isDefined, "Wrap inductive should be in env")
+    assertEquals(wrapInd.get.ctors.length, 1)
+    assertEquals(wrapInd.get.ctors(0).name, "mk")
+    assertEquals(wrapInd.get.ctors(0).argTpes.length, 1)
+  }
+
+  test("elaborate structure registers in structures map") {
+    val input =
+      """inductive Nat { case zero: Nat case succ(n: Nat): Nat }
+        |structure Wrap { value: Nat }""".stripMargin
+    val result = parseAndElab(input)
+    val elab = result.toOption.get
+    val structDef = elab.env.lookupStruct("Wrap")
+    assert(structDef.isDefined, "Wrap should be in structures map")
+    assertEquals(structDef.get.fields.length, 1)
+    assertEquals(structDef.get.fields(0)._1, "value")
+  }
+
+  test("elaborate structure generates field accessor def") {
+    val input =
+      """inductive Nat { case zero: Nat case succ(n: Nat): Nat }
+        |structure Wrap { value: Nat }""".stripMargin
+    val result = parseAndElab(input)
+    val elab = result.toOption.get
+    val accessor = elab.env.lookupDef("Wrap_value")
+    assert(accessor.isDefined, "Wrap_value accessor should be in defs")
+  }
+
+  test("elaborate structure with two fields generates two accessors") {
+    val input =
+      """inductive Nat { case zero: Nat case succ(n: Nat): Nat }
+        |structure Pair { fst: Nat  snd: Nat }""".stripMargin
+    val result = parseAndElab(input)
+    val elab = result.toOption.get
+    assert(elab.env.lookupDef("Pair_fst").isDefined, "Pair_fst accessor should exist")
+    assert(elab.env.lookupDef("Pair_snd").isDefined, "Pair_snd accessor should exist")
+  }
+
+  test("elaborate structure duplicate name returns Left") {
+    val input =
+      """inductive Nat { case zero: Nat case succ(n: Nat): Nat }
+        |structure Foo { x: Nat }
+        |structure Foo { y: Nat }""".stripMargin
+    val result = parseAndElab(input)
+    assert(result.isLeft, "Duplicate structure name should fail")
+  }
+
+  // ===== Instance elaboration =====
+
+  test("elaborate instance desugars to constant def") {
+    val input =
+      """inductive Nat { case zero: Nat case succ(n: Nat): Nat }
+        |structure Wrap { value: Nat }
+        |instance wrapZero: Wrap { value = Nat.zero }""".stripMargin
+    val result = parseAndElab(input)
+    assert(result.isRight, s"Elaboration failed: $result")
+    val elab = result.toOption.get
+    val inst = elab.env.lookupDef("wrapZero")
+    assert(inst.isDefined, "wrapZero def should be in env")
+    // body should be Con("mk", "Wrap", [Con("zero","Nat",[])])
+    val Term.Con("mk", "Wrap", args) = inst.get.body: @unchecked
+    assertEquals(args.length, 1)
+    assertEquals(args(0), Term.Con("zero", "Nat", Nil))
+  }
+
+  test("elaborate instance with wrong struct name returns Left") {
+    val input =
+      """inductive Nat { case zero: Nat case succ(n: Nat): Nat }
+        |instance bad: NonExistentStruct { value = Nat.zero }""".stripMargin
+    val result = parseAndElab(input)
+    assert(result.isLeft, "Unknown struct name should fail")
+  }
+
+  test("elaborate instance with missing field returns Left") {
+    val input =
+      """inductive Nat { case zero: Nat case succ(n: Nat): Nat }
+        |structure Pair { fst: Nat  snd: Nat }
+        |instance partial: Pair { fst = Nat.zero }""".stripMargin
+    val result = parseAndElab(input)
+    assert(result.isLeft, "Missing field in instance should fail")
+  }
+
+  test("elaborate instance with extra field returns Left") {
+    val input =
+      """inductive Nat { case zero: Nat case succ(n: Nat): Nat }
+        |structure Wrap { value: Nat }
+        |instance bad: Wrap { value = Nat.zero  extra = Nat.zero }""".stripMargin
+    val result = parseAndElab(input)
+    assert(result.isLeft, "Extra field in instance should fail")
+  }
+
+  // ===== Operator elaboration =====
+
+  test("elaborate operator registers in operators map") {
+    val input =
+      """inductive Nat { case zero: Nat case succ(n: Nat): Nat }
+        |def plus(n: Nat, m: Nat): Nat { match n { case Nat.zero => m case Nat.succ(k) => Nat.succ(plus(k, m)) } }
+        |operator (x: Nat) + (y: Nat): Nat = plus(x, y)""".stripMargin
+    val result = parseAndElab(input)
+    assert(result.isRight, s"Elaboration failed: $result")
+    val elab = result.toOption.get
+    val opFn = elab.env.lookupOperator("+")
+    assert(opFn.isDefined, "+ operator should be registered")
+  }
+
+  test("elaborate operator creates a def") {
+    val input =
+      """inductive Nat { case zero: Nat case succ(n: Nat): Nat }
+        |def plus(n: Nat, m: Nat): Nat { match n { case Nat.zero => m case Nat.succ(k) => Nat.succ(plus(k, m)) } }
+        |operator (x: Nat) + (y: Nat): Nat = plus(x, y)""".stripMargin
+    val result = parseAndElab(input)
+    val elab = result.toOption.get
+    val opFn = elab.env.lookupOperator("+").get
+    assert(elab.env.lookupDef(opFn).isDefined, "operator def should exist in env")
+  }
+
+  test("elaborate duplicate operator symbol returns Left") {
+    val input =
+      """inductive Nat { case zero: Nat case succ(n: Nat): Nat }
+        |def plus(n: Nat, m: Nat): Nat { match n { case Nat.zero => m case Nat.succ(k) => Nat.succ(plus(k, m)) } }
+        |operator (x: Nat) + (y: Nat): Nat = plus(x, y)
+        |operator (x: Nat) + (y: Nat): Nat = plus(x, y)""".stripMargin
+    val result = parseAndElab(input)
+    assert(result.isLeft, "Duplicate operator symbol should fail")
+  }
+
+  // ===== Infix expression elaboration =====
+
+  test("elaborate infix expression uses registered operator") {
+    val input =
+      """inductive Nat { case zero: Nat case succ(n: Nat): Nat }
+        |def plus(n: Nat, m: Nat): Nat { match n { case Nat.zero => m case Nat.succ(k) => Nat.succ(plus(k, m)) } }
+        |operator (x: Nat) + (y: Nat): Nat = plus(x, y)
+        |def addZero(n: Nat): Nat = n + Nat.zero""".stripMargin
+    val result = parseAndElab(input)
+    assert(result.isRight, s"Elaboration failed: $result")
+    val elab = result.toOption.get
+    assert(elab.defs.contains("addZero"), "addZero should be elaborated")
+  }
+
+  test("elaborate infix with unknown operator returns Left") {
+    val input =
+      """inductive Nat { case zero: Nat case succ(n: Nat): Nat }
+        |def addZero(n: Nat): Nat = n + Nat.zero""".stripMargin
+    val result = parseAndElab(input)
+    assert(result.isLeft, "Unregistered operator should fail")
+  }

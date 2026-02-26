@@ -35,8 +35,9 @@ object Parser:
         "inductive", "def", "defspec", "case", "match", "by",
         "trivial", "triv", "assume", "apply", "simplify", "simp",
         "induction", "sorry", "fun", "Pi", "Type",
+        "structure", "instance", "operator",
       ),
-      hardOperators = Set("->", "=", "=>", ":", ",", "{", "}", "(", ")", "[", "]", "."),
+      hardOperators = Set("->", "=", "=>", ":", ",", "{", "}", "(", ")", "[", "]", ".", "+", "*"),
     ),
   ))
 
@@ -115,8 +116,20 @@ object Parser:
   private lazy val expr: Parsley[SExpr] = choice(
     matchExpr,
     lamExpr,
-    appOrVarOrCon,
+    addExpr,
   )
+
+  /** Additive level: left-associative + */
+  private lazy val addExpr: Parsley[SExpr] =
+    chain.left1(mulExpr)(
+      op("+") #> ((l: SExpr, r: SExpr) => SExpr.SInfix(l, "+", r))
+    )
+
+  /** Multiplicative level: left-associative * (tighter than +) */
+  private lazy val mulExpr: Parsley[SExpr] =
+    chain.left1(appOrVarOrCon)(
+      op("*") #> ((l: SExpr, r: SExpr) => SExpr.SInfix(l, "*", r))
+    )
 
   /** match e { case ... => ... } */
   private lazy val matchExpr: Parsley[SExpr] =
@@ -201,6 +214,9 @@ object Parser:
     inductiveDecl,
     defspecDecl,
     defDecl,
+    structureDecl,
+    instanceDecl,
+    operatorDecl,
   )
 
   /** inductive Name(params) { case ctor1: T case ctor2(a: A): T } */
@@ -308,10 +324,68 @@ object Parser:
       }
     }
 
+  // ---- structure / instance / operator declarations ----
+
+  /** structure Name { field: Type  field2: Type2 } */
+  private lazy val structureDecl: Parsley[SDecl] =
+    keyword("structure") *> identifier.flatMap { name =>
+      braces(many(structureField)).map { fields =>
+        SDecl.SStructure(name, fields)
+      }
+    }
+
+  /** field: Type  (inside structure body) */
+  private lazy val structureField: Parsley[SParam] =
+    identifier.flatMap { name =>
+      op(":") *> fwd(typeExpr).map { tpe =>
+        SParam(name, tpe)
+      }
+    }
+
+  /** instance instName: StructName { field = expr  field2 = expr2 } */
+  private lazy val instanceDecl: Parsley[SDecl] =
+    keyword("instance") *> identifier.flatMap { name =>
+      op(":") *> identifier.flatMap { structName =>
+        braces(many(instanceBinding)).map { bindings =>
+          SDecl.SInstance(name, structName, bindings)
+        }
+      }
+    }
+
+  /** field = expr  (inside instance body) */
+  private lazy val instanceBinding: Parsley[(String, SExpr)] =
+    atomic(identifier.filter(n => !isKeyword(n))).flatMap { name =>
+      op("=") *> fwd(expr).map { body =>
+        (name, body)
+      }
+    }
+
+  /** operator (x: T1) + (y: T2): T3 = body
+   *  Type annotations on both operands are mandatory. */
+  private lazy val operatorDecl: Parsley[SDecl] =
+    keyword("operator") *> paramDecl.flatMap { lhsParam =>
+      infixOpSymbol.flatMap { opSym =>
+        paramDecl.flatMap { rhsParam =>
+          (op(":") *> fwd(typeExpr)).flatMap { retTpe =>
+            defBody.map { body =>
+              SDecl.SOperator(lhsParam, opSym, rhsParam, retTpe, body)
+            }
+          }
+        }
+      }
+    }
+
+  /** Supported infix operator symbols in operator declarations and expressions. */
+  private lazy val infixOpSymbol: Parsley[String] = choice(
+    op("+") #> "+",
+    op("*") #> "*",
+  )
+
   private val keywords = Set(
     "inductive", "def", "defspec", "case", "match", "by",
     "trivial", "triv", "assume", "apply", "simplify", "simp",
     "induction", "sorry", "fun", "Pi", "Type",
+    "structure", "instance", "operator",
   )
 
   private def isKeyword(s: String): Boolean = keywords.contains(s)

@@ -311,3 +311,169 @@ class ParserSuite extends FunSuite:
     val STactic.SApply(expr) = result.toOption.get: @unchecked
     assertEquals(expr, SExpr.SEVar("x"))
   }
+
+  // ===== Structure declarations =====
+
+  test("parse structure with one field") {
+    val input = "structure Wrap { value: Nat }"
+    val result = Parser.parseDecl(input)
+    assert(result.isRight, s"Parse failed: $result")
+    val SDecl.SStructure(name, fields) = result.toOption.get: @unchecked
+    assertEquals(name, "Wrap")
+    assertEquals(fields.length, 1)
+    assertEquals(fields(0).name, "value")
+    assertEquals(fields(0).tpe, SType.STVar("Nat"))
+  }
+
+  test("parse structure with two fields") {
+    val input = "structure Pair { fst: Nat  snd: Nat }"
+    val result = Parser.parseDecl(input)
+    assert(result.isRight, s"Parse failed: $result")
+    val SDecl.SStructure(name, fields) = result.toOption.get: @unchecked
+    assertEquals(name, "Pair")
+    assertEquals(fields.length, 2)
+    assertEquals(fields(0).name, "fst")
+    assertEquals(fields(1).name, "snd")
+  }
+
+  test("parse structure with arrow field type") {
+    val input = "structure Add { add: Nat -> Nat -> Nat  zero: Nat }"
+    val result = Parser.parseDecl(input)
+    assert(result.isRight, s"Parse failed: $result")
+    val SDecl.SStructure(name, fields) = result.toOption.get: @unchecked
+    assertEquals(name, "Add")
+    assertEquals(fields.length, 2)
+    assertEquals(fields(0).name, "add")
+    assertEquals(fields(0).tpe, SType.STArrow(SType.STVar("Nat"), SType.STArrow(SType.STVar("Nat"), SType.STVar("Nat"))))
+    assertEquals(fields(1).name, "zero")
+  }
+
+  test("parse empty structure") {
+    val input = "structure Empty { }"
+    val result = Parser.parseDecl(input)
+    assert(result.isRight, s"Parse failed: $result")
+    val SDecl.SStructure(name, fields) = result.toOption.get: @unchecked
+    assertEquals(name, "Empty")
+    assertEquals(fields, Nil)
+  }
+
+  // ===== Instance declarations =====
+
+  test("parse instance with one binding") {
+    val input = "instance wrapZero: Wrap { value = Nat.zero }"
+    val result = Parser.parseDecl(input)
+    assert(result.isRight, s"Parse failed: $result")
+    val SDecl.SInstance(name, structName, bindings) = result.toOption.get: @unchecked
+    assertEquals(name, "wrapZero")
+    assertEquals(structName, "Wrap")
+    assertEquals(bindings.length, 1)
+    assertEquals(bindings(0)._1, "value")
+    assertEquals(bindings(0)._2, SExpr.SECon("Nat", "zero", Nil))
+  }
+
+  test("parse instance with two bindings") {
+    val input = "instance addNat: Add { add = plus  zero = Nat.zero }"
+    val result = Parser.parseDecl(input)
+    assert(result.isRight, s"Parse failed: $result")
+    val SDecl.SInstance(name, structName, bindings) = result.toOption.get: @unchecked
+    assertEquals(name, "addNat")
+    assertEquals(structName, "Add")
+    assertEquals(bindings.length, 2)
+    assertEquals(bindings(0)._1, "add")
+    assertEquals(bindings(0)._2, SExpr.SEVar("plus"))
+    assertEquals(bindings(1)._1, "zero")
+    assertEquals(bindings(1)._2, SExpr.SECon("Nat", "zero", Nil))
+  }
+
+  // ===== Operator declarations =====
+
+  test("parse operator declaration with equals body") {
+    val input = "operator (x: Nat) + (y: Nat): Nat = plus(x, y)"
+    val result = Parser.parseDecl(input)
+    assert(result.isRight, s"Parse failed: $result")
+    val SDecl.SOperator(lhsParam, opSym, rhsParam, retTpe, body) = result.toOption.get: @unchecked
+    assertEquals(lhsParam.name, "x")
+    assertEquals(lhsParam.tpe, SType.STVar("Nat"))
+    assertEquals(opSym, "+")
+    assertEquals(rhsParam.name, "y")
+    assertEquals(rhsParam.tpe, SType.STVar("Nat"))
+    assertEquals(retTpe, SType.STVar("Nat"))
+    assertEquals(body, SExpr.SEApp(SExpr.SEVar("plus"), List(SExpr.SEVar("x"), SExpr.SEVar("y"))))
+  }
+
+  test("parse operator declaration with multiply") {
+    val input = "operator (x: Nat) * (y: Nat): Nat = mul(x, y)"
+    val result = Parser.parseDecl(input)
+    assert(result.isRight, s"Parse failed: $result")
+    val SDecl.SOperator(_, opSym, _, _, _) = result.toOption.get: @unchecked
+    assertEquals(opSym, "*")
+  }
+
+  test("operator declaration requires type annotations (lhs)") {
+    // Without parens and type annotation → parse error
+    val input = "operator x + (y: Nat): Nat = plus(x, y)"
+    val result = Parser.parseDecl(input)
+    assert(result.isLeft, "Expected parse error when lhs has no type annotation")
+  }
+
+  test("operator declaration requires type annotations (rhs)") {
+    val input = "operator (x: Nat) + y: Nat = plus(x, y)"
+    val result = Parser.parseDecl(input)
+    assert(result.isLeft, "Expected parse error when rhs has no type annotation")
+  }
+
+  // ===== Infix expressions =====
+
+  test("parse infix addition: x + y") {
+    val result = Parser.parseExpr("x + y")
+    assertEquals(result, Right(SExpr.SInfix(SExpr.SEVar("x"), "+", SExpr.SEVar("y"))))
+  }
+
+  test("parse infix multiplication: x * y") {
+    val result = Parser.parseExpr("x * y")
+    assertEquals(result, Right(SExpr.SInfix(SExpr.SEVar("x"), "*", SExpr.SEVar("y"))))
+  }
+
+  test("parse infix addition is left-associative") {
+    val result = Parser.parseExpr("x + y + z")
+    assertEquals(result, Right(
+      SExpr.SInfix(SExpr.SInfix(SExpr.SEVar("x"), "+", SExpr.SEVar("y")), "+", SExpr.SEVar("z"))
+    ))
+  }
+
+  test("* binds tighter than +") {
+    val result = Parser.parseExpr("x + y * z")
+    assertEquals(result, Right(
+      SExpr.SInfix(
+        SExpr.SEVar("x"),
+        "+",
+        SExpr.SInfix(SExpr.SEVar("y"), "*", SExpr.SEVar("z")),
+      )
+    ))
+  }
+
+  test("parse infix with constructor args") {
+    val result = Parser.parseExpr("Nat.succ(n) + Nat.zero")
+    assert(result.isRight, s"Parse failed: $result")
+    val SExpr.SInfix(lhs, op, rhs) = result.toOption.get: @unchecked
+    assertEquals(op, "+")
+    assert(lhs.isInstanceOf[SExpr.SECon])
+    assertEquals(rhs, SExpr.SECon("Nat", "zero", Nil))
+  }
+
+  test("parse infix in def body") {
+    val input = "def addOne(n: Nat): Nat = n + Nat.zero"
+    val result = Parser.parseDecl(input)
+    assert(result.isRight, s"Parse failed: $result")
+    val SDecl.SDef(_, _, _, body) = result.toOption.get: @unchecked
+    assert(body.isInstanceOf[SExpr.SInfix], s"Expected SInfix, got: $body")
+  }
+
+  test("parse infix in defspec proposition") {
+    val input = "defspec test(n: Nat): n + Nat.zero = n { by sorry }"
+    val result = Parser.parseDecl(input)
+    assert(result.isRight, s"Parse failed: $result")
+    val SDecl.SDefspec(_, _, prop, _) = result.toOption.get: @unchecked
+    val SType.STEq(lhs, _) = prop: @unchecked
+    assert(lhs.isInstanceOf[SExpr.SInfix], s"Expected SInfix lhs in equality, got: $lhs")
+  }
