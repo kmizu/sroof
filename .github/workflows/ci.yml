@@ -20,11 +20,16 @@ jobs:
           java-version: 21
           cache: sbt
 
+      - uses: sbt/setup-sbt@v1
+
       - name: Run tests
         run: sbt test
 
       - name: Check nat.sproof end-to-end
         run: sbt "cli/run check examples/nat.sproof"
+
+      - name: Check int.sproof end-to-end
+        run: sbt "cli/run check examples/int.sproof"
 
   # ---- Scala Native: compile + link ----
   native:
@@ -38,6 +43,8 @@ jobs:
           distribution: temurin
           java-version: 21
           cache: sbt
+
+      - uses: sbt/setup-sbt@v1
 
       - name: Install LLVM / clang
         run: |
@@ -55,6 +62,7 @@ jobs:
           BINARY=$(find cli-native/target -name "sproof-cli-native" -type f | head -1)
           echo "Binary: $BINARY ($(du -sh $BINARY | cut -f1))"
           $BINARY check examples/nat.sproof
+          $BINARY check examples/int.sproof
 
       - name: Upload native binary
         uses: actions/upload-artifact@v4
@@ -75,6 +83,8 @@ jobs:
           distribution: temurin
           java-version: 21
           cache: sbt
+
+      - uses: sbt/setup-sbt@v1
 
       - name: Compile sbt-sproof plugin
         run: cd sbt-sproof && sbt compile
