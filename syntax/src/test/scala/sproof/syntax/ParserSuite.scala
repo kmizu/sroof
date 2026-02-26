@@ -469,6 +469,40 @@ class ParserSuite extends FunSuite:
     assert(body.isInstanceOf[SExpr.SInfix], s"Expected SInfix, got: $body")
   }
 
+  // ===== Chained function application =====
+
+  test("parse chained application: f(a)(b)") {
+    val result = Parser.parseExpr("f(a)(b)")
+    assertEquals(result, Right(
+      SExpr.SEApp(SExpr.SEApp(SExpr.SEVar("f"), List(SExpr.SEVar("a"))), List(SExpr.SEVar("b")))
+    ))
+  }
+
+  test("parse chained application with multiple args: f(a)(b, c)") {
+    val result = Parser.parseExpr("f(a)(b, c)")
+    assertEquals(result, Right(
+      SExpr.SEApp(
+        SExpr.SEApp(SExpr.SEVar("f"), List(SExpr.SEVar("a"))),
+        List(SExpr.SEVar("b"), SExpr.SEVar("c")),
+      )
+    ))
+  }
+
+  test("parse chained application three deep: f(a)(b)(c)") {
+    val result = Parser.parseExpr("f(a)(b)(c)")
+    assertEquals(result, Right(
+      SExpr.SEApp(
+        SExpr.SEApp(SExpr.SEApp(SExpr.SEVar("f"), List(SExpr.SEVar("a"))), List(SExpr.SEVar("b"))),
+        List(SExpr.SEVar("c")),
+      )
+    ))
+  }
+
+  test("single application unchanged: f(a, b)") {
+    val result = Parser.parseExpr("f(a, b)")
+    assertEquals(result, Right(SExpr.SEApp(SExpr.SEVar("f"), List(SExpr.SEVar("a"), SExpr.SEVar("b")))))
+  }
+
   test("parse infix in defspec proposition") {
     val input = "defspec test(n: Nat): n + Nat.zero = n { by sorry }"
     val result = Parser.parseDecl(input)

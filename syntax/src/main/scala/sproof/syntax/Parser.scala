@@ -170,20 +170,51 @@ object Parser:
       }
     }
 
-  /** Variable, constructor (Type.ctor), or function application */
-  private lazy val appOrVarOrCon: Parsley[SExpr] =
+  /** Primary expression: identifier, or identifier.identifier (constructor/field access).
+   *  Constructors consume their first arg-list here; plain variables do not.
+   */
+  private lazy val primaryExpr: Parsley[SExpr] =
     identifier.flatMap { first =>
       option(op(".") *> identifier).flatMap {
         case Some(ctorName) =>
+          // Constructor: parse first arg-list inline (Type.ctor(...) syntax)
           option(parens(sepBy(fwd(expr), op(",")))).map { argsOpt =>
             SExpr.SECon(first, ctorName, argsOpt.getOrElse(Nil))
           }
         case None =>
-          option(parens(sepBy(fwd(expr), op(",")))).map {
-            case Some(args) => SExpr.SEApp(SExpr.SEVar(first), args)
-            case None       => SExpr.SEVar(first)
-          }
+          // Plain variable: no args consumed here
+          pure(SExpr.SEVar(first))
       }
+    }
+
+  /** Variable, constructor (Type.ctor), or function application.
+   *  Supports chained calls: f(a)(b, c) = App(App(f, [a]), [b, c]).
+   *  Constructors (Nat.succ) consume their first arg-list in primaryExpr;
+   *  further chains like Ctor(x)(y) are parsed as App(Ctor(x), [y]).
+   */
+  private lazy val appOrVarOrCon: Parsley[SExpr] =
+    primaryExpr.flatMap { head =>
+      // Parse the first optional arg-list for non-constructor primaries,
+      // then any number of additional chains.
+      head match
+        case SExpr.SEVar(name) =>
+          // Variable: first (args) makes it an application; then chain more.
+          option(parens(sepBy(fwd(expr), op(",")))).flatMap {
+            case None       => many(parens(sepBy(fwd(expr), op(",")))).map { rest =>
+              rest.foldLeft(SExpr.SEVar(name): SExpr) { (acc, args) => SExpr.SEApp(acc, args) }
+            }
+            case Some(args0) =>
+              many(parens(sepBy(fwd(expr), op(",")))).map { rest =>
+                rest.foldLeft(SExpr.SEApp(SExpr.SEVar(name), args0): SExpr) { (acc, args) =>
+                  SExpr.SEApp(acc, args)
+                }
+              }
+          }
+        case _ =>
+          // Constructor or other: chain any further (args) calls.
+          many(parens(sepBy(fwd(expr), op(",")))).map { argLists =>
+            argLists.foldLeft(head) { (acc, args) => SExpr.SEApp(acc, args) }
+          }
     }
 
   /** Simple expression (no match, for scrutinee position) */
