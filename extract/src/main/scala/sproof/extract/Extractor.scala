@@ -14,6 +14,22 @@ import sproof.core.{Term, GlobalEnv, IndDef, CtorDef}
  *  - Inductive types become Scala 3 `enum` declarations
  *  - `Term.Fix` becomes a `def` with recursion (named by the Fix binder)
  */
+/** Names of inductive types that are mapped to Scala built-in types.
+ *
+ *  These types are NOT emitted as `enum` declarations; instead the
+ *  Scala primitive is used directly.  Constructor expressions and
+ *  pattern matches are translated to arithmetic.
+ *
+ *  | sproof        | Scala             |
+ *  |---------------|-------------------|
+ *  | Int           | Int               |
+ *  | Int.zero      | 0                 |
+ *  | Int.pos(n)    | n + 1             |
+ *  | Int.neg(n)    | -(n + 1)          |
+ *  | match (Int)   | if / else if / else |
+ */
+val builtinInductives: Set[String] = Set("Int")
+
 object Extractor:
 
   // ---- public API ----
@@ -30,6 +46,9 @@ object Extractor:
 
   /** Extract an inductive type definition to a Scala 3 `enum`.
    *
+   *  Builtin inductive types (e.g. `Int`) are NOT emitted as enums;
+   *  a comment is produced instead and Scala's built-in type is used.
+   *
    *  Example:
    *  {{{
    *    IndDef("Nat", [], [CtorDef("zero",[]), CtorDef("succ",[Nat])], 0)
@@ -40,11 +59,14 @@ object Extractor:
    *  }}}
    */
   def extractInductive(indDef: IndDef): String =
-    val name   = indDef.name
-    val ctors  = indDef.ctors.map(c => extractCtor(name, c))
-    val header = s"enum $name:"
-    if ctors.isEmpty then s"$header\n  case Empty"
-    else ctors.map(c => s"  $c").mkString(s"$header\n", "\n", "")
+    val name = indDef.name
+    if builtinInductives.contains(name) then
+      s"// $name is mapped to Scala's built-in $name"
+    else
+      val ctors  = indDef.ctors.map(c => extractCtor(name, c))
+      val header = s"enum $name:"
+      if ctors.isEmpty then s"$header\n  case Empty"
+      else ctors.map(c => s"  $c").mkString(s"$header\n", "\n", "")
 
   /** Extract a function definition.
    *
@@ -121,15 +143,30 @@ object Extractor:
     case Term.Ind(name, _, _) => name   // reference to inductive type constructor
 
     case Term.Con(name, indRef, args) =>
-      val ctorName = pascalCase(name)
-      val fullName = s"$indRef.$ctorName"
-      if args.isEmpty then fullName
+      // Builtin constructors are translated to arithmetic literals.
+      if builtinInductives.contains(indRef) then
+        extractBuiltinCon(name, indRef, args, ctx)
       else
-        val argStrs = args.map(termToScalaExpr(_, ctx))
-        s"$fullName(${argStrs.mkString(", ")})"
+        val ctorName = pascalCase(name)
+        val fullName = s"$indRef.$ctorName"
+        if args.isEmpty then fullName
+        else
+          val argStrs = args.map(termToScalaExpr(_, ctx))
+          s"$fullName(${argStrs.mkString(", ")})"
 
-    case Term.Mat(scrutinee, cases, _) =>
-      extractMatch(scrutinee, cases, ctx)
+    case Term.Mat(scrutinee, cases, retTpe) =>
+      // Check if the scrutinee's type is a builtin inductive.
+      val indName = retTpe match
+        case Term.Ind(n, _, _) if builtinInductives.contains(n) => Some(n)
+        case _ =>
+          // Infer from the first case's ctor owning type when retTpe is opaque.
+          cases.headOption.flatMap(mc => builtinInductives.find(_ => true).filter(_ =>
+            // crude: if ANY case ctor is from a builtin, treat as builtin match
+            cases.forall(c => List("zero","pos","neg").contains(c.ctor))
+          ))
+      indName match
+        case Some(ind) => extractBuiltinMatch(scrutinee, cases, ind, ctx)
+        case None      => extractMatch(scrutinee, cases, ctx)
 
     case Term.Fix(name, _, body) =>
       // Fix point: render as a local recursive def
@@ -140,6 +177,71 @@ object Extractor:
     case Term.Meta(id) => s"???"  // unsolved metavariable
 
   // ---- private helpers ----
+
+  /** Translate a builtin constructor to a Scala arithmetic expression.
+   *
+   *  | Constructor      | Scala output  |
+   *  |-----------------|---------------|
+   *  | Int.zero        | 0             |
+   *  | Int.pos(n)      | n + 1         |
+   *  | Int.neg(n)      | -(n + 1)      |
+   */
+  private def extractBuiltinCon(
+    name:   String,
+    indRef: String,
+    args:   List[Term],
+    ctx:    List[String],
+  ): String = (indRef, name) match
+    case ("Int", "zero")          => "0"
+    case ("Int", "pos") if args.size == 1 =>
+      val n = termToScalaExpr(args.head, ctx)
+      s"$n + 1"
+    case ("Int", "neg") if args.size == 1 =>
+      val n = termToScalaExpr(args.head, ctx)
+      s"-($n + 1)"
+    case _ =>
+      // Fallback: emit as normal constructor
+      val ctorName = pascalCase(name)
+      val fullName = s"$indRef.$ctorName"
+      if args.isEmpty then fullName
+      else s"$fullName(${args.map(termToScalaExpr(_, ctx)).mkString(", ")})"
+
+  /** Translate a match on a builtin Int to an if/else chain.
+   *
+   *  Expects exactly three cases in order: zero, pos(n), neg(n).
+   *  Emits:
+   *  {{{
+   *    if (scrut == 0) body0
+   *    else if (scrut > 0) { val n = scrut - 1; bodyP }
+   *    else { val n = -scrut - 1; bodyN }
+   *  }}}
+   */
+  private def extractBuiltinMatch(
+    scrutinee: Term,
+    cases:     List[sproof.core.MatchCase],
+    ind:       String,
+    ctx:       List[String],
+  ): String =
+    val sStr = termToScalaExpr(scrutinee, ctx)
+    // Partition cases by ctor name (order-insensitive)
+    val byName = cases.map(mc => mc.ctor -> mc).toMap
+    def arm(mc: sproof.core.MatchCase, binder: String => String): String =
+      if mc.bindings == 0 then termToScalaExpr(mc.body, ctx)
+      else
+        val bindName  = s"_n"
+        val extCtx    = bindName :: ctx
+        val bodyStr   = termToScalaExpr(mc.body, extCtx)
+        s"{ val $bindName = ${binder(sStr)}; $bodyStr }"
+
+    (byName.get("zero"), byName.get("pos"), byName.get("neg")) match
+      case (Some(z), Some(p), Some(n)) =>
+        val zBody = termToScalaExpr(z.body, ctx)
+        val pBody = arm(p, s => s"$s - 1")
+        val nBody = arm(n, s => s"-$s - 1")
+        s"(if ($sStr == 0) $zBody else if ($sStr > 0) $pBody else $nBody)"
+      case _ =>
+        // Fallback to normal match if case structure is unexpected
+        extractMatch(scrutinee, cases, ctx)
 
   /** Render a match expression. */
   private def extractMatch(

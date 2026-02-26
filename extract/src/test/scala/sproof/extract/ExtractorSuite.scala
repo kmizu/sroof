@@ -168,3 +168,58 @@ class ExtractorSuite extends FunSuite:
     val result = Extractor.termToScalaExpr(Term.Meta(42))
     assertEquals(result, "???")
   }
+
+  // ---- builtin Int → scala.Int mapping ----
+
+  val intDef: IndDef = IndDef(
+    name     = "Int",
+    params   = Nil,
+    ctors    = List(
+      CtorDef("zero", Nil),
+      CtorDef("pos", List(natInd)),
+      CtorDef("neg", List(natInd)),
+    ),
+    universe = 0,
+  )
+
+  test("Int builtin: extractInductive produces comment, not enum") {
+    val result = Extractor.extractInductive(intDef)
+    assert(!result.contains("enum Int:"), s"Int should not produce enum:\n$result")
+    assert(result.contains("Int"),        s"should mention Int:\n$result")
+  }
+
+  test("Int builtin: termToScalaType(Int) → Int") {
+    assertEquals(Extractor.termToScalaType(Term.Ind("Int", Nil, Nil)), "Int")
+  }
+
+  test("Int builtin: Con zero → 0") {
+    assertEquals(Extractor.termToScalaExpr(Term.Con("zero", "Int", Nil), Nil), "0")
+  }
+
+  test("Int builtin: Con pos(n) → n + 1") {
+    assertEquals(
+      Extractor.termToScalaExpr(Term.Con("pos", "Int", List(Term.Var(0))), List("n")),
+      "n + 1",
+    )
+  }
+
+  test("Int builtin: Con neg(n) → -(n + 1)") {
+    assertEquals(
+      Extractor.termToScalaExpr(Term.Con("neg", "Int", List(Term.Var(0))), List("n")),
+      "-(n + 1)",
+    )
+  }
+
+  test("Int builtin: match produces if/else chain") {
+    // match a { Int.zero => 0  |  Int.pos(n) => n+1  |  Int.neg(n) => -(n+1) }
+    val cases = List(
+      sproof.core.MatchCase("zero", 0, Term.Var(1)),           // body: 'a' (Var(1) with a in ctx)
+      sproof.core.MatchCase("pos",  1, Term.Var(0)),           // body: bound 'n'
+      sproof.core.MatchCase("neg",  1, Term.Var(0)),
+    )
+    val mat    = Term.Mat(Term.Var(0), cases, Term.Ind("Int", Nil, Nil))
+    val result = Extractor.termToScalaExpr(mat, List("a"))
+    assert(result.contains("if"),   s"should contain 'if':\n$result")
+    assert(result.contains("else"), s"should contain 'else':\n$result")
+    assert(!result.contains("match"), s"should NOT contain 'match':\n$result")
+  }

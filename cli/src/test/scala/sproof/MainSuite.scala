@@ -151,4 +151,65 @@ class MainSuite extends FunSuite:
     assert(result.isRight, s"single-line inductive should parse: $result")
   }
 
+  // ---- Int type ----
+
+  test("check: Int with neg-neg involution proves correctly") {
+    val source =
+      """|inductive Nat {
+         |  case zero: Nat
+         |  case succ(n: Nat): Nat
+         |}
+         |inductive Int {
+         |  case zero: Int
+         |  case pos(n: Nat): Int
+         |  case neg(n: Nat): Int
+         |}
+         |def int_neg(a: Int): Int {
+         |  match a {
+         |    case Int.zero   => Int.zero
+         |    case Int.pos(n) => Int.neg(n)
+         |    case Int.neg(n) => Int.pos(n)
+         |  }
+         |}
+         |defspec int_neg_neg(a: Int): int_neg(int_neg(a)) = a {
+         |  by induction a {
+         |    case zero   => trivial
+         |    case pos n  => trivial
+         |    case neg n  => trivial
+         |  }
+         |}
+         |""".stripMargin
+    val result = Main.processSource(source, "Int-test")
+    assert(result.isRight, s"expected Right but got: $result")
+    val (env, defspecCount) = result.toOption.get
+    assert(env.inductives.contains("Int"), "env should contain Int")
+    assert(defspecCount == 1, s"expected 1 defspec, got: $defspecCount")
+  }
+
+  test("check: int_add_zero_left holds by trivial") {
+    val source =
+      """|inductive Nat {
+         |  case zero: Nat
+         |  case succ(n: Nat): Nat
+         |}
+         |inductive Int {
+         |  case zero: Int
+         |  case pos(n: Nat): Int
+         |  case neg(n: Nat): Int
+         |}
+         |def int_add(a: Int, b: Int): Int {
+         |  match a {
+         |    case Int.zero   => b
+         |    case Int.pos(n) => b
+         |    case Int.neg(n) => b
+         |  }
+         |}
+         |defspec int_add_zero_left(a: Int): int_add(Int.zero, a) = a {
+         |  by trivial
+         |}
+         |""".stripMargin
+    val result = Main.processSource(source, "int-add-zero-left")
+    assert(result.isRight, s"expected Right but got: $result")
+  }
+
 end MainSuite
