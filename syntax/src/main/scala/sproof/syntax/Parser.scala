@@ -116,8 +116,13 @@ object Parser:
   private lazy val expr: Parsley[SExpr] = choice(
     matchExpr,
     lamExpr,
+    listLiteral,
     addExpr,
   )
+
+  /** List literal: [] or [e1, e2, e3] */
+  private lazy val listLiteral: Parsley[SExpr] =
+    atomic(op("[") *> sepBy(fwd(expr), op(",")) <* op("]")).map(SExpr.SEList.apply)
 
   /** Additive level: left-associative + */
   private lazy val addExpr: Parsley[SExpr] =
@@ -276,13 +281,21 @@ object Parser:
       }
     }
 
-  /** def name(params): retTpe = body  OR  def name(params): retTpe { body } */
+  /** Optional type parameter list: [A] or [A, B, C] */
+  private lazy val typeParamList: Parsley[List[SParam]] =
+    brackets(sepBy1(identifier, op(","))).map { names =>
+      names.map(n => SParam(n, SType.STUni(0)))
+    }
+
+  /** def name[A, B](params): retTpe = body  OR  def name(params): retTpe { body } */
   private lazy val defDecl: Parsley[SDecl] =
     keyword("def") *> identifier.flatMap { name =>
-      paramList.flatMap { params =>
-        (op(":") *> fwd(typeExpr)).flatMap { retTpe =>
-          defBody.map { body =>
-            SDecl.SDef(name, params, retTpe, body)
+      option(typeParamList).map(_.getOrElse(Nil)).flatMap { tparams =>
+        paramList.flatMap { params =>
+          (op(":") *> fwd(typeExpr)).flatMap { retTpe =>
+            defBody.map { body =>
+              SDecl.SDef(name, tparams ++ params, retTpe, body)
+            }
           }
         }
       }
@@ -293,13 +306,15 @@ object Parser:
     braces(fwd(expr)),
   )
 
-  /** defspec name(params): prop { by tactic } */
+  /** defspec name[A](params): prop { by tactic } */
   private lazy val defspecDecl: Parsley[SDecl] =
     keyword("defspec") *> identifier.flatMap { name =>
-      paramList.flatMap { params =>
-        (op(":") *> propType).flatMap { prop =>
-          braces(proof).map { prf =>
-            SDecl.SDefspec(name, params, prop, prf)
+      option(typeParamList).map(_.getOrElse(Nil)).flatMap { tparams =>
+        paramList.flatMap { params =>
+          (op(":") *> propType).flatMap { prop =>
+            braces(proof).map { prf =>
+              SDecl.SDefspec(name, tparams ++ params, prop, prf)
+            }
           }
         }
       }

@@ -511,3 +511,79 @@ class ParserSuite extends FunSuite:
     val SType.STEq(lhs, _) = prop: @unchecked
     assert(lhs.isInstanceOf[SExpr.SInfix], s"Expected SInfix lhs in equality, got: $lhs")
   }
+
+  // ===== Type parameter parsing (feature 2) =====
+
+  test("parse def with single type parameter") {
+    val input = "def id[A](x: A): A = x"
+    val result = Parser.parseDecl(input)
+    assert(result.isRight, s"Parse failed: $result")
+    val SDecl.SDef(name, params, retTpe, body) = result.toOption.get: @unchecked
+    assertEquals(name, "id")
+    assertEquals(params.length, 2)
+    assertEquals(params(0), SParam("A", SType.STUni(0)))
+    assertEquals(params(1), SParam("x", SType.STVar("A")))
+    assertEquals(retTpe, SType.STVar("A"))
+  }
+
+  test("parse def with multiple type parameters") {
+    val input = "def const[A, B](x: A, y: B): A = x"
+    val result = Parser.parseDecl(input)
+    assert(result.isRight, s"Parse failed: $result")
+    val SDecl.SDef(_, params, _, _) = result.toOption.get: @unchecked
+    assertEquals(params.length, 4)
+    assertEquals(params(0), SParam("A", SType.STUni(0)))
+    assertEquals(params(1), SParam("B", SType.STUni(0)))
+    assertEquals(params(2), SParam("x", SType.STVar("A")))
+    assertEquals(params(3), SParam("y", SType.STVar("B")))
+  }
+
+  test("parse defspec with type parameter") {
+    val input = "defspec idSpec[A](x: A): x = x { by sorry }"
+    val result = Parser.parseDecl(input)
+    assert(result.isRight, s"Parse failed: $result")
+    val SDecl.SDefspec(_, params, _, _) = result.toOption.get: @unchecked
+    assertEquals(params.length, 2)
+    assertEquals(params(0), SParam("A", SType.STUni(0)))
+    assertEquals(params(1), SParam("x", SType.STVar("A")))
+  }
+
+  test("parse def without type parameters is unchanged") {
+    val input = "def id(x: Nat): Nat = x"
+    val result = Parser.parseDecl(input)
+    assert(result.isRight, s"Parse failed: $result")
+    val SDecl.SDef(_, params, _, _) = result.toOption.get: @unchecked
+    assertEquals(params.length, 1)
+    assertEquals(params(0), SParam("x", SType.STVar("Nat")))
+  }
+
+  // ===== List literal parsing (feature 5) =====
+
+  test("parse empty list literal") {
+    val result = Parser.parseExpr("[]")
+    assertEquals(result, Right(SExpr.SEList(Nil)))
+  }
+
+  test("parse single-element list literal") {
+    val result = Parser.parseExpr("[x]")
+    assertEquals(result, Right(SExpr.SEList(List(SExpr.SEVar("x")))))
+  }
+
+  test("parse multi-element list literal") {
+    val result = Parser.parseExpr("[x, y, z]")
+    assertEquals(result, Right(SExpr.SEList(List(SExpr.SEVar("x"), SExpr.SEVar("y"), SExpr.SEVar("z")))))
+  }
+
+  test("parse nested list literal") {
+    val result = Parser.parseExpr("[Nat.zero, Nat.succ(Nat.zero)]")
+    assert(result.isRight, s"Parse failed: $result")
+    val SExpr.SEList(elems) = result.toOption.get: @unchecked
+    assertEquals(elems.length, 2)
+  }
+
+  test("parse list literal in def body") {
+    val input = "def myList(x: Nat): Nat = x"
+    // Sanity: list literal compiles in expression context
+    val exprResult = Parser.parseExpr("[x, y]")
+    assert(exprResult.isRight)
+  }

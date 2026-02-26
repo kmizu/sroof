@@ -19,11 +19,18 @@ case class ElabResult(
   * - SInductive -> IndDef in GlobalEnv
   * - SDef       -> Term body (with de Bruijn indices) in defs map
   * - SDefspec   -> (proposition Term, SProof) in defspecs map
+  *
+  * Type annotations map: when a param `(inst: Add)` declares a struct type,
+  * we record `"inst" -> "Add"` so that `inst.field(args)` can be elaborated
+  * as field accessor calls (dictionary passing style).
   */
 object Elaborator:
 
   /** Name environment for de Bruijn index resolution. Head = most recently bound. */
   private type NameEnv = List[String]
+
+  /** Maps variable name to struct name (for dot-notation field access). */
+  private type TypeAnns = Map[String, String]
 
   def elaborate(decls: List[SDecl]): Either[ElabError, ElabResult] =
     var env      = GlobalEnv.empty
@@ -45,7 +52,6 @@ object Elaborator:
             case Left(err)   => return Left(err)
             case Right(term) =>
               defs = defs + (name -> term)
-              // Store the full type: extract from Fix if present, else just retTpe.
               val fullTpe = term match
                 case Term.Fix(_, tpe, _) => tpe
                 case _                   => elabType(retTpe, env, Nil).getOrElse(Term.Meta(-1))
@@ -55,17 +61,19 @@ object Elaborator:
           if defspecs.contains(name) then
             return Left(ElabError(s"Duplicate defspec: $name"))
           val nameEnv = params.reverse.map(_.name)
-          // Elaborate param types (non-dependent: each type is in the outer env)
+          val typeAnns = buildTypeAnns(params, env)
+          // Elaborate param types (with accumulating context for dependent types)
           val elabParamTypes: Either[ElabError, List[(String, Term)]] =
-            params.foldLeft[Either[ElabError, List[(String, Term)]]](Right(Nil)) {
-              (acc, p) => acc.flatMap { lst =>
-                elabType(p.tpe, env, Nil).map(tpe => lst :+ (p.name, tpe))
+            params.zipWithIndex.foldLeft[Either[ElabError, List[(String, Term)]]](Right(Nil)) {
+              case (acc, (p, i)) => acc.flatMap { lst =>
+                val tNameEnv = params.take(i).reverse.map(_.name)
+                elabType(p.tpe, env, tNameEnv).map(tpe => lst :+ (p.name, tpe))
               }
             }
           elabParamTypes match
             case Left(err) => return Left(err)
             case Right(elabParams) =>
-              elabType(prop, env, nameEnv) match
+              elabType(prop, env, nameEnv, typeAnns) match
                 case Left(err)    => return Left(err)
                 case Right(propT) => defspecs = defspecs + (name -> (elabParams, propT, proof))
 
@@ -105,9 +113,20 @@ object Elaborator:
                   val entry = DefEntry(defName, fullTpe, term)
                   defs = defs + (defName -> term)
                   env = env.addDef(entry).addOperator(opSymbol, defName)
-            case _ => () // cannot happen
+            case _ => ()
 
     Right(ElabResult(env, defs, defspecs))
+
+  // ---- Helpers ----
+
+  /** Build type annotations map from param declarations (for struct field access). */
+  private def buildTypeAnns(params: List[SParam], env: GlobalEnv): TypeAnns =
+    params.flatMap { p =>
+      p.tpe match
+        case SType.STVar(typeName) if env.lookupStruct(typeName).isDefined =>
+          Some(p.name -> typeName)
+        case _ => None
+    }.toMap
 
   // ---- Inductive elaboration ----
 
@@ -117,8 +136,6 @@ object Elaborator:
     ctors:  List[SCtor],
     env:    GlobalEnv,
   ): IndDef =
-    // Pre-register this inductive with an empty ctor list so self-referential
-    // constructors (e.g. succ(n: Nat): Nat) can resolve the type name.
     val envWithSelf = env.addInd(IndDef(name, Nil, Nil, 0))
     val ctorDefs = ctors.map { ctor =>
       val argTpes = ctor.argParams.map { p =>
@@ -137,85 +154,81 @@ object Elaborator:
     body:   SExpr,
     env:    GlobalEnv,
   ): Either[ElabError, Term] =
-    // Validate parameter types
-    for p <- params do
-      elabType(p.tpe, env, Nil) match
-        case Left(err) => return Left(err)
-        case _         => ()
-
-    // Build name environment: params reversed so innermost = lowest index.
-    // e.g. params=[n,m] → nameEnv=["m","n"], so m=Var(0), n=Var(1).
-    val nameEnv = params.reverse.map(_.name)
-
-    // Elaborate param types (for lambda/Pi wrappers)
-    val elabParamTpes: Either[ElabError, List[Term]] =
-      params.foldLeft(Right(Nil): Either[ElabError, List[Term]]) { (acc, p) =>
-        acc.flatMap(lst => elabType(p.tpe, env, Nil).map(tpe => lst :+ tpe))
+    // Validate + elaborate param types with accumulating nameEnv (dependent Pi support).
+    // params[i]'s type is elaborated with params[0..i-1] in scope.
+    val elabParamTpesE: Either[ElabError, List[Term]] =
+      params.zipWithIndex.foldLeft(Right(Nil): Either[ElabError, List[Term]]) {
+        case (acc, (p, i)) =>
+          val typeNameEnv = params.take(i).reverse.map(_.name)
+          acc.flatMap(lst => elabType(p.tpe, env, typeNameEnv).map(t => lst :+ t))
       }
 
+    // Return type is elaborated with all params in scope.
+    val retTypeNameEnv = params.reverse.map(_.name)
+
+    // Name environment for the body: params reversed so innermost = lowest index.
+    val nameEnv = params.reverse.map(_.name)
+
+    // Type annotations from params (for struct field access via dot notation).
+    val typeAnns = buildTypeAnns(params, env)
+
     for
-      bodyT     <- elabExpr(body, env, nameEnv, name)
-      retTpeT   <- elabType(retTpe, env, Nil)
-      paramTpes <- elabParamTpes
+      bodyT     <- elabExpr(body, env, nameEnv, name, typeAnns)
+      retTpeT   <- elabType(retTpe, env, retTypeNameEnv)
+      paramTpes <- elabParamTpesE
     yield
       if params.isEmpty then
         bodyT
       else
-        // Wrap body in lambdas: Lam(p1, Lam(p2, ..., bodyT))
-        // With params=[p1,p2], foldRight processes p2 first:
-        //   result = Lam("p1", t1, Lam("p2", t2, bodyT))
-        // Inside the innermost lambda: Var(0)=p2, Var(1)=p1, Var(nameEnv.length)=self ✓
         val lamsBody = params.zip(paramTpes).foldRight(bodyT) { case ((p, tpe), acc) =>
           Term.Lam(p.name, tpe, acc)
         }
-        // Build Fix type: Pi(p1:t1, Pi(p2:t2, retTpeT))
         val fixTpe = params.zip(paramTpes).foldRight(retTpeT) { case ((p, tpe), cod) =>
           Term.Pi(p.name, tpe, cod)
         }
-        // Fix("name", fixTpe, lamsBody): Var(0) in lamsBody = self-reference
         Term.Fix(name, fixTpe, lamsBody)
 
   // ---- Type elaboration ----
 
-  private def elabType(tpe: SType, env: GlobalEnv, nameEnv: NameEnv): Either[ElabError, Term] =
+  private def elabType(
+    tpe:      SType,
+    env:      GlobalEnv,
+    nameEnv:  NameEnv,
+    typeAnns: TypeAnns = Map.empty,
+  ): Either[ElabError, Term] =
     tpe match
       case SType.STVar(name) =>
-        // Check if it's a known inductive type
         if env.lookupInd(name).isDefined then
           Right(Term.Ind(name, Nil, Nil))
-        // Check if it's a bound variable (in Pi types, etc.)
         else nameEnv.indexOf(name) match
           case -1 => Left(ElabError(s"Unknown type: $name"))
           case i  => Right(Term.Var(i))
 
       case SType.STApp(fn, arg) =>
         for
-          fnT  <- elabType(fn, env, nameEnv)
-          argT <- elabType(arg, env, nameEnv)
+          fnT  <- elabType(fn, env, nameEnv, typeAnns)
+          argT <- elabType(arg, env, nameEnv, typeAnns)
         yield Term.App(fnT, argT)
 
       case SType.STArrow(dom, cod) =>
         for
-          domT <- elabType(dom, env, nameEnv)
-          codT <- elabType(cod, env, "_" :: nameEnv)
+          domT <- elabType(dom, env, nameEnv, typeAnns)
+          codT <- elabType(cod, env, "_" :: nameEnv, typeAnns)
         yield Term.Pi("_", domT, codT)
 
       case SType.STPi(name, dom, cod) =>
         for
-          domT <- elabType(dom, env, nameEnv)
-          codT <- elabType(cod, env, name :: nameEnv)
+          domT <- elabType(dom, env, nameEnv, typeAnns)
+          codT <- elabType(cod, env, name :: nameEnv, typeAnns)
         yield Term.Pi(name, domT, codT)
 
       case SType.STUni(level) =>
         Right(Term.Uni(level))
 
       case SType.STEq(lhs, rhs) =>
-        // Equality proposition: elaborate both sides as expressions.
-        // Use 2-arg form: App(App(Ind("Eq",...), lhs), rhs) — type arg is inferred later.
-        // We use Ind("Eq",...) as the head; the bidirectional checker has a special case for refl.
         for
-          lhsT <- elabExpr(lhs, env, nameEnv, "")
-          rhsT <- elabExpr(rhs, env, nameEnv, "")
+          lhsT <- elabExpr(lhs, env, nameEnv, "", typeAnns)
+          rhsT <- elabExpr(rhs, env, nameEnv, "", typeAnns)
         yield Term.App(Term.App(Term.Ind("Eq", Nil, Nil), lhsT), rhsT)
 
   // ---- Expression elaboration ----
@@ -225,104 +238,133 @@ object Elaborator:
     env:      GlobalEnv,
     nameEnv:  NameEnv,
     selfName: String,
+    typeAnns: TypeAnns = Map.empty,
   ): Either[ElabError, Term] =
     expr match
       case SExpr.SEVar(name) =>
-        // Check local bindings first
         nameEnv.indexOf(name) match
           case -1 =>
-            // Self-reference (recursive call within current def): Var(nameEnv.length)
-            // must be checked BEFORE GlobalEnv lookup so that the def being elaborated
-            // uses the Fix self-binding, not a stale GlobalEnv entry.
             if name == selfName then
               Right(Term.Var(nameEnv.length))
             else env.lookupDef(name) match
-              // Inline the Fix term from GlobalEnv (it's closed, no free variables).
               case Some(defEntry) => Right(defEntry.body)
               case None           => Left(ElabError(s"Unknown variable: $name"))
           case i => Right(Term.Var(i))
 
       case SExpr.SEApp(fn, args) =>
         fn match
-          case SExpr.SEVar(name) =>
-            // Elaborate function reference
-            val fnResult = elabExpr(fn, env, nameEnv, selfName)
-            fnResult.flatMap { fnTerm =>
+          case SExpr.SEVar(_) =>
+            elabExpr(fn, env, nameEnv, selfName, typeAnns).flatMap { fnTerm =>
               args.foldLeft(Right(fnTerm): Either[ElabError, Term]) { (acc, arg) =>
                 for
                   f <- acc
-                  a <- elabExpr(arg, env, nameEnv, selfName)
+                  a <- elabExpr(arg, env, nameEnv, selfName, typeAnns)
                 yield Term.App(f, a)
               }
             }
           case _ =>
             for
-              fnT <- elabExpr(fn, env, nameEnv, selfName)
+              fnT <- elabExpr(fn, env, nameEnv, selfName, typeAnns)
               result <- args.foldLeft(Right(fnT): Either[ElabError, Term]) { (acc, arg) =>
                 for
                   f <- acc
-                  a <- elabExpr(arg, env, nameEnv, selfName)
+                  a <- elabExpr(arg, env, nameEnv, selfName, typeAnns)
                 yield Term.App(f, a)
               }
             yield result
 
       case SExpr.SELam(params, body) =>
         val newEnv = params.reverse.map(_.name) ++ nameEnv
+        val newTypeAnns = typeAnns ++ buildTypeAnns(params, env)
         for
-          bodyT <- elabExpr(body, env, newEnv, selfName)
+          bodyT <- elabExpr(body, env, newEnv, selfName, newTypeAnns)
         yield params.foldRight(bodyT) { (p, acc) =>
           val tpe = elabType(p.tpe, env, nameEnv).getOrElse(Term.Meta(-1))
           Term.Lam(p.name, tpe, acc)
         }
 
-      case SExpr.SECon(typeName, ctorName, args) =>
-        // Verify constructor exists
-        env.lookupInd(typeName) match
-          case None => Left(ElabError(s"Unknown inductive type: $typeName"))
+      case SExpr.SECon(varOrTypeName, fieldOrCtorName, args) =>
+        env.lookupInd(varOrTypeName) match
           case Some(indDef) =>
-            if !indDef.ctors.exists(_.name == ctorName) then
-              Left(ElabError(s"Unknown constructor: $typeName.$ctorName"))
+            // Constructor application: Type.ctor(args)
+            if !indDef.ctors.exists(_.name == fieldOrCtorName) then
+              Left(ElabError(s"Unknown constructor: $varOrTypeName.$fieldOrCtorName"))
             else
-              val argsResult = args.map(elabExpr(_, env, nameEnv, selfName))
-              val firstErr = argsResult.collectFirst { case Left(e) => e }
-              firstErr match
+              val argsResult = args.map(elabExpr(_, env, nameEnv, selfName, typeAnns))
+              argsResult.collectFirst { case Left(e) => e } match
                 case Some(err) => Left(err)
                 case None =>
-                  Right(Term.Con(ctorName, typeName, argsResult.map(_.toOption.get)))
+                  Right(Term.Con(fieldOrCtorName, varOrTypeName, argsResult.map(_.toOption.get)))
+
+          case None =>
+            // Dot notation field access: varName.fieldName(args)
+            typeAnns.get(varOrTypeName) match
+              case None =>
+                Left(ElabError(s"Unknown inductive type or struct variable: $varOrTypeName"))
+              case Some(structName) =>
+                env.lookupStruct(structName) match
+                  case None =>
+                    Left(ElabError(s"Internal: struct $structName not in env"))
+                  case Some(structDef) =>
+                    if !structDef.fields.exists(_._1 == fieldOrCtorName) then
+                      Left(ElabError(s"Unknown field: $fieldOrCtorName on struct $structName"))
+                    else
+                      val accessorName = s"${structName}_${fieldOrCtorName}"
+                      env.lookupDef(accessorName) match
+                        case None =>
+                          Left(ElabError(s"Internal: missing accessor $accessorName"))
+                        case Some(accEntry) =>
+                          // Resolve receiver variable
+                          val receiverE: Either[ElabError, Term] =
+                            nameEnv.indexOf(varOrTypeName) match
+                              case -1 =>
+                                env.lookupDef(varOrTypeName) match
+                                  case None  => Left(ElabError(s"Unknown variable: $varOrTypeName"))
+                                  case Some(d) => Right(d.body)
+                              case i  => Right(Term.Var(i))
+                          for
+                            receiver <- receiverE
+                            argTerms <- args.foldLeft(Right(Nil): Either[ElabError, List[Term]]) { (acc, a) =>
+                              for lst <- acc; t <- elabExpr(a, env, nameEnv, selfName, typeAnns) yield lst :+ t
+                            }
+                          yield
+                            // App(App(App(accessor, receiver), arg1), arg2, ...)
+                            argTerms.foldLeft(Term.App(accEntry.body, receiver): Term)(Term.App.apply)
 
       case SExpr.SEMatch(scrutinee, cases) =>
         for
-          scrT <- elabExpr(scrutinee, env, nameEnv, selfName)
-          casesT <- elabMatchCases(cases, env, nameEnv, selfName)
-        yield Term.Mat(scrT, casesT, Term.Meta(-1)) // return type inferred later
+          scrT   <- elabExpr(scrutinee, env, nameEnv, selfName, typeAnns)
+          casesT <- elabMatchCases(cases, env, nameEnv, selfName, typeAnns)
+        yield Term.Mat(scrT, casesT, Term.Meta(-1))
 
       case SExpr.SInfix(lhs, op, rhs) =>
         env.lookupOperator(op) match
-          case None        => Left(ElabError(s"Unknown operator: $op (no operator declaration found)"))
+          case None          => Left(ElabError(s"Unknown operator: $op (no operator declaration found)"))
           case Some(defName) =>
             env.lookupDef(defName) match
-              case None    => Left(ElabError(s"Internal: operator $op maps to unknown def $defName"))
+              case None       => Left(ElabError(s"Internal: operator $op maps to unknown def $defName"))
               case Some(opEntry) =>
                 for
-                  lT <- elabExpr(lhs, env, nameEnv, selfName)
-                  rT <- elabExpr(rhs, env, nameEnv, selfName)
+                  lT <- elabExpr(lhs, env, nameEnv, selfName, typeAnns)
+                  rT <- elabExpr(rhs, env, nameEnv, selfName, typeAnns)
                 yield Term.App(Term.App(opEntry.body, lT), rT)
+
+      case SExpr.SEList(elems) =>
+        // Desugar [e1, e2, e3] -> cons(e1, cons(e2, cons(e3, nil)))
+        // Requires "List" inductive with "nil" and "cons" constructors in scope.
+        val nilExpr: SExpr = SExpr.SECon("List", "nil", Nil)
+        val desugared = elems.foldRight(nilExpr) { (elem, acc) =>
+          SExpr.SECon("List", "cons", List(elem, acc))
+        }
+        elabExpr(desugared, env, nameEnv, selfName, typeAnns)
 
   // ---- Structure / Instance / Operator helpers ----
 
-  /** Elaborate a `structure` declaration.
-   *
-   *  Returns:
-   *  - The `IndDef` (inductive type with single `mk` constructor)
-   *  - The `StructDef` (field registry)
-   *  - Field accessor `DefEntry` list
-   */
   private def elabStructure(
     name:   String,
     fields: List[SParam],
     env:    GlobalEnv,
   ): Either[ElabError, (IndDef, StructDef, List[DefEntry])] =
-    // Elaborate field types
     val fieldTypesE: Either[ElabError, List[(String, Term)]] =
       fields.foldLeft[Either[ElabError, List[(String, Term)]]](Right(Nil)) { (acc, p) =>
         acc.flatMap { lst =>
@@ -332,15 +374,9 @@ object Elaborator:
 
     fieldTypesE.map { fieldTypes =>
       val n = fieldTypes.length
-
-      // Inductive type: inductive Name { case mk(f1: T1, f2: T2, ...): Name }
       val mkCtor = CtorDef("mk", fieldTypes.map(_._2))
       val indDef = IndDef(name, Nil, List(mkCtor), 0)
-
-      // Struct registry
       val structDef = StructDef(name, fieldTypes)
-
-      // Field accessors: def Name_fieldI(d: Name): Ti = match d { case mk(n bindings) => Var(n-1-i) }
       val indTpe = Term.Ind(name, Nil, Nil)
       val accessors = fieldTypes.zipWithIndex.map { case ((fieldName, fieldTpe), i) =>
         val accessorName = s"${name}_${fieldName}"
@@ -357,15 +393,9 @@ object Elaborator:
         )
         DefEntry(accessorName, Term.Pi("d", indTpe, fieldTpe), body)
       }
-
       (indDef, structDef, accessors)
     }
 
-  /** Elaborate an `instance` declaration.
-   *
-   *  Validates that all fields are provided (no missing, no extra),
-   *  then produces a constant `DefEntry` whose body is `Con("mk", structName, [...])`.
-   */
   private def elabInstance(
     name:       String,
     structName: String,
@@ -377,34 +407,26 @@ object Elaborator:
       case Some(structDef) =>
         val fieldNames = structDef.fields.map(_._1)
         val bindingMap = bindings.toMap
-
-        // Validate: no missing fields
         val missing = fieldNames.filterNot(bindingMap.contains)
         if missing.nonEmpty then
           return Left(ElabError(s"Missing fields in instance $name: ${missing.mkString(", ")}"))
-
-        // Validate: no extra fields
         val extra = bindings.map(_._1).filterNot(fieldNames.contains)
         if extra.nonEmpty then
           return Left(ElabError(s"Unknown fields in instance $name: ${extra.mkString(", ")}"))
-
-        // Elaborate each field expression in field-declaration order
         val argTermsE: Either[ElabError, List[Term]] =
           fieldNames.foldLeft[Either[ElabError, List[Term]]](Right(Nil)) { (acc, fn) =>
             acc.flatMap { lst =>
               elabExpr(bindingMap(fn), env, Nil, "") match
-                case Left(err)  => Left(err)
-                case Right(t)   => Right(lst :+ t)
+                case Left(err) => Left(err)
+                case Right(t)  => Right(lst :+ t)
             }
           }
-
         argTermsE.map { argTerms =>
-          val instTpe  = Term.Ind(structName, Nil, Nil)
-          val body     = Term.Con("mk", structName, argTerms)
+          val instTpe = Term.Ind(structName, Nil, Nil)
+          val body    = Term.Con("mk", structName, argTerms)
           DefEntry(name, instTpe, body)
         }
 
-  /** Sanitize operator symbol to a valid identifier fragment. */
   private def mangleOp(sym: String): String =
     sym.map {
       case '+' => "plus"
@@ -419,23 +441,19 @@ object Elaborator:
     env:      GlobalEnv,
     nameEnv:  NameEnv,
     selfName: String,
+    typeAnns: TypeAnns = Map.empty,
   ): Either[ElabError, List[MatchCase]] =
     val results = cases.map { mc =>
-      // Parse the constructor name (may be "Nat.zero" or "Nat.succ")
       val (typeName, ctorName) = mc.ctor.split('.') match
         case Array(t, c) => (t, c)
         case _           => ("", mc.ctor)
-
       val bindingCount = mc.bindings.length
-      val extendedEnv = mc.bindings.reverse ++ nameEnv
-
-      elabExpr(mc.body, env, extendedEnv, selfName).map { bodyT =>
+      val extendedEnv  = mc.bindings.reverse ++ nameEnv
+      elabExpr(mc.body, env, extendedEnv, selfName, typeAnns).map { bodyT =>
         MatchCase(ctorName, bindingCount, bodyT)
       }
     }
-
-    val firstErr = results.collectFirst { case Left(e) => e }
-    firstErr match
+    results.collectFirst { case Left(e) => e } match
       case Some(err) => Left(err)
       case None      => Right(results.map(_.toOption.get))
 

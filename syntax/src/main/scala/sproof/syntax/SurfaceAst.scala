@@ -37,6 +37,8 @@ enum SExpr:
   case SECon(typeName: String, ctorName: String, args: List[SExpr])
   /** Infix operator expression: x + y */
   case SInfix(lhs: SExpr, op: String, rhs: SExpr)
+  /** List literal: [e1, e2, e3] — desugars to nested cons/nil in elaborator */
+  case SEList(elems: List[SExpr])
 
 /** Match case in surface syntax. */
 case class SMatchCase(ctor: String, bindings: List[String], body: SExpr)

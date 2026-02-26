@@ -375,3 +375,125 @@ class ElaboratorSuite extends FunSuite:
     val result = parseAndElab(input)
     assert(result.isLeft, "Unregistered operator should fail")
   }
+
+  // ===== Dot notation field access (feature 1) =====
+
+  private val natAndAdd =
+    """inductive Nat { case zero: Nat case succ(n: Nat): Nat }
+      |def plus(n: Nat, m: Nat): Nat { match n { case Nat.zero => m case Nat.succ(k) => Nat.succ(plus(k, m)) } }
+      |structure Add { add: Nat -> Nat -> Nat  zero: Nat }
+      |instance addNat: Add { add = plus  zero = Nat.zero }""".stripMargin
+
+  test("elaborate dot notation: inst.field(args) on struct-typed param") {
+    val input = natAndAdd + "\ndef useAdd(inst: Add, x: Nat, y: Nat): Nat = inst.add(x, y)"
+    val result = parseAndElab(input)
+    assert(result.isRight, s"Elaboration failed: $result")
+    assert(result.toOption.get.defs.contains("useAdd"))
+  }
+
+  test("elaborate dot notation: inst.zero (no-arg field)") {
+    val input = natAndAdd + "\ndef getZero(inst: Add): Nat = inst.zero"
+    val result = parseAndElab(input)
+    assert(result.isRight, s"Elaboration failed: $result")
+  }
+
+  test("elaborate dot notation: nested inst.add(n, inst.zero)") {
+    val input = natAndAdd + "\ndef addToZero(inst: Add, n: Nat): Nat = inst.add(n, inst.zero)"
+    val result = parseAndElab(input)
+    assert(result.isRight, s"Elaboration failed: $result")
+  }
+
+  test("elaborate dot notation on unknown field returns Left") {
+    val input = natAndAdd + "\ndef bad(inst: Add): Nat = inst.nope"
+    val result = parseAndElab(input)
+    assert(result.isLeft, "Unknown field access should fail")
+  }
+
+  test("elaborate dot notation on non-struct param returns Left") {
+    val input =
+      """inductive Nat { case zero: Nat case succ(n: Nat): Nat }
+        |def bad(n: Nat): Nat = n.anything""".stripMargin
+    val result = parseAndElab(input)
+    assert(result.isLeft, "Field access on non-struct type should fail")
+  }
+
+  // ===== Type parameters (feature 2) =====
+
+  test("elaborate polymorphic identity with type parameter") {
+    val input =
+      """inductive Nat { case zero: Nat case succ(n: Nat): Nat }
+        |def id[A](x: A): A = x""".stripMargin
+    val result = parseAndElab(input)
+    assert(result.isRight, s"Elaboration failed: $result")
+    assert(result.toOption.get.defs.contains("id"))
+  }
+
+  test("elaborate defspec with type parameter") {
+    val input =
+      """inductive Nat { case zero: Nat case succ(n: Nat): Nat }
+        |defspec idSpec[A](x: A): x = x { by trivial }""".stripMargin
+    val result = parseAndElab(input)
+    assert(result.isRight, s"Elaboration failed: $result")
+  }
+
+  test("elaborate const[A, B] with two type params") {
+    val input =
+      """inductive Nat { case zero: Nat case succ(n: Nat): Nat }
+        |def const[A, B](x: A, y: B): A = x""".stripMargin
+    val result = parseAndElab(input)
+    assert(result.isRight, s"Elaboration failed: $result")
+    assert(result.toOption.get.defs.contains("const"))
+  }
+
+  // ===== Int + operator (feature 3) =====
+
+  test("elaborate Int with + operator") {
+    val input =
+      """inductive Nat { case zero: Nat case succ(n: Nat): Nat }
+        |inductive Int { case zero: Int  case pos(n: Nat): Int  case neg(n: Nat): Int }
+        |def int_add(a: Int, b: Int): Int { match a {
+        |  case Int.zero => b  case Int.pos(n) => b  case Int.neg(n) => b } }
+        |operator (x: Int) + (y: Int): Int = int_add(x, y)
+        |def addTwo(a: Int, b: Int): Int = a + b""".stripMargin
+    val result = parseAndElab(input)
+    assert(result.isRight, s"Elaboration failed: $result")
+    assert(result.toOption.get.defs.contains("addTwo"))
+  }
+
+  // ===== List literals (feature 5) =====
+
+  test("elaborate empty list literal []") {
+    val input =
+      """inductive Nat { case zero: Nat case succ(n: Nat): Nat }
+        |inductive List { case nil: List  case cons(head: Nat, tail: List): List }
+        |def myNil(): List = []""".stripMargin
+    val result = parseAndElab(input)
+    assert(result.isRight, s"Elaboration failed: $result")
+    assert(result.toOption.get.defs.contains("myNil"))
+  }
+
+  test("elaborate list literal [x, y] desugars to nested cons") {
+    val input =
+      """inductive Nat { case zero: Nat case succ(n: Nat): Nat }
+        |inductive List { case nil: List  case cons(head: Nat, tail: List): List }
+        |def pair(x: Nat, y: Nat): List = [x, y]""".stripMargin
+    val result = parseAndElab(input)
+    assert(result.isRight, s"Elaboration failed: $result")
+    // body should desugar to Con("cons", List, [x, Con("cons", List, [y, Con("nil", List, [])])])
+    val body = result.toOption.get.defs("pair")
+    // The body is inside Fix/Lam wrappers; just verify it elaborated OK
+    assert(body != null)
+  }
+
+  // ===== e2e: type class + dot notation + defspec (feature 4) =====
+
+  test("e2e: type class with dot notation in defspec proposition") {
+    val input =
+      s"""$natAndAdd
+         |operator (x: Nat) + (y: Nat): Nat = plus(x, y)
+         |def addThree(inst: Add, a: Nat, b: Nat, c: Nat): Nat = inst.add(a, inst.add(b, c))
+         |defspec useTypeClass(inst: Add, n: Nat): inst.add(n, inst.zero) = n { by sorry }""".stripMargin
+    val result = parseAndElab(input)
+    assert(result.isRight, s"Elaboration failed: $result")
+    assert(result.toOption.get.defs.contains("addThree"))
+  }

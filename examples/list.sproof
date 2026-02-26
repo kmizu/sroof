@@ -1,0 +1,52 @@
+// ============================================================
+// Standard library: List (Nat-valued)
+//
+// Demonstrates list literals: [e1, e2, e3] desugars to
+//   cons(e1, cons(e2, cons(e3, nil)))
+// ============================================================
+
+inductive Nat {
+  case zero: Nat
+  case succ(n: Nat): Nat
+}
+
+inductive List {
+  case nil: List
+  case cons(head: Nat, tail: List): List
+}
+
+// ---- Basic operations ----
+
+def length(xs: List): Nat {
+  match xs {
+    case List.nil       => Nat.zero
+    case List.cons(h, t) => Nat.succ(length(t))
+  }
+}
+
+def append(xs: List, ys: List): List {
+  match xs {
+    case List.nil        => ys
+    case List.cons(h, t) => List.cons(h, append(t, ys))
+  }
+}
+
+// ---- List literals ----
+
+// [] desugars to nil
+def emptyList(): List = []
+
+// [zero, succ(zero), succ(succ(zero))] desugars to nested cons
+def threeNats(): List = [Nat.zero, Nat.succ(Nat.zero), Nat.succ(Nat.succ(Nat.zero))]
+
+// ---- Theorems ----
+
+// length of empty list is zero (definitional: matches nil case → zero)
+defspec length_nil(): length(List.nil) = Nat.zero {
+  by trivial
+}
+
+// append(nil, ys) = ys  (definitional: matches nil case directly)
+defspec append_nil_left(ys: List): append(List.nil, ys) = ys {
+  by trivial
+}
