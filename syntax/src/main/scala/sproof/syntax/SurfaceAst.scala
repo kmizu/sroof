@@ -47,6 +47,10 @@ enum SExpr:
   case SEInt(n: Int)
   /** let x := value; body — local binding (desugars to Term.Let) */
   case SELet(name: String, value: SExpr, body: SExpr)
+  /** Type ascription: (e : T) — explicit type annotation */
+  case SEAscr(expr: SExpr, tpe: SType)
+  /** if P then e1 else e2 — conditional expression */
+  case SEIf(cond: SExpr, thenBr: SExpr, elseBr: SExpr)
 
 /** Match case in surface syntax. */
 case class SMatchCase(ctor: String, bindings: List[String], body: SExpr)
@@ -80,6 +84,22 @@ enum STactic:
   case SCalc(steps: List[SCalcStep])
   /** sequence of tactics: t1; t2; t3 (run in order, passing proof state) */
   case SSeq(tactics: List[STactic])
+  /** try t — attempt tactic t, succeed even if t fails */
+  case STry(tactic: STactic)
+  /** first | t1 | t2 | t3 — try each tactic in order, take first success */
+  case SFirst(tactics: List[STactic])
+  /** repeat t — repeat t until it fails */
+  case SRepeat(tactic: STactic)
+  /** all_goals t — apply tactic to all remaining goals */
+  case SAllGoals(tactic: STactic)
+  /** skip — no-op tactic */
+  case SSkip
+  /** assumption — find a hypothesis in context that matches goal exactly */
+  case SAssumption
+  /** contradiction — find False or contradictory hypotheses */
+  case SContradiction
+  /** cases x { case c1 => t1 ... } — case split without induction hypothesis */
+  case SCases(varName: String, cases: List[STacticCase])
 
 /** A step in a calc block: lhs = rhs { proof }. lhs=None means _ (carry forward). */
 case class SCalcStep(lhs: Option[SExpr], rhs: SExpr, proof: SProof)

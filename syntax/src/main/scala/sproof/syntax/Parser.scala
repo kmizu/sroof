@@ -38,8 +38,11 @@ object Parser:
         "induction", "sorry", "fun", "Pi", "Type",
         "structure", "instance", "operator",
         "have", "rewrite", "rw", "calc", "let", "in",
+        "try", "first", "repeat", "all_goals", "skip",
+        "assumption", "contradiction", "cases",
+        "if", "then", "else",
       ),
-      hardOperators = Set("->", "=", "=>", ":=", ":", ",", "{", "}", "(", ")", "[", "]", ".", "+", "*", ";", "-", "@"),
+      hardOperators = Set("->", "=", "=>", ":=", ":", ",", "{", "}", "(", ")", "[", "]", ".", "+", "*", ";", "-", "@", "|"),
     ),
   ))
 
@@ -171,9 +174,20 @@ object Parser:
     matchExpr,
     lamExpr,
     letExpr,
+    ifExpr,
     listLiteral,
     addExpr,
   )
+
+  /** if cond then e1 else e2 */
+  private lazy val ifExpr: Parsley[SExpr] =
+    keyword("if") *> fwd(expr).flatMap { cond =>
+      keyword("then") *> fwd(expr).flatMap { thenBr =>
+        keyword("else") *> fwd(expr).map { elseBr =>
+          SExpr.SEIf(cond, thenBr, elseBr)
+        }
+      }
+    }
 
   /** let x := value; body  — local let binding */
   private lazy val letExpr: Parsley[SExpr] =
@@ -258,13 +272,26 @@ object Parser:
       }
     }
 
+  /** Parenthesized expression or type ascription: (e) or (e : T) */
+  private lazy val parenExprOrAscr: Parsley[SExpr] =
+    atomic(op("(") *> fwd(expr).flatMap { inner =>
+      choice(
+        // (e : T) — type ascription
+        op(":") *> fwd(typeExpr).map { tpe =>
+          SExpr.SEAscr(inner, tpe)
+        } <* op(")"),
+        // (e) — just a parenthesized expression
+        op(")") #> inner,
+      )
+    })
+
   /** Variable, constructor (Type.ctor), function application, or integer literal.
    *  Supports chained calls: f(a)(b, c) = App(App(f, [a]), [b, c]).
    *  Constructors (Nat.succ) consume their first arg-list in primaryExpr;
    *  further chains like Ctor(x)(y) are parsed as App(Ctor(x), [y]).
    */
   private lazy val appOrVarOrCon: Parsley[SExpr] =
-    (intLiteral <|> primaryExpr).flatMap { head =>
+    (intLiteral <|> parenExprOrAscr <|> primaryExpr).flatMap { head =>
       // Parse the first optional arg-list for non-constructor primaries,
       // then any number of additional chains.
       head match
@@ -447,6 +474,13 @@ object Parser:
     keyword("triv") #> STactic.STriv,
     keyword("rfl") #> STactic.SRfl,
     keyword("sorry") #> STactic.SSorry,
+    keyword("skip") #> STactic.SSkip,
+    keyword("assumption") #> STactic.SAssumption,
+    keyword("contradiction") #> STactic.SContradiction,
+    keyword("try") *> fwd(tactic).map(STactic.STry.apply),
+    keyword("first") *> some(op("|") *> fwd(tactic)).map(STactic.SFirst.apply),
+    keyword("repeat") *> fwd(tactic).map(STactic.SRepeat.apply),
+    keyword("all_goals") *> fwd(tactic).map(STactic.SAllGoals.apply),
     keyword("assume") *> some(identifier).map(STactic.SAssume.apply),
     keyword("intro") *> some(identifier).map(STactic.SAssume.apply),
     keyword("intros") *> some(identifier).map(STactic.SAssume.apply),
@@ -460,6 +494,7 @@ object Parser:
     rewriteTactic,
     calcTactic,
     seqTactic,
+    casesTactic,
     inductionTactic,
   )
 
@@ -510,6 +545,14 @@ object Parser:
         }
       }),
     )
+
+  /** cases x { case c1 => t1 ... } — case split without induction hypothesis */
+  private lazy val casesTactic: Parsley[STactic] =
+    keyword("cases") *> identifier.flatMap { varName =>
+      braces(many(tacticCase)).map { cases =>
+        STactic.SCases(varName, cases)
+      }
+    }
 
   private lazy val inductionTactic: Parsley[STactic] =
     keyword("induction") *> identifier.flatMap { varName =>
@@ -591,6 +634,9 @@ object Parser:
     "induction", "sorry", "fun", "Pi", "Type",
     "structure", "instance", "operator",
     "have", "rewrite", "rw", "calc", "let", "in",
+    "try", "first", "repeat", "all_goals", "skip",
+    "assumption", "contradiction", "cases",
+    "if", "then", "else",
   )
 
   private def isKeyword(s: String): Boolean = keywords.contains(s)

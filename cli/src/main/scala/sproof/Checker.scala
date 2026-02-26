@@ -122,6 +122,59 @@ object Checker:
     case STactic.SCalc(steps) =>
       calcTactic(steps)
 
+    case STactic.STry(inner) =>
+      TacticM.get.flatMap { s =>
+        val (newState, result) = TacticM.run(tacticFromSurface(inner), s)
+        result match
+          case Right(()) => TacticM.set(newState)
+          case Left(_)   => TacticM.pure(())
+      }
+
+    case STactic.SFirst(tactics) =>
+      def tryAlternatives(remaining: List[STactic]): TacticM[Unit] =
+        remaining match
+          case Nil => TacticM.fail(TacticError.Custom("first: all alternatives failed"))
+          case tac :: rest =>
+            TacticM.get.flatMap { s =>
+              val (newState, result) = TacticM.run(tacticFromSurface(tac), s)
+              result match
+                case Right(()) => TacticM.set(newState)
+                case Left(_)   => tryAlternatives(rest)
+            }
+      tryAlternatives(tactics)
+
+    case STactic.SRepeat(inner) =>
+      def loop: TacticM[Unit] =
+        TacticM.get.flatMap { s =>
+          val (newState, result) = TacticM.run(tacticFromSurface(inner), s)
+          result match
+            case Right(()) => TacticM.set(newState).flatMap(_ => loop)
+            case Left(_)   => TacticM.pure(())
+        }
+      loop
+
+    case STactic.SAllGoals(inner) =>
+      TacticM.get.flatMap { s =>
+        s.goals.foldLeft(TacticM.pure(())) { (acc, _) =>
+          acc.flatMap(_ => tacticFromSurface(inner))
+        }
+      }
+
+    case STactic.SSkip =>
+      TacticM.pure(())
+
+    case STactic.SAssumption =>
+      Builtins.assumption
+
+    case STactic.SContradiction =>
+      Builtins.contradiction
+
+    case STactic.SCases(varName, cases) =>
+      val caseSpecs = cases.map(c => (c.ctorName, c.extraBindings))
+      Builtins.cases(varName, caseSpecs).flatMap { _ =>
+        closeRemainingGoals(cases)
+      }
+
   /** Close remaining sub-goals using the specified case tactics in order.
    *
    *  Each STacticCase is consumed one-by-one as subgoals are closed.

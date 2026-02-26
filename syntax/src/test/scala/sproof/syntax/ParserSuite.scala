@@ -860,3 +860,126 @@ class ParserSuite extends FunSuite:
     val result = Parser.parseTactic("{ trivial }")
     assertEquals(result, Right(STactic.STrivial))
   }
+
+  // ===== Group A: Meta-tactics =====
+
+  test("parse tactic: try trivial") {
+    val result = Parser.parseTactic("try trivial")
+    assert(result.isRight, s"Parse failed: $result")
+    val STactic.STry(inner) = result.toOption.get: @unchecked
+    assertEquals(inner, STactic.STrivial)
+  }
+
+  test("parse tactic: try sorry") {
+    val result = Parser.parseTactic("try sorry")
+    assert(result.isRight, s"Parse failed: $result")
+    val STactic.STry(inner) = result.toOption.get: @unchecked
+    assertEquals(inner, STactic.SSorry)
+  }
+
+  test("parse tactic: first | trivial | sorry") {
+    val result = Parser.parseTactic("first | trivial | sorry")
+    assert(result.isRight, s"Parse failed: $result")
+    val STactic.SFirst(tactics) = result.toOption.get: @unchecked
+    assertEquals(tactics, List(STactic.STrivial, STactic.SSorry))
+  }
+
+  test("parse tactic: first with three alternatives") {
+    val result = Parser.parseTactic("first | rfl | sorry | trivial")
+    assert(result.isRight, s"Parse failed: $result")
+    val STactic.SFirst(tactics) = result.toOption.get: @unchecked
+    assertEquals(tactics, List(STactic.SRfl, STactic.SSorry, STactic.STrivial))
+  }
+
+  test("parse tactic: repeat trivial") {
+    val result = Parser.parseTactic("repeat trivial")
+    assert(result.isRight, s"Parse failed: $result")
+    val STactic.SRepeat(inner) = result.toOption.get: @unchecked
+    assertEquals(inner, STactic.STrivial)
+  }
+
+  test("parse tactic: all_goals trivial") {
+    val result = Parser.parseTactic("all_goals trivial")
+    assert(result.isRight, s"Parse failed: $result")
+    val STactic.SAllGoals(inner) = result.toOption.get: @unchecked
+    assertEquals(inner, STactic.STrivial)
+  }
+
+  test("parse tactic: skip") {
+    val result = Parser.parseTactic("skip")
+    assertEquals(result, Right(STactic.SSkip))
+  }
+
+  // ===== Group B: Goal inspection =====
+
+  test("parse tactic: assumption") {
+    val result = Parser.parseTactic("assumption")
+    assertEquals(result, Right(STactic.SAssumption))
+  }
+
+  test("parse tactic: contradiction") {
+    val result = Parser.parseTactic("contradiction")
+    assertEquals(result, Right(STactic.SContradiction))
+  }
+
+  // ===== Group C: cases tactic =====
+
+  test("parse tactic: cases with two cases") {
+    val input = "cases n { case zero => trivial case succ k => sorry }"
+    val result = Parser.parseTactic(input)
+    assert(result.isRight, s"Parse failed: $result")
+    val STactic.SCases(varName, cases) = result.toOption.get: @unchecked
+    assertEquals(varName, "n")
+    assertEquals(cases.length, 2)
+    assertEquals(cases(0).ctorName, "zero")
+    assertEquals(cases(0).extraBindings, Nil)
+    assertEquals(cases(0).tactic, STactic.STrivial)
+    assertEquals(cases(1).ctorName, "succ")
+    assertEquals(cases(1).extraBindings, List("k"))
+    assertEquals(cases(1).tactic, STactic.SSorry)
+  }
+
+  // ===== Group D: Expression features =====
+
+  test("parse expression: type ascription (e : T)") {
+    val result = Parser.parseExpr("(n : Nat)")
+    assert(result.isRight, s"Parse failed: $result")
+    val SExpr.SEAscr(inner, tpe) = result.toOption.get: @unchecked
+    assertEquals(inner, SExpr.SEVar("n"))
+    assertEquals(tpe, SType.STVar("Nat"))
+  }
+
+  test("parse expression: if-then-else") {
+    val result = Parser.parseExpr("if b then x else y")
+    assert(result.isRight, s"Parse failed: $result")
+    val SExpr.SEIf(cond, thenBr, elseBr) = result.toOption.get: @unchecked
+    assertEquals(cond, SExpr.SEVar("b"))
+    assertEquals(thenBr, SExpr.SEVar("x"))
+    assertEquals(elseBr, SExpr.SEVar("y"))
+  }
+
+  test("parse expression: nested if-then-else") {
+    val result = Parser.parseExpr("if a then if b then x else y else z")
+    assert(result.isRight, s"Parse failed: $result")
+    val SExpr.SEIf(_, thenBr, elseBr) = result.toOption.get: @unchecked
+    assert(thenBr.isInstanceOf[SExpr.SEIf], "Expected nested SEIf in then branch")
+    assertEquals(elseBr, SExpr.SEVar("z"))
+  }
+
+  // ===== Meta-tactics in tactic sequences =====
+
+  test("parse tactic: try in sequence { try trivial; sorry }") {
+    val result = Parser.parseTactic("{ try trivial; sorry }")
+    assert(result.isRight, s"Parse failed: $result")
+    val STactic.SSeq(tactics) = result.toOption.get: @unchecked
+    assertEquals(tactics.length, 2)
+    assert(tactics(0).isInstanceOf[STactic.STry])
+    assertEquals(tactics(1), STactic.SSorry)
+  }
+
+  test("parse tactic: skip in sequence { skip; trivial }") {
+    val result = Parser.parseTactic("{ skip; trivial }")
+    assert(result.isRight, s"Parse failed: $result")
+    val STactic.SSeq(tactics) = result.toOption.get: @unchecked
+    assertEquals(tactics, List(STactic.SSkip, STactic.STrivial))
+  }

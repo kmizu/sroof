@@ -475,6 +475,69 @@ object Builtins:
   /** Alias for `simplify` with no lemmas. */
   val simp: TacticM[Unit] = simplify(Nil)
 
+  // ---- assumption ----
+
+  /** Find a hypothesis in context whose type matches the goal exactly. */
+  val assumption: TacticM[Unit] =
+    for
+      goalPair   <- TacticM.currentGoal
+      (mv, goal)  = goalPair
+      env         = buildEnvWithDefs(goal.ctx)
+      found      <- goal.ctx.entries.zipWithIndex.collectFirst {
+        case (entry, idx) =>
+          val entryTpe = Subst.shift(idx + 1, entry.tpe)
+          if Quote.convEqual(goal.ctx.size, env, entryTpe, goal.target)
+          then Some(idx)
+          else None
+      }.flatten match
+        case Some(idx) => TacticM.pure(Term.Var(idx))
+        case None      => TacticM.fail(TacticError.Custom("assumption: no matching hypothesis found"))
+      _          <- TacticM.solveGoalWith(mv, found)
+    yield ()
+
+  // ---- contradiction ----
+
+  /** Find False or contradictory hypotheses in context to close the goal. */
+  val contradiction: TacticM[Unit] =
+    for
+      goalPair   <- TacticM.currentGoal
+      (mv, goal)  = goalPair
+      // Look for a hypothesis of type False (inductive with no constructors)
+      found      <- goal.ctx.entries.zipWithIndex.collectFirst {
+        case (entry, idx) =>
+          val tpe = Subst.shift(idx + 1, entry.tpe)
+          tpe match
+            case Term.Ind(name, _, ctors) if ctors.isEmpty =>
+              Some(idx)
+            case _ => None
+      }.flatten match
+        case Some(idx) =>
+          // Eliminate False using empty match
+          val falseTerm = Term.Var(idx)
+          val proof = Term.Mat(falseTerm, Nil, goal.target)
+          TacticM.solveGoalWith(mv, proof)
+        case None =>
+          TacticM.fail(TacticError.Custom("contradiction: no False hypothesis found"))
+    yield ()
+
+  // ---- cases ----
+
+  /** Perform case split on a named variable (like induction but without IH). */
+  def cases(varName: String, caseSpecs: List[(String, List[String])] = Nil)(using env: GlobalEnv): TacticM[Unit] =
+    for
+      goalPair     <- TacticM.currentGoal
+      (mv, goal)    = goalPair
+      varIdxTpe    <- TacticM.liftEither(findVarByName(goal.ctx, varName))
+      (varIdx, varTpe) = varIdxTpe
+      indName      <- TacticM.liftEither(extractIndNameRaw(varTpe))
+      indDef       <- TacticM.liftEither(
+                        env.lookupInd(indName).toRight(
+                          TacticError.Custom(s"Unknown inductive type '$indName' in GlobalEnv")
+                        )
+                      )
+      _            <- plainInduction(mv, goal, varIdx, indDef)
+    yield ()
+
   // ---- rewrite ----
 
   /** Rewrite the current goal using named equality lemmas.
