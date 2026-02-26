@@ -1,7 +1,0 @@
-[debug] Running TaskDef(sproof.eval.QuoteSuite, CustomFingerprint{suite='munit.Suite'}, false, [SuiteSelector])
-[debug] Running TaskDef(sproof.eval.EvalSuite, CustomFingerprint{suite='munit.Suite'}, false, [SuiteSelector])
-[debug] Summary for munit not available.
-[info] Passed: Total 28, Failed 0, Errors 0, Passed 28
-[debug] Passed tests:
-[debug] 	sproof.eval.QuoteSuite
-[debug] 	sproof.eval.EvalSuite

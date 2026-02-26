@@ -1,6 +1,6 @@
 package sproof.checker
 
-import sproof.core.{Term, Context, Subst}
+import sproof.core.{Term, Context, Subst, GlobalEnv, MatchCase}
 import sproof.eval.{Semantic, Eval, Quote, Env}
 
 /** Bidirectional type checker for predicative CIC.
@@ -10,11 +10,15 @@ import sproof.eval.{Semantic, Eval, Quote, Env}
  *  - infer(ctx, term): synthesize the type of `term`
  *
  *  Definitional equality is decided by NbE (eval + quote + alpha-eq).
+ *
+ *  Both modes take `using env: GlobalEnv` to resolve constructor and inductive
+ *  type information.  The companion object of `GlobalEnv` provides a default
+ *  empty environment so existing callers compile unchanged.
  */
 object Bidirectional:
 
   /** Check that `term` has type `expected` in context `ctx`. */
-  def check(ctx: Context, term: Term, expected: Term): Either[TypeError, Unit] =
+  def check(ctx: Context, term: Term, expected: Term)(using env: GlobalEnv): Either[TypeError, Unit] =
     (term, whnf(ctx, expected)) match
       // η-expansion: check a lambda against a Pi type
       case (Term.Lam(x, annTp, body), Term.Pi(_, dom, cod)) =>
@@ -42,7 +46,7 @@ object Bidirectional:
         yield ()
 
   /** Infer (synthesize) the type of `term` in context `ctx`. */
-  def infer(ctx: Context, term: Term): Either[TypeError, Term] = term match
+  def infer(ctx: Context, term: Term)(using env: GlobalEnv): Either[TypeError, Term] = term match
     case Term.Var(i) =>
       ctx.lookup(i).toRight(TypeError.UnboundVariable(i, ctx))
 
@@ -90,23 +94,24 @@ object Bidirectional:
         _     <- check(extCtx, body, Subst.shift(1, tpe))
       yield tpe
 
-    case Term.Con(name, _, _) =>
-      Left(TypeError.Custom(s"Constructor '$name': type inference not yet implemented (need global env)"))
+    case Term.Con(name, indRef, args) =>
+      IndChecker.inferCon(ctx, name, indRef, args)
 
     case Term.Meta(id) =>
       Left(TypeError.UnresolvedMeta(id))
 
-    case Term.Ind(_, _, _) =>
-      Right(Term.Uni(0))
+    case Term.Ind(name, _, _) =>
+      env.lookupInd(name) match
+        case Some(indDef) => Right(Term.Uni(indDef.universe))
+        case None         => Right(Term.Uni(0))  // fallback for anonymous/unknown Ind
 
-    case Term.Mat(scrutinee, _, returnTpe) =>
-      // Simplified: full version needs inductive type info from global env
-      infer(ctx, scrutinee).map(_ => returnTpe)
+    case Term.Mat(scrutinee, cases, returnTpe) =>
+      IndChecker.checkMat(ctx, scrutinee, cases, returnTpe)
 
   // ---- Helpers ----
 
   /** Infer the universe level of a type expression `t`. Returns l if t : Type_l. */
-  def inferUniverse(ctx: Context, t: Term): Either[TypeError, Int] =
+  def inferUniverse(ctx: Context, t: Term)(using env: GlobalEnv): Either[TypeError, Int] =
     infer(ctx, t).flatMap { tp =>
       whnf(ctx, tp) match
         case Term.Uni(l) => Right(l)
