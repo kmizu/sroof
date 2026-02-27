@@ -146,12 +146,18 @@ object Parser:
     keyword("Type") #> SType.STUni(0),
   )
 
-  /** Simple type variable or type application: Nat, List(A) */
+  /** Simple type variable or multi-argument type application: Nat, List(A), Vec(A, n)
+   *
+   *  Multi-argument applications are desugared to left-associative binary STApp:
+   *  Vec(A, n) → STApp(STApp(STVar("Vec"), STVar("A")), STVar("n"))
+   */
   private lazy val typeVarOrApp: Parsley[SType] =
     identifier.flatMap { name =>
-      option(parens(fwd(typeExpr))).map {
-        case Some(arg) => SType.STApp(SType.STVar(name), arg)
-        case None      => SType.STVar(name)
+      option(parens(sepBy1(fwd(typeExpr), op(",")))).map {
+        case Some(args) =>
+          args.foldLeft(SType.STVar(name): SType)((fn, arg) => SType.STApp(fn, arg))
+        case None =>
+          SType.STVar(name)
       }
     }
 
@@ -407,12 +413,19 @@ object Parser:
       }
     }
 
-  /** inductive Name(params) { case ctor1: T case ctor2(a: A): T } */
+  /** inductive Name(params)(indices) { case ctor1: T case ctor2(a: A): T }
+   *
+   *  The first `paramList` group captures uniform parameters (e.g. A: Type).
+   *  The optional second `paramList` group captures index parameters (e.g. n: Nat)
+   *  that vary per constructor (as in indexed inductive types / inductive families).
+   */
   private lazy val inductiveDecl: Parsley[SDecl] =
     keyword("inductive") *> identifier.flatMap { name =>
       option(paramList).map(_.getOrElse(Nil)).flatMap { params =>
-        braces(many(ctorDecl)).map { ctors =>
-          SDecl.SInductive(name, params, ctors)
+        option(paramList).map(_.getOrElse(Nil)).flatMap { indices =>
+          braces(many(ctorDecl)).map { ctors =>
+            SDecl.SInductive(name, params, ctors, indices)
+          }
         }
       }
     }

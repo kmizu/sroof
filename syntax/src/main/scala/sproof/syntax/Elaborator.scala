@@ -39,10 +39,10 @@ object Elaborator:
 
     for decl <- decls do
       decl match
-        case SDecl.SInductive(name, params, ctors) =>
+        case SDecl.SInductive(name, params, ctors, indices) =>
           if env.lookupInd(name).isDefined then
             return Left(ElabError(s"Duplicate inductive type: $name"))
-          val indDef = elabInductive(name, params, ctors, env)
+          val indDef = elabInductive(name, params, ctors, indices, env)
           env = env.addInd(indDef)
 
         case SDecl.SDef(name, params, retTpe, body) =>
@@ -176,19 +176,28 @@ object Elaborator:
   // ---- Inductive elaboration ----
 
   private def elabInductive(
-    name:   String,
-    params: List[SParam],
-    ctors:  List[SCtor],
-    env:    GlobalEnv,
+    name:    String,
+    params:  List[SParam],
+    ctors:   List[SCtor],
+    indices: List[SParam],
+    env:     GlobalEnv,
   ): IndDef =
-    val envWithSelf = env.addInd(IndDef(name, Nil, Nil, 0))
+    // Elaborate uniform param types (A: Type, etc.)
+    val elabParams = params.map(p => Param(p.name, elabType(p.tpe, env, Nil).getOrElse(Term.Meta(-1))))
+    // Elaborate index param types with uniform params in scope
+    val paramNames = params.map(_.name).reverse
+    val elabIndices = indices.map(p => Param(p.name, elabType(p.tpe, env, paramNames).getOrElse(Term.Meta(-1))))
+    // Register self (with params + indices) so recursive ctor arg references resolve
+    val envWithSelf = env.addInd(IndDef(name, elabParams, Nil, 0, elabIndices))
+    // Ctor arg types are elaborated with all params + indices in scope
+    val allParamNames = (params ++ indices).map(_.name).reverse
     val ctorDefs = ctors.map { ctor =>
       val argTpes = ctor.argParams.map { p =>
-        elabType(p.tpe, envWithSelf, Nil).getOrElse(Term.Meta(-1))
+        elabType(p.tpe, envWithSelf, allParamNames).getOrElse(Term.Meta(-1))
       }
       CtorDef(ctor.name, argTpes)
     }
-    IndDef(name, Nil, ctorDefs, 0)
+    IndDef(name, elabParams, ctorDefs, 0, elabIndices)
 
   // ---- Def elaboration ----
 

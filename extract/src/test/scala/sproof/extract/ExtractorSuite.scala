@@ -223,3 +223,65 @@ class ExtractorSuite extends FunSuite:
     assert(result.contains("else"), s"should contain 'else':\n$result")
     assert(!result.contains("match"), s"should NOT contain 'match':\n$result")
   }
+
+  // ---- Vec (indexed inductive type) ----
+
+  /** Vec(A: Type)(n: Nat): Type
+   *  case nil: Vec(A, zero)
+   *  case cons(m: Nat, head: A, tail: Vec[A]): Vec(A, succ(m))
+   *
+   *  Expected Scala 3 extraction:
+   *  enum Vec[A]:
+   *    case Nil
+   *    case Cons(arg0: A, arg1: Vec[A])
+   */
+  val vecInd: Term = Term.Ind("Vec", Nil, Nil)  // simplified Vec type reference
+
+  // allParamNames for elaboration = (params ++ indices).map(_.name).reverse = ["n", "A"]
+  // So: Var(0) = "n" (index), Var(1) = "A" (type param)
+  val vecDef: IndDef = IndDef(
+    name     = "Vec",
+    params   = List(Param("A", Term.Uni(0))),        // A: Type  → Scala type param [A]
+    ctors    = List(
+      CtorDef("nil", Nil),                           // nil: Vec(A, zero) — no args
+      CtorDef("cons", List(
+        natInd,                                      // m: Nat (index witness → erase)
+        Term.Var(1),                                 // head: A  (Var(1) = A in allParamNames)
+        Term.App(vecInd, Term.Var(1)),               // tail: Vec[A]  (Var(1) = A)
+      )),
+    ),
+    universe = 0,
+    indices  = List(Param("n", natInd)),             // n: Nat — index param
+  )
+
+  test("extract Vec enum produces type-parameterized header") {
+    val result = Extractor.extractInductive(vecDef)
+    assert(result.contains("enum Vec[A]:"), s"expected 'enum Vec[A]:', got:\n$result")
+  }
+
+  test("extract Vec nil produces case Nil with no args") {
+    val result = Extractor.extractInductive(vecDef)
+    assert(result.contains("case Nil"), s"expected 'case Nil', got:\n$result")
+  }
+
+  test("extract Vec cons erases index arg m: Nat and keeps data args") {
+    val result = Extractor.extractInductive(vecDef)
+    assert(result.contains("case Cons"),     s"expected 'case Cons', got:\n$result")
+    // index arg (m: Nat) must be erased — no plain ": Nat" in Cons args
+    assert(!result.contains("arg0: Nat"),    s"index arg m: Nat should be erased, got:\n$result")
+    // head: A must appear
+    assert(result.contains(": A"),           s"head: A should be present, got:\n$result")
+    // tail: Vec[A] must appear
+    assert(result.contains("Vec[A]"),        s"tail: Vec[A] should be present, got:\n$result")
+  }
+
+  test("termToScalaType resolves Var against param names") {
+    // Var(0) with paramNames=["A"] should resolve to "A"
+    assertEquals(Extractor.termToScalaType(Term.Var(0), List("A")), "A")
+  }
+
+  test("termToScalaType App with param name resolves type args") {
+    // App(Vec, Var(0)) with paramNames=["A"] → "Vec[A]"
+    val t = Term.App(vecInd, Term.Var(0))
+    assertEquals(Extractor.termToScalaType(t, List("A")), "Vec[A]")
+  }

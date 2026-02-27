@@ -1,0 +1,52 @@
+// Vec: length-indexed vector (inductive family demo)
+//
+// This file demonstrates sproof's inductive families (indexed inductive types).
+// Vec(A: Type)(n: Nat) is an inductive type with:
+//   - A: Type  — uniform type parameter  → becomes Scala type parameter [A]
+//   - n: Nat   — index parameter         → erased during Scala 3 extraction
+//
+// Scala 3 extraction produces:
+//   enum Vec[A]:
+//     case Nil
+//     case Cons(arg0: A, arg1: Vec[A])
+
+// ---- Prerequisites ----
+
+inductive Nat {
+  case zero: Nat
+  case succ(n: Nat): Nat
+}
+
+def plus(n: Nat, m: Nat): Nat {
+  match n {
+    case Nat.zero    => m
+    case Nat.succ(k) => Nat.succ(plus(k, m))
+  }
+}
+
+// ---- Indexed vector type ----
+
+// Vec(A: Type)(n: Nat): type of vectors of length n with element type A
+// Params: A: Type  — extracted as Scala type param [A]
+// Index:  n: Nat   — erased during extraction
+inductive Vec(A: Type)(n: Nat) {
+  case nil: Vec
+  case cons(m: Nat, head: A, tail: Vec(A)): Vec
+}
+
+// ---- Operations ----
+
+// concat two Vecs (index args m: Nat are witnesses for the length)
+def concat(A: Type, n: Nat, m: Nat, xs: Vec, ys: Vec): Vec {
+  match xs {
+    case Vec.nil           => ys
+    case Vec.cons(k, h, t) => Vec.cons(plus(k, m), h, concat(A, k, m, t, ys))
+  }
+}
+
+// ---- Simple specification ----
+
+// Appending an empty Vec is a no-op
+defspec concat_nil(A: Type, ys: Vec): concat(A, Nat.zero, Nat.zero, Vec.nil, ys) = ys {
+  by trivial
+}

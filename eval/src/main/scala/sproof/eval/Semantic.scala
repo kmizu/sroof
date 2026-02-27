@@ -92,12 +92,15 @@ object Semantic:
     case SLam(_, _, body)                  => body(arg)
     case SNeu(h, sp)                       => SNeu(h, sp :+ arg)
     case SFixPoint(_, fixTerm, applyFn)    =>
-      arg match
-        case SNeu(h, sp) =>
-          // Neutral argument: create a stuck NFix neutral rather than evaluating the body.
-          // This prevents infinite recursion during quoting.
-          SNeu(Neutral.NFix(fixTerm, h), sp)
-        case _ =>
-          // Concrete argument: evaluate via the closure (terminates for structural recursion).
-          applyFn(arg)
+      // Always evaluate: do NOT create NFix eagerly on a neutral first argument.
+      //
+      // Rationale: for multi-parameter functions like `concat(A: Type, n, m, xs, ys)`,
+      // the first argument (A) is a type parameter that is never pattern-matched on.
+      // Creating NFix here would prevent reduction even when xs (the structural arg)
+      // is concrete, breaking proofs like `concat_nil`.
+      //
+      // Quoting divergence is prevented by NMat.quoteNeutral, which uses
+      // `substCapturedEnv` (term-level substitution) rather than calling the body
+      // closure directly — so NFix is no longer necessary for correctness.
+      applyFn(arg)
     case other => throw RuntimeException(s"Cannot apply non-function: $other")

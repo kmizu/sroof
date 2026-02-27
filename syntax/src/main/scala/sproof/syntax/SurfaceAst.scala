@@ -2,7 +2,7 @@ package sproof.syntax
 
 /** Surface-level declarations (before elaboration). */
 enum SDecl:
-  case SInductive(name: String, params: List[SParam], ctors: List[SCtor])
+  case SInductive(name: String, params: List[SParam], ctors: List[SCtor], indices: List[SParam] = Nil)
   case SDef(name: String, params: List[SParam], retTpe: SType, body: SExpr)
   case SDefspec(name: String, params: List[SParam], prop: SType, proof: SProof)
   /** Type class / record type: structure Foo { field: Type } */

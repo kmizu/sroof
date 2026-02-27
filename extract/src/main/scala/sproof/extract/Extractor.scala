@@ -1,6 +1,6 @@
 package sproof.extract
 
-import sproof.core.{Term, GlobalEnv, IndDef, CtorDef}
+import sproof.core.{Term, GlobalEnv, IndDef, CtorDef, Param}
 
 /** Extracts sproof core terms to Scala 3 source code.
  *
@@ -49,6 +49,10 @@ object Extractor:
    *  Builtin inductive types (e.g. `Int`) are NOT emitted as enums;
    *  a comment is produced instead and Scala's built-in type is used.
    *
+   *  Uniform parameters with `Uni` type become Scala type parameters (e.g. `[A]`).
+   *  Index parameters (`IndDef.indices`) are fully erased — they appear neither in the
+   *  enum header nor in constructor argument lists.
+   *
    *  Example:
    *  {{{
    *    IndDef("Nat", [], [CtorDef("zero",[]), CtorDef("succ",[Nat])], 0)
@@ -56,6 +60,12 @@ object Extractor:
    *    enum Nat:
    *      case Zero
    *      case Succ(n: Nat)
+   *
+   *    IndDef("Vec", [A:Uni], [nil,cons(Nat,A,Vec[A])], 0, indices=[n:Nat])
+   *    // produces:
+   *    enum Vec[A]:
+   *      case Nil
+   *      case Cons(arg0: A, arg1: Vec[A])
    *  }}}
    */
   def extractInductive(indDef: IndDef): String =
@@ -63,8 +73,11 @@ object Extractor:
     if builtinInductives.contains(name) then
       s"// $name is mapped to Scala's built-in $name"
     else
-      val ctors  = indDef.ctors.map(c => extractCtor(name, c))
-      val header = s"enum $name:"
+      // Params with Uni type become Scala type parameters [A, B, ...]
+      val typeParams = indDef.params.collect { case Param(n, Term.Uni(_)) => n }
+      val typeParamStr = if typeParams.isEmpty then "" else s"[${typeParams.mkString(", ")}]"
+      val header = s"enum $name$typeParamStr:"
+      val ctors  = indDef.ctors.map(c => extractCtor(indDef, c, typeParams))
       if ctors.isEmpty then s"$header\n  case Empty"
       else ctors.map(c => s"  $c").mkString(s"$header\n", "\n", "")
 
@@ -89,24 +102,30 @@ object Extractor:
     val paramStr = params.map((n, t) => s"($n: ${termToScalaType(t)})").mkString("")
     s"def $name$paramStr: Unit = ()"
 
-  /** Convert a Term to a Scala 3 type expression. */
-  def termToScalaType(t: Term): String = t match
+  /** Convert a Term to a Scala 3 type expression.
+   *
+   *  @param t          the type term to convert
+   *  @param paramNames names of enclosing inductive type parameters, innermost first.
+   *                    Used to resolve `Var(i)` references inside constructor arg types.
+   *                    E.g. for Vec[A], paramNames=["A"], so Var(0) → "A".
+   */
+  def termToScalaType(t: Term, paramNames: List[String] = Nil): String = t match
     case Term.Uni(_)             => "Any"
     case Term.Ind(name, _, _)    => name
-    case Term.Var(i)             => s"T$i"        // free type variable (fallback)
+    case Term.Var(i)             => paramNames.lift(i).getOrElse(s"T$i")  // resolve or fallback
     case Term.Pi(x, dom, cod)    =>
       if Term.freeIn(0, cod) then
         // Dependent Pi: rendered as generic function type (simplified)
-        s"[${sanitizeName(x)} <: ${termToScalaType(dom)}] =>> ${termToScalaType(cod)}"
+        s"[${sanitizeName(x)} <: ${termToScalaType(dom, paramNames)}] =>> ${termToScalaType(cod, paramNames)}"
       else
-        s"${termToScalaType(dom)} => ${termToScalaType(cod)}"
-    case Term.App(f, a)          => s"${termToScalaType(f)}[${termToScalaType(a)}]"
-    case Term.Lam(x, _, b)      => termToScalaType(b)   // type-level lambda (erased)
-    case Term.Let(_, _, _, b)   => termToScalaType(b)
+        s"${termToScalaType(dom, paramNames)} => ${termToScalaType(cod, paramNames)}"
+    case Term.App(f, a)          => s"${termToScalaType(f, paramNames)}[${termToScalaType(a, paramNames)}]"
+    case Term.Lam(x, _, b)      => termToScalaType(b, paramNames)   // type-level lambda (erased)
+    case Term.Let(_, _, _, b)   => termToScalaType(b, paramNames)
     case Term.Con(_, ind, _)    => ind
     case Term.Fix(name, _, _)   => name
     case Term.Meta(_)            => "Any"
-    case Term.Mat(_, _, rt)     => termToScalaType(rt)
+    case Term.Mat(_, _, rt)     => termToScalaType(rt, paramNames)
 
   /** Convert a Term to a Scala 3 expression.
    *
@@ -267,18 +286,38 @@ object Extractor:
 
   /** Extract a constructor's Scala `case` line for an enum.
    *
-   *  Constructor argument names are generated as `arg0`, `arg1`, etc.
-   *  Argument types are resolved relative to the enclosing inductive type name.
+   *  Constructor argument names are generated as `arg0`, `arg1`, etc. (after index erasure).
+   *  Index args — those whose type equals one of `indDef.indices[i].tpe` — are erased entirely.
+   *  Remaining data arg types are resolved using `allParamNames` for Var references.
+   *
+   *  `allParamNames` mirrors the De Bruijn nameEnv used during elaboration of ctor arg types:
+   *    (params ++ indices).map(_.name).reverse
+   *  meaning the innermost index param has De Bruijn index 0, then the type params follow.
+   *
+   *  Example for Vec.cons(m: Nat, head: A, tail: Vec(A, m)):
+   *    indDef.params  = [A: Type], indices = [n: Nat]
+   *    allParamNames  = ["n", "A"]   (index n = Var(0), type param A = Var(1))
+   *    indexTypes     = {Ind("Nat")} → Nat-typed arg m is erased
+   *    result: case Cons(arg0: A, arg1: Vec[A])
    */
-  private def extractCtor(indName: String, ctor: CtorDef): String =
-    val ctorName = pascalCase(ctor.name)
-    if ctor.argTpes.isEmpty then s"case $ctorName"
+  private def extractCtor(indDef: IndDef, ctor: CtorDef, typeParamNames: List[String]): String =
+    val ctorName   = pascalCase(ctor.name)
+    // Full nameEnv for Var resolution — must match what elabInductive uses:
+    //   (params ++ indices).map(_.name).reverse  (indices are innermost = lowest index)
+    val allParamNames: List[String] = (indDef.params ++ indDef.indices).map(_.name).reverse
+    // Index arg types: args whose type matches an index param type are erased
+    val indexTypes: Set[Term] = indDef.indices.map(_.tpe).toSet
+    val dataArgTpes = ctor.argTpes.filterNot(indexTypes.contains)
+    if dataArgTpes.isEmpty then s"case $ctorName"
     else
-      val args = ctor.argTpes.zipWithIndex.map { (tpe, i) =>
+      val args = dataArgTpes.zipWithIndex.map { (tpe, i) =>
         val argName = s"arg$i"
-        val tpeStr  = termToScalaType(tpe) match
-          case "T0" => indName   // self-reference: free Var(0) in recursive ctors
-          case t    => t
+        val resolved = termToScalaType(tpe, allParamNames)
+        val tpeStr = resolved match
+          case n if allParamNames.contains(n) && !typeParamNames.contains(n) =>
+            // Resolved to an index param name (e.g. "n") — shouldn't appear in types; use Any
+            "Any"
+          case t => t
         s"$argName: $tpeStr"
       }
       s"case $ctorName(${args.mkString(", ")})"

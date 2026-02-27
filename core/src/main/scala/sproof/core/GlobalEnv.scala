@@ -5,23 +5,32 @@ package sproof.core
  *  `argTpes` lists argument types left-to-right.
  *  In a match body with `bindings = argTpes.length`, the last arg = Var(0),
  *  second-to-last = Var(1), etc. (standard De Bruijn convention).
+ *
+ *  `retIndices`: the concrete index values in the constructor's return type.
+ *  For example, Vec.nil has retIndices = [Nat.zero], Vec.cons has [Nat.succ(m)].
+ *  Empty for non-indexed types like Nat.
  */
 case class CtorDef(
-  name:    String,
-  argTpes: List[Term],
+  name:       String,
+  argTpes:    List[Term],
+  retIndices: List[Term] = Nil,
 )
 
 /** Definition of an inductive type in the global environment.
  *
  *  `universe`: the type universe level.  `Ind(name) : Type_universe`.
- *  `params`:   type parameters (unused for simple types like Nat).
+ *  `params`:   uniform type parameters (e.g. A: Type in List(A)).
+ *              Params with Uni type become Scala type parameters during extraction.
  *  `ctors`:    constructor definitions, ordered as declared.
+ *  `indices`:  index parameters that vary per constructor (e.g. n: Nat in Vec(A)(n)).
+ *              Indices are fully erased during Scala 3 extraction.
  */
 case class IndDef(
   name:     String,
   params:   List[Param],
   ctors:    List[CtorDef],
   universe: Int,
+  indices:  List[Param] = Nil,
 )
 
 /** A global function definition. */

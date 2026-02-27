@@ -4,6 +4,7 @@ import scala.io.{Source, StdIn}
 import sproof.core.{GlobalEnv, Context}
 import sproof.syntax.{Parser, Elaborator, ElabResult}
 import sproof.tactic.TacticError
+import sproof.extract.Extractor
 
 /** Entry point for the sproof CLI.
   *
@@ -18,6 +19,9 @@ object Main:
       case "check" :: filePath :: Nil =>
         runCheck(filePath)
 
+      case "extract" :: filePath :: Nil =>
+        runExtract(filePath)
+
       case "repl" :: Nil =>
         given GlobalEnv = GlobalEnv.empty
         runRepl()
@@ -25,6 +29,26 @@ object Main:
       case _ =>
         printUsage()
         sys.exit(1)
+
+  // ---- Extract command ----
+
+  private def runExtract(filePath: String): Unit =
+    val source =
+      try Source.fromFile(filePath).mkString
+      catch
+        case e: java.io.FileNotFoundException =>
+          System.err.println(s"Error: File not found: $filePath")
+          sys.exit(1)
+        case e: Exception =>
+          System.err.println(s"Error reading file: ${e.getMessage}")
+          sys.exit(1)
+
+    processSource(source, filePath) match
+      case Left(err) =>
+        System.err.println(s"Error: $err")
+        sys.exit(1)
+      case Right((env, _)) =>
+        println(Extractor.extractProgram(env))
 
   // ---- Check command ----
 
@@ -171,8 +195,9 @@ object Main:
   private def printUsage(): Unit =
     println(
       """|Usage:
-         |  sproof check <file.sproof>   Parse, elaborate, and verify a sproof file.
-         |  sproof repl                  Start the interactive REPL.
+         |  sproof check <file.sproof>     Parse, elaborate, and verify a sproof file.
+         |  sproof extract <file.sproof>   Extract Scala 3 code from a verified sproof file.
+         |  sproof repl                    Start the interactive REPL.
          |""".stripMargin
     )
 

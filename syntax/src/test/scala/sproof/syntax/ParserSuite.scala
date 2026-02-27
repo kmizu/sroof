@@ -107,7 +107,7 @@ class ParserSuite extends FunSuite:
     val input = """inductive Nat { case zero: Nat case succ(n: Nat): Nat }"""
     val result = Parser.parseDecl(input)
     assert(result.isRight, s"Parse failed: $result")
-    val SDecl.SInductive(name, params, ctors) = result.toOption.get: @unchecked
+    val SDecl.SInductive(name, params, ctors, _) = result.toOption.get: @unchecked
     assertEquals(name, "Nat")
     assertEquals(params, Nil)
     assertEquals(ctors.length, 2)
@@ -123,7 +123,7 @@ class ParserSuite extends FunSuite:
     val input = """inductive List(A: Type) { case nil: List(A) case cons(head: A, tail: List(A)): List(A) }"""
     val result = Parser.parseDecl(input)
     assert(result.isRight, s"Parse failed: $result")
-    val SDecl.SInductive(name, params, ctors) = result.toOption.get: @unchecked
+    val SDecl.SInductive(name, params, ctors, _) = result.toOption.get: @unchecked
     assertEquals(name, "List")
     assertEquals(params, List(SParam("A", SType.STUni(0))))
     assertEquals(ctors.length, 2)
@@ -274,7 +274,7 @@ class ParserSuite extends FunSuite:
     val input = """inductive Empty { }"""
     val result = Parser.parseDecl(input)
     assert(result.isRight, s"Parse failed: $result")
-    val SDecl.SInductive(name, _, ctors) = result.toOption.get: @unchecked
+    val SDecl.SInductive(name, _, ctors, _) = result.toOption.get: @unchecked
     assertEquals(name, "Empty")
     assertEquals(ctors, Nil)
   }
@@ -991,7 +991,7 @@ class ParserSuite extends FunSuite:
   test("enum Nat parses as SInductive") {
     val result = Parser.parseDecl("enum Nat { case zero: Nat  case succ(n: Nat): Nat }")
     assert(result.isRight, s"Parse failed: $result")
-    val SDecl.SInductive(name, _, ctors) = result.toOption.get: @unchecked
+    val SDecl.SInductive(name, _, ctors, _) = result.toOption.get: @unchecked
     assertEquals(name, "Nat")
     assertEquals(ctors.length, 2)
   }
@@ -999,7 +999,7 @@ class ParserSuite extends FunSuite:
   test("enum with type parameter parses as SInductive") {
     val result = Parser.parseDecl("enum List[A] { case nil: List(A)  case cons(h: A, t: List(A)): List(A) }")
     assert(result.isRight, s"Parse failed: $result")
-    val SDecl.SInductive(name, params, _) = result.toOption.get: @unchecked
+    val SDecl.SInductive(name, params, _, _) = result.toOption.get: @unchecked
     assertEquals(name, "List")
     assertEquals(params.length, 1)
   }
@@ -1058,4 +1058,53 @@ class ParserSuite extends FunSuite:
     result.toOption.get match
       case SExpr.SELam(params, _) => assertEquals(params.length, 2)
       case other => fail(s"Expected SELam, got $other")
+  }
+
+  // -- indexed inductive types (inductive families) --
+
+  test("parse inductive Vec with index parameter group") {
+    // Note: constructor return types use simplified Vec(A, n) form (n as type variable)
+    // because term-level expressions (Nat.zero, Nat.succ) are not valid SType syntax
+    val input = "inductive Vec(A: Type)(n: Nat) { case nil: Vec(A, n) case cons(m: Nat, head: A, tail: Vec(A, m)): Vec(A, m) }"
+    val result = Parser.parseDecl(input)
+    assert(result.isRight, s"Parse failed: $result")
+    val SDecl.SInductive(name, params, ctors, indices) = result.toOption.get: @unchecked
+    assertEquals(name, "Vec")
+    assertEquals(params.length, 1)
+    assertEquals(params(0).name, "A")
+    assertEquals(indices.length, 1)
+    assertEquals(indices(0).name, "n")
+    assertEquals(ctors.length, 2)
+    assertEquals(ctors(0).name, "nil")
+    assertEquals(ctors(1).name, "cons")
+    assertEquals(ctors(1).argParams.length, 3)  // m, head, tail
+  }
+
+  test("parse inductive without index group has empty indices") {
+    val input = "inductive Nat { case zero: Nat case succ(n: Nat): Nat }"
+    val result = Parser.parseDecl(input)
+    assert(result.isRight, s"Parse failed: $result")
+    val SDecl.SInductive(_, _, _, indices) = result.toOption.get: @unchecked
+    assertEquals(indices, Nil)
+  }
+
+  test("parse inductive with two-index group") {
+    val input = "inductive Matrix(A: Type)(rows: Nat, cols: Nat) { case empty: Matrix }"
+    val result = Parser.parseDecl(input)
+    assert(result.isRight, s"Parse failed: $result")
+    val SDecl.SInductive(name, params, ctors, indices) = result.toOption.get: @unchecked
+    assertEquals(name, "Matrix")
+    assertEquals(params.length, 1)
+    assertEquals(indices.length, 2)
+    assertEquals(indices(0).name, "rows")
+    assertEquals(indices(1).name, "cols")
+  }
+
+  test("typeVarOrApp parses multi-argument type application Vec(A, n)") {
+    val result = Parser.parseType("Vec(A, n)")
+    assert(result.isRight, s"Parse failed: $result")
+    // Vec(A, n) → STApp(STApp(STVar("Vec"), STVar("A")), STVar("n"))
+    result.toOption.get match
+      case SType.STApp(SType.STApp(SType.STVar("Vec"), SType.STVar("A")), SType.STVar("n")) => ()
+      case other => fail(s"Expected nested STApp, got: $other")
   }
