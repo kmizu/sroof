@@ -103,6 +103,48 @@ class SearchLoopSuite extends FunSuite:
     assert(verifies(repaired))
     assert(repaired.contains("by trivial"), "non-sorry proof should be unchanged")
 
+  test("agent proves plus_succ_right: plus(n, succ(m)) = succ(plus(n, m))"):
+    val src = """
+      inductive Nat {
+        case zero: Nat
+        case succ(n: Nat): Nat
+      }
+      def plus(n: Nat, m: Nat): Nat {
+        match n {
+          case Nat.zero    => m
+          case Nat.succ(k) => Nat.succ(plus(k, m))
+        }
+      }
+      defspec plus_succ_right(n: Nat, m: Nat): plus(n, Nat.succ(m)) = Nat.succ(plus(n, m)) {
+        by sorry
+      }
+    """
+    val repaired = repairSource(src)
+    assert(verifies(repaired), s"repaired source failed:\n$repaired")
+
+  test("agent repairs multiple sorry defspecs in one file"):
+    val src = """
+      inductive Nat {
+        case zero: Nat
+        case succ(n: Nat): Nat
+      }
+      def plus(n: Nat, m: Nat): Nat {
+        match n {
+          case Nat.zero    => m
+          case Nat.succ(k) => Nat.succ(plus(k, m))
+        }
+      }
+      defspec plus_zero_left(n: Nat): plus(Nat.zero, n) = n {
+        by sorry
+      }
+      defspec plus_zero(n: Nat): plus(n, Nat.zero) = n {
+        by sorry
+      }
+    """
+    val repaired = repairSource(src)
+    assert(verifies(repaired), s"repaired source failed:\n$repaired")
+    assert(!repaired.contains("by sorry"), "all sorrys should be replaced")
+
   test("agent reports success for already-valid file"):
     val src = """
       inductive Nat {
