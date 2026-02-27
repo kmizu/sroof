@@ -19,6 +19,12 @@ object Main:
       case "check" :: filePath :: Nil =>
         runCheck(filePath)
 
+      case "check" :: "--json" :: filePath :: Nil =>
+        runCheckJson(filePath)
+
+      case "agent" :: filePath :: Nil =>
+        runAgent(filePath)
+
       case "extract" :: filePath :: Nil =>
         runExtract(filePath)
 
@@ -29,6 +35,61 @@ object Main:
       case _ =>
         printUsage()
         sys.exit(1)
+
+  // ---- Agent command ----
+
+  private def runAgent(filePath: String): Unit =
+    import sproof.agent.{FileRepairer, TacticGen}
+    val source =
+      try scala.io.Source.fromFile(filePath).mkString
+      catch
+        case e: java.io.FileNotFoundException =>
+          System.err.println(s"Error: File not found: $filePath")
+          sys.exit(1)
+        case e: Exception =>
+          System.err.println(s"Error reading file: ${e.getMessage}")
+          sys.exit(1)
+
+    println(s"sproof agent: analysing $filePath ...")
+    val results = FileRepairer.tryRepair(source, filePath)
+
+    if results.isEmpty then
+      println("  No sorry proofs found.")
+    else
+      var allSolved = true
+      results.foreach { r =>
+        r.found match
+          case Some(tac) =>
+            println(s"  [OK] '${r.defspecName}' → by ${FileRepairer.renderTactic(tac)}")
+          case None =>
+            println(s"  [??] '${r.defspecName}' — no proof found (sorry retained)")
+            allSolved = false
+      }
+      if allSolved then
+        val repaired  = FileRepairer.repair(source, filePath)
+        val outPath   = filePath.replaceAll("\\.sproof$", ".repaired.sproof")
+        java.nio.file.Files.writeString(java.nio.file.Paths.get(outPath), repaired)
+        println(s"  Repaired file written to: $outPath")
+      else
+        println("  Partial repair — some proofs remain as sorry.")
+        val repaired = FileRepairer.repair(source, filePath)
+        val outPath  = filePath.replaceAll("\\.sproof$", ".repaired.sproof")
+        java.nio.file.Files.writeString(java.nio.file.Paths.get(outPath), repaired)
+        println(s"  Partial repaired file written to: $outPath")
+
+  // ---- Check --json command ----
+
+  private def runCheckJson(filePath: String): Unit =
+    val source =
+      try Source.fromFile(filePath).mkString
+      catch
+        case e: java.io.FileNotFoundException =>
+          println(s"""{"ok":false,"error":"File not found: $filePath","phase":"io"}""")
+          sys.exit(1)
+        case e: Exception =>
+          println(s"""{"ok":false,"error":"${e.getMessage}","phase":"io"}""")
+          sys.exit(1)
+    println(processSourceJson(source, filePath))
 
   // ---- Extract command ----
 
@@ -267,9 +328,11 @@ object Main:
   private def printUsage(): Unit =
     println(
       """|Usage:
-         |  sproof check <file.sproof>     Parse, elaborate, and verify a sproof file.
-         |  sproof extract <file.sproof>   Extract Scala 3 code from a verified sproof file.
-         |  sproof repl                    Start the interactive REPL.
+         |  sproof check <file.sproof>          Parse, elaborate, and verify a sproof file.
+         |  sproof check --json <file.sproof>   Same, but output JSON (for tooling/agents).
+         |  sproof extract <file.sproof>        Extract Scala 3 code from a verified sproof file.
+         |  sproof agent <file.sproof>          Auto-repair sorry proofs using the proof agent.
+         |  sproof repl                         Start the interactive REPL.
          |""".stripMargin
     )
 
