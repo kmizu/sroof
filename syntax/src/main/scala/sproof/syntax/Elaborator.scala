@@ -57,6 +57,13 @@ object Elaborator:
           elabDef(name, params, retTpe, body, env) match
             case Left(err)   => return Left(err)
             case Right(term) =>
+              term match
+                case fix: Term.Fix =>
+                  given GlobalEnv = env
+                  TerminationChecker.check(fix) match
+                    case Left(err) => return Left(ElabError(err))
+                    case Right(()) => ()
+                case _ => ()
               defs = defs + (name -> term)
               val fullTpe = term match
                 case Term.Fix(_, tpe, _) => tpe
