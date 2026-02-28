@@ -104,12 +104,12 @@ class BidirectionalSuite extends munit.FunSuite:
     val t = Term.App(Term.Lam("x", Term.Uni(1), Term.Var(0)), Term.Uni(0))
     chk(t, Term.Uni(1))
 
-  // (λx:Type2. x) (Type0 → Type0) has type Type2 ← via beta reduction
+  // (λx:Type2. x) (Type0 → Type0) has type Type2 ← via beta reduction + cumulativity
   test("beta reduction via check: identity applied to Pi type"):
     val piTy = Term.Pi("_", Term.Uni(0), Term.Uni(0))  // Type0 → Type0 : Type1
     val t    = Term.App(Term.Lam("x", Term.Uni(2), Term.Var(0)), piTy)
-    // piTy : Type1, identity expects Type2; fails
-    assert(Bidirectional.infer(empty, t).isLeft)
+    // piTy : Type1, identity expects Type2; succeeds via cumulativity (Type1 ≤ Type2)
+    assert(Bidirectional.infer(empty, t).isRight)
 
   // --- universe overflow ---
   test("Uni(101): overflow error"):

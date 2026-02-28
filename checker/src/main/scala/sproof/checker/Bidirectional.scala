@@ -152,11 +152,17 @@ object Bidirectional:
   def whnf(ctx: Context, t: Term): Term =
     Quote.normalize(ctx.size, buildEnvWithDefs(ctx), t)
 
-  /** Check definitional equality of `actual` and `expected`. */
+  /** Check definitional equality of `actual` and `expected` (with universe cumulativity). */
   private def convCheck(ctx: Context, actual: Term, expected: Term, term: Term): Either[TypeError, Unit] =
     val env = buildEnvWithDefs(ctx)
-    if Quote.convEqual(ctx.size, env, actual, expected) then Right(())
-    else Left(TypeError.TypeMismatch(expected, actual, term, ctx))
+    // Universe cumulativity: Type_i ≤ Type_j when i ≤ j
+    val normActual   = whnf(ctx, actual)
+    val normExpected = whnf(ctx, expected)
+    (normActual, normExpected) match
+      case (Term.Uni(l1), Term.Uni(l2)) if l1 <= l2 => Right(())
+      case _ =>
+        if Quote.convEqual(ctx.size, env, actual, expected) then Right(())
+        else Left(TypeError.TypeMismatch(expected, actual, term, ctx))
 
   /** Build the NbE environment, evaluating Def (let-binding) entries. */
   private def buildEnvWithDefs(ctx: Context): Env =

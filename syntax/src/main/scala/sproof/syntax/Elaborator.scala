@@ -46,6 +46,9 @@ object Elaborator:
           if env.lookupInd(name).isDefined then
             return Left(ElabError(s"Duplicate inductive type: $name"))
           val indDef = elabInductive(name, params, ctors, indices, env)
+          PositivityChecker.check(name, indDef.ctors) match
+            case Left(err) => return Left(ElabError(err))
+            case Right(()) => ()
           env = env.addInd(indDef)
 
         case SDecl.SDef(name, params, retTpe, body) =>
@@ -54,6 +57,13 @@ object Elaborator:
           elabDef(name, params, retTpe, body, env) match
             case Left(err)   => return Left(err)
             case Right(term) =>
+              term match
+                case fix: Term.Fix =>
+                  given GlobalEnv = env
+                  TerminationChecker.check(fix) match
+                    case Left(err) => return Left(ElabError(err))
+                    case Right(()) => ()
+                case _ => ()
               defs = defs + (name -> term)
               val fullTpe = term match
                 case Term.Fix(_, tpe, _) => tpe
