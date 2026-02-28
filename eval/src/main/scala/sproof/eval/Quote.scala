@@ -64,9 +64,31 @@ object Quote:
   def normalize(size: Int, env: Env, t: Term): Term =
     quote(size, Eval.eval(env, t))
 
-  /** Definitional equality: compare normal forms. */
+  /** Definitional equality: compare normal forms (with eta). */
   def convEqual(size: Int, env: Env, t1: Term, t2: Term): Boolean =
-    alphaEq(quote(size, Eval.eval(env, t1)), quote(size, Eval.eval(env, t2)))
+    val v1 = Eval.eval(env, t1)
+    val v2 = Eval.eval(env, t2)
+    semEqual(size, v1, v2)
+
+  /** Semantic equality with eta: if one side is a lambda and the other isn't,
+   *  eta-expand the non-lambda side before comparing.
+   */
+  private def semEqual(size: Int, v1: Semantic, v2: Semantic): Boolean =
+    (v1, v2) match
+      // Both lambdas: compare under a fresh variable
+      case (Semantic.SLam(_, _, body1), Semantic.SLam(_, _, body2)) =>
+        val fresh = Semantic.freshVar(size)
+        semEqual(size + 1, body1(fresh), body2(fresh))
+      // Eta: lambda vs non-lambda — apply the non-lambda to a fresh variable
+      case (Semantic.SLam(_, _, body1), _) =>
+        val fresh = Semantic.freshVar(size)
+        semEqual(size + 1, body1(fresh), Semantic(v2, fresh))
+      case (_, Semantic.SLam(_, _, body2)) =>
+        val fresh = Semantic.freshVar(size)
+        semEqual(size + 1, Semantic(v1, fresh), body2(fresh))
+      // Non-lambda cases: quote and compare structurally
+      case _ =>
+        alphaEq(quote(size, v1), quote(size, v2))
 
   /** Alpha-equality (syntactic equality modulo binder names). */
   def alphaEq(t1: Term, t2: Term): Boolean = (t1, t2) match
