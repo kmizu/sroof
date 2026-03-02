@@ -32,6 +32,27 @@ const KEYWORD_DOCS: Record<string, string> = {
   'case': 'Introduces a constructor in an inductive type definition or a branch in a match expression.',
 };
 
+type CheckJsonRange = {
+  start?: { line?: number; column?: number };
+  end?: { line?: number; column?: number };
+};
+
+type CheckJsonDiagnostic = {
+  phase?: string;
+  code?: string;
+  message?: string;
+  range?: CheckJsonRange | null;
+  expected?: string | null;
+  actual?: string | null;
+  hint?: string | null;
+};
+
+type CheckJsonResult = {
+  ok?: boolean;
+  error?: string;
+  diagnostics?: CheckJsonDiagnostic[];
+};
+
 function extractProofState(output: string): string | null {
   const start = output.indexOf('(proof-state');
   if (start < 0) {
@@ -71,11 +92,108 @@ function extractProofState(output: string): string | null {
 }
 
 function formatProofState(proofState: string): string {
-  // Keep formatting deterministic for larger states and avoid overly long single lines.
   return proofState
     .replace(/\)\s+\(/g, ')\n(')
     .replace(/\(goal\b/g, '\n(goal')
     .trim();
+}
+
+function extractJsonPayload(output: string): string | null {
+  const lines = output.split(/\r?\n/).map(line => line.trim()).filter(line => line.length > 0);
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const line = lines[i];
+    if (line.startsWith('{') && line.endsWith('}')) {
+      return line;
+    }
+  }
+  return null;
+}
+
+function clampPosition(document: vscode.TextDocument, line: number, column: number): vscode.Position {
+  const maxLine = Math.max(0, document.lineCount - 1);
+  const clampedLine = Math.max(0, Math.min(line, maxLine));
+  const maxChar = document.lineAt(clampedLine).text.length;
+  const clampedChar = Math.max(0, Math.min(column, maxChar));
+  return new vscode.Position(clampedLine, clampedChar);
+}
+
+function toRange(document: vscode.TextDocument, range?: CheckJsonRange | null): vscode.Range {
+  const startLine = Math.max(0, ((range?.start?.line ?? 1) - 1));
+  const startCol = Math.max(0, ((range?.start?.column ?? 1) - 1));
+  const endLine = Math.max(startLine, ((range?.end?.line ?? (startLine + 1)) - 1));
+  const rawEndCol = Math.max(startCol + 1, ((range?.end?.column ?? (startCol + 2)) - 1));
+  const start = clampPosition(document, startLine, startCol);
+  const end = clampPosition(document, endLine, rawEndCol);
+  return new vscode.Range(start, end);
+}
+
+function toMessage(d: CheckJsonDiagnostic): string {
+  const lines: string[] = [];
+  lines.push(d.message ?? 'sproof check failed');
+  if (d.expected) {
+    lines.push(`expected: ${d.expected}`);
+  }
+  if (d.actual) {
+    lines.push(`actual:   ${d.actual}`);
+  }
+  if (d.hint) {
+    lines.push(`hint:     ${d.hint}`);
+  }
+  return lines.join('\n');
+}
+
+async function refreshDiagnostics(
+  document: vscode.TextDocument,
+  collection: vscode.DiagnosticCollection,
+): Promise<void> {
+  const workspaceFolder = vscode.workspace.getWorkspaceFolder(document.uri);
+  const cwd = workspaceFolder ? workspaceFolder.uri.fsPath : path.dirname(document.uri.fsPath);
+  const escapedPath = document.uri.fsPath.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+  const commandArg = `cli/run check --json "${escapedPath}"`;
+  const output = await new Promise<string>((resolve) => {
+    execFile('sbt', [commandArg], { cwd, timeout: 120000 }, (err, stdout, stderr) => {
+      resolve((stdout ?? '') + '\n' + (stderr ?? '') + (err ? `\n${String(err)}` : ''));
+    });
+  });
+
+  const jsonPayload = extractJsonPayload(output);
+  if (!jsonPayload) {
+    return;
+  }
+
+  try {
+    const parsed = JSON.parse(jsonPayload) as CheckJsonResult;
+    if (parsed.ok) {
+      collection.delete(document.uri);
+      return;
+    }
+
+    const diagnostics = (parsed.diagnostics ?? []).map((d) => {
+      const diagnostic = new vscode.Diagnostic(
+        toRange(document, d.range),
+        toMessage(d),
+        vscode.DiagnosticSeverity.Error,
+      );
+      diagnostic.source = 'sproof';
+      diagnostic.code = d.code ?? d.phase ?? 'error';
+      return diagnostic;
+    });
+
+    if (diagnostics.length === 0) {
+      const fallback = new vscode.Diagnostic(
+        toRange(document),
+        parsed.error ?? 'sproof check failed',
+        vscode.DiagnosticSeverity.Error,
+      );
+      fallback.source = 'sproof';
+      fallback.code = 'error';
+      collection.set(document.uri, [fallback]);
+    } else {
+      collection.set(document.uri, diagnostics);
+    }
+  } catch {
+    // Ignore malformed output from command execution.
+  }
 }
 
 async function runCheckAndShowGoals(
@@ -138,6 +256,7 @@ export function activate(context: vscode.ExtensionContext): void {
   console.log('sproof extension activated');
   const goalChannel = vscode.window.createOutputChannel('sproof goals');
   const latestRunByDocument = new Map<string, number>();
+  const diagnosticCollection = vscode.languages.createDiagnosticCollection('sproof');
 
   const hoverProvider = vscode.languages.registerHoverProvider('sproof', {
     provideHover(document: vscode.TextDocument, position: vscode.Position): vscode.Hover | null {
@@ -148,7 +267,7 @@ export function activate(context: vscode.ExtensionContext): void {
       const word = document.getText(wordRange);
       const doc = KEYWORD_DOCS[word];
       if (doc) {
-        const md = new vscode.MarkdownString(`**sproof** — ${doc}`);
+        const md = new vscode.MarkdownString(`**sproof** - ${doc}`);
         md.isTrusted = true;
         return new vscode.Hover(md, wordRange);
       }
@@ -156,7 +275,6 @@ export function activate(context: vscode.ExtensionContext): void {
     }
   });
 
-  // Register a document symbol provider so the outline shows defs/defspecs
   const symbolProvider = vscode.languages.registerDocumentSymbolProvider('sproof', {
     provideDocumentSymbols(document: vscode.TextDocument): vscode.DocumentSymbol[] {
       const symbols: vscode.DocumentSymbol[] = [];
@@ -204,13 +322,23 @@ export function activate(context: vscode.ExtensionContext): void {
       return;
     }
     await runCheckAndShowGoals(doc, goalChannel, false, latestRunByDocument);
+    await refreshDiagnostics(doc, diagnosticCollection);
   });
 
   const closeWatcher = vscode.workspace.onDidCloseTextDocument((doc) => {
     latestRunByDocument.delete(doc.uri.toString());
+    diagnosticCollection.delete(doc.uri);
   });
 
-  context.subscriptions.push(hoverProvider, symbolProvider, showGoalsCommand, saveWatcher, closeWatcher, goalChannel);
+  context.subscriptions.push(
+    hoverProvider,
+    symbolProvider,
+    showGoalsCommand,
+    saveWatcher,
+    closeWatcher,
+    goalChannel,
+    diagnosticCollection,
+  );
 }
 
 export function deactivate(): void {}

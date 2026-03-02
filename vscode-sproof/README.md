@@ -53,6 +53,14 @@ The VS Code outline panel (and breadcrumbs) show all top-level `def`, `defspec`,
 - Saving a `.sproof` file automatically refreshes the goal panel.
 - Solved/empty states are shown as `No open goals`.
 
+### Diagnostics in Problems Panel
+
+On save, the extension runs `sproof check --json` and translates structured diagnostics into VS Code Problems:
+
+- Source range highlighting
+- Expected vs actual type details (for type mismatch errors)
+- Repair hints when available
+
 ## Installation
 
 ### From source
