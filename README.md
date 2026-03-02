@@ -245,6 +245,10 @@ sproof/
 
 Soundness boundary and trusted computing base (TCB) are documented in [docs/trust-model.md](docs/trust-model.md).
 
+Pipeline note:
+- checker/tactic generates candidate proof terms
+- final accept/reject decision is centralized in `kernel` validation
+
 **Type theory**: Predicative CIC (Calculus of Inductive Constructions)
 - Universe hierarchy: `Type`, `Type1`, `Type2`, ...
 - Inductive types + fixpoints (recursive functions)
