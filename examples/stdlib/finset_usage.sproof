@@ -1,0 +1,12 @@
+// Uses stdlib/FinSet.sproof declarations directly (prepend stdlib source before this file)
+
+def set01(): FinSet =
+  insert(insert(FinSet.empty, Nat.zero), Nat.succ(Nat.zero))
+
+defspec member_zero_use(): member(set01(), Nat.zero) = Bool.true {
+  by trivial
+}
+
+defspec subset_empty_use(s: FinSet): subset(FinSet.empty, s) = Bool.true {
+  by trivial
+}

@@ -1,0 +1,113 @@
+// stdlib v1: FinSet (Nat-valued finite set)
+
+inductive Nat {
+  case zero: Nat
+  case succ(n: Nat): Nat
+}
+
+inductive Bool {
+  case true: Bool
+  case false: Bool
+}
+
+def eq_nat(a: Nat, b: Nat): Bool {
+  match a {
+    case Nat.zero =>
+      match b {
+        case Nat.zero    => Bool.true
+        case Nat.succ(m) => Bool.false
+      }
+    case Nat.succ(n) =>
+      match b {
+        case Nat.zero    => Bool.false
+        case Nat.succ(m) => eq_nat(n, m)
+      }
+  }
+}
+
+inductive FinSet {
+  case empty: FinSet
+  case node(value: Nat, tail: FinSet): FinSet
+}
+
+def member(s: FinSet, x: Nat): Bool {
+  match s {
+    case FinSet.empty => Bool.false
+    case FinSet.node(y, rest) =>
+      match eq_nat(y, x) {
+        case Bool.true  => Bool.true
+        case Bool.false => member(rest, x)
+      }
+  }
+}
+
+def insert(s: FinSet, x: Nat): FinSet {
+  match member(s, x) {
+    case Bool.true  => s
+    case Bool.false => FinSet.node(x, s)
+  }
+}
+
+def union(left: FinSet, right: FinSet): FinSet {
+  match left {
+    case FinSet.empty => right
+    case FinSet.node(x, rest) => union(rest, insert(right, x))
+  }
+}
+
+def subset(left: FinSet, right: FinSet): Bool {
+  match left {
+    case FinSet.empty => Bool.true
+    case FinSet.node(x, rest) =>
+      match member(right, x) {
+        case Bool.true  => subset(rest, right)
+        case Bool.false => Bool.false
+      }
+  }
+}
+
+def remove(s: FinSet, x: Nat): FinSet {
+  match s {
+    case FinSet.empty => FinSet.empty
+    case FinSet.node(y, rest) =>
+      match eq_nat(y, x) {
+        case Bool.true  => remove(rest, x)
+        case Bool.false => FinSet.node(y, remove(rest, x))
+      }
+  }
+}
+
+def size(s: FinSet): Nat {
+  match s {
+    case FinSet.empty => Nat.zero
+    case FinSet.node(x, rest) => Nat.succ(size(rest))
+  }
+}
+
+defspec member_empty(x: Nat): member(FinSet.empty, x) = Bool.false {
+  by trivial
+}
+
+defspec insert_empty(x: Nat): insert(FinSet.empty, x) = FinSet.node(x, FinSet.empty) {
+  by trivial
+}
+
+defspec union_empty_left(right: FinSet): union(FinSet.empty, right) = right {
+  by trivial
+}
+
+defspec subset_empty_left(right: FinSet): subset(FinSet.empty, right) = Bool.true {
+  by trivial
+}
+
+defspec remove_empty(x: Nat): remove(FinSet.empty, x) = FinSet.empty {
+  by trivial
+}
+
+defspec size_empty(): size(FinSet.empty) = Nat.zero {
+  by trivial
+}
+
+defspec member_insert_zero_empty(): member(insert(FinSet.empty, Nat.zero), Nat.zero) = Bool.true {
+  by trivial
+}
