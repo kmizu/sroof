@@ -1,0 +1,4 @@
+# Bool normalization lemmas
+not_not
+and_true
+or_false

@@ -31,6 +31,13 @@ def append(xs: List, ys: List): List {
   }
 }
 
+def map(xs: List, f: Nat -> Nat): List {
+  match xs {
+    case List.nil        => List.nil
+    case List.cons(h, t) => List.cons(f(h), map(t, f))
+  }
+}
+
 // ---- List literals ----
 
 // [] desugars to nil
@@ -48,5 +55,9 @@ defspec length_nil(): length(List.nil) = Nat.zero {
 
 // append(nil, ys) = ys  (definitional: matches nil case directly)
 defspec append_nil_left(ys: List): append(List.nil, ys) = ys {
+  by trivial
+}
+
+defspec map_nil(f: Nat -> Nat): map(List.nil, f) = List.nil {
   by trivial
 }
