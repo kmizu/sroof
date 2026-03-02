@@ -145,6 +145,70 @@ class SearchLoopSuite extends FunSuite:
     assert(verifies(repaired), s"repaired source failed:\n$repaired")
     assert(!repaired.contains("by sorry"), "all sorrys should be replaced")
 
+  test("agent proves plus_assoc: plus(plus(a, b), c) = plus(a, plus(b, c))"):
+    val src = """
+      inductive Nat {
+        case zero: Nat
+        case succ(n: Nat): Nat
+      }
+      def plus(n: Nat, m: Nat): Nat {
+        match n {
+          case Nat.zero    => m
+          case Nat.succ(k) => Nat.succ(plus(k, m))
+        }
+      }
+      defspec plus_assoc(a: Nat, b: Nat, c: Nat): plus(plus(a, b), c) = plus(a, plus(b, c)) {
+        by sorry
+      }
+    """
+    val repaired = repairSource(src)
+    assert(verifies(repaired), s"repaired source failed:\n$repaired")
+
+  test("agent proves plus_zero_symm: n = plus(n, 0)"):
+    val src = """
+      inductive Nat {
+        case zero: Nat
+        case succ(n: Nat): Nat
+      }
+      def plus(n: Nat, m: Nat): Nat {
+        match n {
+          case Nat.zero    => m
+          case Nat.succ(k) => Nat.succ(plus(k, m))
+        }
+      }
+      defspec plus_zero_symm(n: Nat): n = plus(n, Nat.zero) {
+        by sorry
+      }
+    """
+    val repaired = repairSource(src)
+    assert(verifies(repaired), s"repaired source failed:\n$repaired")
+
+  test("agent proves plus_comm: plus(n, m) = plus(m, n) using helper specs"):
+    val src = """
+      inductive Nat {
+        case zero: Nat
+        case succ(n: Nat): Nat
+      }
+      def plus(n: Nat, m: Nat): Nat {
+        match n {
+          case Nat.zero    => m
+          case Nat.succ(k) => Nat.succ(plus(k, m))
+        }
+      }
+      defspec plus_zero_symm(n: Nat): n = plus(n, Nat.zero) {
+        by sorry
+      }
+      defspec plus_succ_right(n: Nat, m: Nat): plus(n, Nat.succ(m)) = Nat.succ(plus(n, m)) {
+        by sorry
+      }
+      defspec plus_comm(n: Nat, m: Nat): plus(n, m) = plus(m, n) {
+        by sorry
+      }
+    """
+    val repaired = repairSource(src)
+    assert(verifies(repaired), s"repaired source failed:\n$repaired")
+    assert(!repaired.contains("by sorry"), "all sorrys should be replaced")
+
   test("agent reports success for already-valid file"):
     val src = """
       inductive Nat {

@@ -24,10 +24,14 @@ object Checker:
 
   /** Like checkAll but also returns sorry warnings. */
   def checkAllWithWarnings(result: ElabResult): Either[String, (GlobalEnv, List[String])] =
-    given GlobalEnv = result.env
     boundary:
+      var currentEnv    = result.env
       val sorryWarnings = scala.collection.mutable.ListBuffer.empty[String]
-      for (name, (elabParams, propTerm, proof)) <- result.defspecs do
+      // Process in declaration order so earlier specs can be used by later ones
+      val orderedNames  = if result.defspecOrder.nonEmpty then result.defspecOrder
+                          else result.defspecs.keys.toList
+      for name <- orderedNames do
+        val (elabParams, propTerm, proof) = result.defspecs(name)
         // Build context from defspec parameters so the proof can reference them
         val proofCtx = elabParams.foldLeft(Context.empty) { (ctx, p) =>
           ctx.extend(p._1, p._2)
@@ -35,6 +39,7 @@ object Checker:
         val sorryCount = countSorry(proof)
         if sorryCount > 0 then
           sorryWarnings += s"warning: '$name' uses sorry ($sorryCount occurrence(s)) — proof is unsound"
+        given GlobalEnv = currentEnv
         executeProof(proofCtx, propTerm, proof) match
           case Left(err) =>
             break(Left(s"Proof of '$name' failed: $err"))
@@ -52,8 +57,9 @@ object Checker:
                 case Left(err) =>
                   break(Left(s"Kernel rejected proof of '$name': ${err.getMessage}"))
                 case Right(()) =>
-                  ()
-      Right((result.env, sorryWarnings.toList))
+                  // Accumulate proved spec so later defspecs can use it
+                  currentEnv = currentEnv.addSpec(name, fullPropTerm, fullProofTerm)
+      Right((currentEnv, sorryWarnings.toList))
 
   /** Count sorry usages in a surface proof. */
   private def countSorry(proof: SProof): Int = proof match

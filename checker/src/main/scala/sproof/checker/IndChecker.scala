@@ -131,10 +131,18 @@ object IndChecker:
       for
         lhsTpe       <- Bidirectional.infer(ctx, lhs)
         branchCtx     = ctx.extend("x", lhsTpe)
-        // Branch body type = App(motiveFunc, lhs) shifted for the refl witness binder
-        branchBodyTpe = Subst.shift(1, Term.App(motiveFunc, lhs))
+        // Branch body type = App(motiveFunc, lhs) shifted for the refl witness binder.
+        // Use syntactic beta reduction when motiveFunc is a Lam to avoid NbE on the
+        // motive's type annotation (which may be Meta(-1) or otherwise non-evaluatable).
+        branchBodyTpe = motiveFunc match
+                          case Term.Lam(_, _, motiveBody) =>
+                            Subst.shift(1, Subst.subst(lhs, motiveBody))
+                          case _ =>
+                            Subst.shift(1, Term.App(motiveFunc, lhs))
         _            <- Bidirectional.check(branchCtx, body, branchBodyTpe)
-      yield Term.App(motiveFunc, rhs)
+      yield motiveFunc match
+        case Term.Lam(_, _, motiveBody) => Subst.subst(rhs, motiveBody)
+        case _                          => Bidirectional.whnf(ctx, Term.App(motiveFunc, rhs))
 
   /** Verify that the match cases cover exactly the constructors (no missing, no extra). */
   private def checkCoverage(

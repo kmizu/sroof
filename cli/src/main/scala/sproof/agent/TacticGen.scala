@@ -24,7 +24,8 @@ object TacticGen:
 
   private def depth0(ctx: Context, target: Term)(using env: GlobalEnv): List[STactic] =
     List(STactic.STrivial, STactic.SAssumption) ++
-    eqHypNames(ctx).map(h => STactic.SSimplify(List(h)))
+    eqHypNames(ctx).map(h => STactic.SSimplify(List(h))) ++
+    env.specs.keys.toList.sorted.map(s => STactic.SSimplify(List(s)))
 
   // ---- Depth 1: induction with depth-0 sub-proofs ----
 
@@ -42,18 +43,21 @@ object TacticGen:
     varName: String,
     indDef:  IndDef,
     subTactics: List[STactic],
-  ): List[STactic] =
+  )(using env: GlobalEnv): List[STactic] =
     // For each constructor, generate a list of STacticCase options
     val perCtorOptions: List[List[STacticCase]] = indDef.ctors.map { ctor =>
       if ctor.argTpes.isEmpty then
         // Non-recursive: try each sub-tactic
         subTactics.map(t => STacticCase(ctor.name, Nil, t))
       else
-        // Recursive: try with IH (simplify[ih]) + sub-tactics without IH
-        val argNames  = ctor.argTpes.indices.map(i => s"_arg$i").toList
-        val withIH    = STacticCase(ctor.name, argNames :+ "ih", STactic.SSimplify(List("ih")))
-        val withoutIH = subTactics.map(t => STacticCase(ctor.name, argNames, t))
-        withIH :: withoutIH
+        // Recursive: try with IH (simplify[ih]) + chained with global specs + sub-tactics without IH
+        val argNames      = ctor.argTpes.indices.map(i => s"_arg$i").toList
+        val withIH        = STacticCase(ctor.name, argNames :+ "ih", STactic.SSimplify(List("ih")))
+        val withIH_specs  = env.specs.keys.toList.sorted.map { specName =>
+          STacticCase(ctor.name, argNames :+ "ih", STactic.SSimplify(List("ih", specName)))
+        }
+        val withoutIH     = subTactics.map(t => STacticCase(ctor.name, argNames, t))
+        withIH :: withIH_specs ++ withoutIH
     }
     // Cross product: pick one option per constructor
     cartesian(perCtorOptions).map(cases => STactic.SInduction(varName, cases))

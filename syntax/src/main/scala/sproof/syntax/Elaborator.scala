@@ -13,6 +13,8 @@ case class ElabResult(
   defspecs: Map[String, (List[(String, Term)], Term, SProof)],
   /** Surface expressions from `#check` declarations, in order of appearance. */
   checks:   List[SExpr] = Nil,
+  /** Declaration order for defspecs — ensures later specs can use earlier proved ones. */
+  defspecOrder: List[String] = Nil,
 )
 
 /** Elaborator: converts surface AST to core terms with De Bruijn indices.
@@ -35,10 +37,11 @@ object Elaborator:
   private type TypeAnns = Map[String, String]
 
   def elaborate(decls: List[SDecl]): Either[ElabError, ElabResult] =
-    var env      = GlobalEnv.empty
-    var defs     = Map.empty[String, Term]
-    var defspecs = Map.empty[String, (List[(String, Term)], Term, SProof)]
-    var checks   = List.empty[SExpr]
+    var env          = GlobalEnv.empty
+    var defs         = Map.empty[String, Term]
+    var defspecs     = Map.empty[String, (List[(String, Term)], Term, SProof)]
+    var checks       = List.empty[SExpr]
+    var defspecOrder = List.empty[String]
 
     for decl <- decls do
       decl match
@@ -78,7 +81,9 @@ object Elaborator:
             case Right(elabParams) =>
               elabType(prop, env, nameEnv, typeAnns) match
                 case Left(err)    => return Left(err)
-                case Right(propT) => defspecs = defspecs + (name -> (elabParams, propT, proof))
+                case Right(propT) =>
+                  defspecs     = defspecs     + (name -> (elabParams, propT, proof))
+                  defspecOrder = defspecOrder :+ name
 
         case SDecl.SStructure(name, fields) =>
           if env.lookupInd(name).isDefined || env.lookupStruct(name).isDefined then
@@ -143,7 +148,7 @@ object Elaborator:
         case SDecl.SCheck(expr) =>
           checks = checks :+ expr
 
-    Right(ElabResult(env, defs, defspecs, checks))
+    Right(ElabResult(env, defs, defspecs, checks, defspecOrder))
 
   /** Public API: elaborate a surface type given a GlobalEnv and a Context.
     * Builds a nameEnv from the context entries.

@@ -62,23 +62,29 @@ case class StructDef(
 case class GlobalEnv(
   inductives: Map[String, IndDef],
   defs:       Map[String, DefEntry],
-  structures: Map[String, StructDef] = Map.empty,
+  structures: Map[String, StructDef]        = Map.empty,
   /** Maps operator symbol (e.g. "+") to the def name that implements it.
    *  No overloading: each symbol has exactly one registered implementation. */
-  operators:  Map[String, String]    = Map.empty,
+  operators:  Map[String, String]           = Map.empty,
   /** Set of def names marked @[simp] — used by the simplify tactic as default lemmas. */
-  simpSet:    Set[String]            = Set.empty,
+  simpSet:    Set[String]                   = Set.empty,
+  /** Proved defspecs: name → (closed Pi-type prop, closed Lam-term proof).
+   *  Accumulated in declaration order so later specs can use earlier ones. */
+  specs:      Map[String, (Term, Term)]     = Map.empty,
 ):
-  def lookupInd(name: String):     Option[IndDef]    = inductives.get(name)
-  def lookupDef(name: String):     Option[DefEntry]  = defs.get(name)
-  def lookupStruct(name: String):  Option[StructDef] = structures.get(name)
-  def lookupOperator(op: String):  Option[String]    = operators.get(op)
+  def lookupInd(name: String):     Option[IndDef]          = inductives.get(name)
+  def lookupDef(name: String):     Option[DefEntry]        = defs.get(name)
+  def lookupStruct(name: String):  Option[StructDef]       = structures.get(name)
+  def lookupOperator(op: String):  Option[String]          = operators.get(op)
+  def lookupSpec(name: String):    Option[(Term, Term)]    = specs.get(name)
 
   def addInd(d: IndDef):                    GlobalEnv = copy(inductives = inductives + (d.name -> d))
   def addDef(d: DefEntry):                  GlobalEnv = copy(defs       = defs       + (d.name -> d))
   def addStruct(s: StructDef):              GlobalEnv = copy(structures = structures + (s.name -> s))
   def addOperator(sym: String, fn: String): GlobalEnv = copy(operators = operators + (sym -> fn))
   def addToSimpSet(name: String):           GlobalEnv = copy(simpSet   = simpSet + name)
+  def addSpec(name: String, propTerm: Term, proofTerm: Term): GlobalEnv =
+    copy(specs = specs + (name -> (propTerm, proofTerm)))
 
 object GlobalEnv:
   val empty: GlobalEnv = GlobalEnv(Map.empty, Map.empty, Map.empty, Map.empty, Set.empty)

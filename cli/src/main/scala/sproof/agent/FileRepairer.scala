@@ -1,6 +1,6 @@
 package sproof.agent
 
-import sproof.core.{Context, GlobalEnv}
+import sproof.core.{Term, Context, GlobalEnv}
 import sproof.syntax.{Parser, Elaborator, SProof, STactic}
 import sproof.Checker
 
@@ -35,7 +35,11 @@ object FileRepairer:
         case Some(tac) => replaceSorryInDefspec(src, result.defspecName, tac)
     }
 
-  /** Run the repair loop and return results for each sorry defspec. */
+  /** Run the repair loop and return results for each sorry defspec.
+   *
+   *  Processes defspecs in declaration order, accumulating proved specs in the
+   *  global environment so that later sorrys can use earlier proved results.
+   */
   def tryRepair(source: String, fileName: String = "<input>"): List[RepairResult] =
     Parser.parseProgram(source) match
       case Left(_)     => Nil
@@ -43,15 +47,38 @@ object FileRepairer:
         Elaborator.elaborate(decls) match
           case Left(_)     => Nil
           case Right(result) =>
-            given GlobalEnv = result.env
-            result.defspecs.toList.flatMap { case (name, (elabParams, propTerm, proof)) =>
-              if !containsSorry(proof) then None
-              else
+            var currentEnv   = result.env
+            val orderedNames = if result.defspecOrder.nonEmpty then result.defspecOrder
+                               else result.defspecs.keys.toList
+            orderedNames.flatMap { name =>
+              result.defspecs.get(name).flatMap { case (elabParams, propTerm, proof) =>
                 val proofCtx = elabParams.foldLeft(Context.empty) { (ctx, p) =>
                   ctx.extend(p._1, p._2)
                 }
-                val found = SearchLoop.search(proofCtx, propTerm)
-                Some(RepairResult(name, found))
+                if !containsSorry(proof) then
+                  // Execute existing proof and accumulate in env
+                  sproof.Checker.executeProof(proofCtx, propTerm, proof)(using currentEnv) match
+                    case Right(proofTerm) =>
+                      val fullProofTerm = elabParams.foldRight(proofTerm)((p, body) => Term.Lam(p._1, p._2, body))
+                      val fullPropTerm  = elabParams.foldRight(propTerm)((p, cod)  => Term.Pi(p._1, p._2, cod))
+                      currentEnv = currentEnv.addSpec(name, fullPropTerm, fullProofTerm)
+                    case Left(_) => ()
+                  None  // not a sorry repair result
+                else
+                  // Search for proof using accumulated env
+                  val found = SearchLoop.search(proofCtx, propTerm)(using currentEnv)
+                  found match
+                    case Some(tac) =>
+                      // Accumulate the found proof so subsequent sorrys can use it
+                      sproof.Checker.executeProof(proofCtx, propTerm, sproof.syntax.SProof.SBy(tac))(using currentEnv) match
+                        case Right(proofTerm) =>
+                          val fullProofTerm = elabParams.foldRight(proofTerm)((p, body) => Term.Lam(p._1, p._2, body))
+                          val fullPropTerm  = elabParams.foldRight(propTerm)((p, cod)  => Term.Pi(p._1, p._2, cod))
+                          currentEnv = currentEnv.addSpec(name, fullPropTerm, fullProofTerm)
+                        case Left(_) => ()
+                    case None => ()
+                  Some(RepairResult(name, found))
+              }
             }
 
   // ---- Source text manipulation ----

@@ -437,17 +437,25 @@ object Builtins:
   def simplify(lemmas: List[String] = Nil)(using env: GlobalEnv): TacticM[Unit] =
     lemmas match
       case Nil => trivial
-      case ihName :: _ =>
+      case List(lm) =>
         for
           goalPair    <- TacticM.currentGoal
           (mv, goal)   = goalPair
-          result      <- simplifyWithIH(mv, goal, ihName)
+          result      <- simplifyWithIH(mv, goal, lm)
+        yield result
+      case lm1 :: lm2 :: _ =>
+        for
+          goalPair    <- TacticM.currentGoal
+          (mv, goal)   = goalPair
+          result      <- simplifyChain(mv, goal, lm1, lm2)
         yield result
 
-  /** Try to close the goal using the J-rule with hypothesis `ihName`. */
-  private def simplifyWithIH(mv: MetaVar, goal: Goal, ihName: String)(using env: GlobalEnv): TacticM[Unit] =
-    findVarByName(goal.ctx, ihName) match
-      case Left(_) => trivial   // ih not found: fall back
+  /** Try to close goal using ih from context, or a global spec, or trivial. */
+  private def simplifyWithIH(mv: MetaVar, goal: Goal, lmName: String)(using env: GlobalEnv): TacticM[Unit] =
+    findVarByName(goal.ctx, lmName) match
+      case Left(_) =>
+        // Not in context: try global spec
+        simplifyWithGlobalSpec(mv, goal, lmName)
       case Right((ihIdx, _)) =>
         // Use the raw stored type (not the over-shifted version from findVarByName)
         // because buildFixCase stores ih.tpe already shifted for the extended context.
@@ -458,7 +466,6 @@ object Builtins:
             Eq.extract(goal.target) match
               case None => trivial  // goal not an equality: fall back
               case Some((_, lhsGoal, rhsGoal)) =>
-                // Normalise all sides for comparison and J-rule construction
                 val envForCtx  = buildEnvWithDefs(goal.ctx)
                 val n          = goal.ctx.size
                 val normLhs    = Quote.normalize(n, envForCtx, lhsGoal)
@@ -466,48 +473,207 @@ object Builtins:
                 val normLhsIh  = Quote.normalize(n, envForCtx, lhsIh)
                 val normRhsIh  = Quote.normalize(n, envForCtx, rhsIh)
                 // Fast path: goal LHS ≡ ih LHS and goal RHS ≡ ih RHS
-                // e.g. mult(succ_k, 0) normalises to mult(k,0), ih: mult(k,0)=0
                 if Quote.convEqual(n, envForCtx, normLhs, normLhsIh) &&
                    Quote.convEqual(n, envForCtx, normRhs, normRhsIh) then
                   TacticM.solveGoalWith(mv, Term.Var(ihIdx))
                 else
-                  buildJRuleProof(mv, goal, ihIdx, lhsIh, normLhs, normRhs)
+                  buildJRuleProof(mv, goal, ihIdx, normLhs, normRhs)
+
+  /** Try to close goal using a global spec (direct or symmetric application). */
+  private def simplifyWithGlobalSpec(mv: MetaVar, goal: Goal, specName: String)(using env: GlobalEnv): TacticM[Unit] =
+    env.lookupSpec(specName) match
+      case None => trivial
+      case Some((specPropType, specProofTerm)) =>
+        val arity     = collectPiArity(specPropType)
+        if arity > 3 then trivial  // limit search space
+        else
+          val ctxVars   = (0 until goal.ctx.size).map(Term.Var(_)).toList
+          val combos    = cartesianArgs(ctxVars, arity)
+          val envForCtx = buildEnvWithDefs(goal.ctx)
+          val n         = goal.ctx.size
+          val normGoal  = Quote.normalize(n, envForCtx, goal.target)
+          val result    = combos.iterator.flatMap { args =>
+            val instType = instantiateSpec(specPropType, args)
+            Eq.extract(instType) match
+              case None => Iterator.empty
+              case Some((_, lhsSpec, rhsSpec)) =>
+                val normInstTy   = Quote.normalize(n, envForCtx, instType)
+                val normLhsSpec  = Quote.normalize(n, envForCtx, lhsSpec)
+                val normRhsSpec  = Quote.normalize(n, envForCtx, rhsSpec)
+                val instProof    = args.foldLeft(specProofTerm)(Term.App(_, _))
+                if Quote.convEqual(n, envForCtx, normGoal, normInstTy) then
+                  Iterator.single(instProof)
+                else
+                  val symmTy = Term.App(Term.App(Term.Ind("Eq", Nil, Nil), rhsSpec), lhsSpec)
+                  val normSymmTy = Quote.normalize(n, envForCtx, symmTy)
+                  if Quote.convEqual(n, envForCtx, normGoal, normSymmTy) then
+                    val elemTpe = Bidirectional.infer(goal.ctx, lhsSpec).getOrElse(Term.Uni(0))
+                    Iterator.single(mkSymm(instProof, lhsSpec, elemTpe))
+                  else
+                    Iterator.empty
+          }.nextOption()
+          result match
+            case None      => trivial
+            case Some(prf) => TacticM.solveGoalWith(mv, prf)
+
+  /** Two-step simplification: use lm1 (J-rule) then lm2 (global spec) chained by transitivity.
+   *
+   *  Pattern: goal = Eq(Con(c, [lhsIh]), B), ih: lhsIh = rhsIh
+   *  → eq1: Eq(Con(c, [lhsIh]), Con(c, [rhsIh]))  via J-rule on ih
+   *  → eq2: Eq(Con(c, [rhsIh]), B)                via lm2 global spec (or symm)
+   *  → Trans(eq1, eq2): Eq(Con(c, [lhsIh]), B)
+   *
+   *  Falls back to trivial if the chain cannot be constructed.
+   */
+  private def simplifyChain(mv: MetaVar, goal: Goal, lm1: String, lm2: String)(using env: GlobalEnv): TacticM[Unit] =
+    // First try: lm1 alone might close the goal
+    findVarByName(goal.ctx, lm1) match
+      case Left(_) => trivial  // lm1 not in context
+      case Right((ihIdx, _)) =>
+        val ihTypeRaw = goal.ctx.entries(ihIdx).tpe
+        Eq.extract(ihTypeRaw) match
+          case None => trivial
+          case Some((_, lhsIh, rhsIh)) =>
+            Eq.extract(goal.target) match
+              case None => trivial
+              case Some((_, lhsGoal, rhsGoal)) =>
+                val envForCtx = buildEnvWithDefs(goal.ctx)
+                val n         = goal.ctx.size
+                val normLhsIh = Quote.normalize(n, envForCtx, lhsIh)
+                val normRhsIh = Quote.normalize(n, envForCtx, rhsIh)
+                val normLhs   = Quote.normalize(n, envForCtx, lhsGoal)
+                val normRhs   = Quote.normalize(n, envForCtx, rhsGoal)
+                // Check if we can chain: normLhs = Con(c, [normLhsIh])
+                val chainProof: Option[Term] = normLhs match
+                  case Term.Con(lname, lref, List(l))
+                       if Quote.convEqual(n, envForCtx, l, normLhsIh) =>
+                    val mid = Term.Con(lname, lref, List(normRhsIh))
+                    buildJRuleProofTerm(ihIdx, normLhs, mid).flatMap { eq1 =>
+                      buildGlobalSpecTerm(goal, lm2, mid, normRhs, envForCtx, n).map { eq2 =>
+                        val normLhsTpe = Bidirectional.infer(goal.ctx, normLhs).getOrElse(Term.Uni(0))
+                        mkTrans(eq1, eq2, normLhs, normLhsTpe)
+                      }
+                    }
+                  case _ => None
+                chainProof match
+                  case None      => trivial
+                  case Some(prf) => TacticM.solveGoalWith(mv, prf)
 
   /** Build a J-rule proof for goal `Eq(normLhs, normRhs)` given `ih` at `ihIdx`.
    *
    *  Pattern: normLhs = Con(name, ref, [l]) and normRhs = Con(name, ref, [r]).
-   *  Motive: P(x) = Eq(Con(name, ref, [shift(1, l)]), Con(name, ref, [Var(0)])).
-   *  Proof: Mat(Var(ihIdx), [MatchCase("refl", 1, refl(Con(name,[shift(1,l)])))], P).
+   *  Returns None if the pattern does not match.
    */
-  private def buildJRuleProof(
-    mv:     MetaVar,
-    goal:   Goal,
-    ihIdx:  Int,
-    lhsIh:  Term,
+  private def buildJRuleProofTerm(
+    ihIdx:   Int,
     normLhs: Term,
     normRhs: Term,
-  )(using env: GlobalEnv): TacticM[Unit] =
+  ): Option[Term] =
     (normLhs, normRhs) match
       case (Term.Con(lname, lref, List(l)), Term.Con(rname, rref, List(r)))
            if lname == rname && lref == rref =>
-        // Motive: P(x) = Eq(Con(name,[shift(1,l)]), Con(name,[Var(0)]))
         val lhsInLam  = Subst.shift(1, l)
         val motiveBody = Term.App(
           Term.App(Term.Ind("Eq", Nil, Nil),
             Term.Con(lname, lref, List(lhsInLam))),
           Term.Con(rname, rref, List(Term.Var(0))))
         val motiveFunc = Term.Lam("x", Term.Ind(lref, Nil, Nil), motiveBody)
-        // Branch body: refl(Con(name, [shift(1, l)]))
-        val body      = Term.Con("refl", "Eq", List(Term.Con(lname, lref, List(lhsInLam))))
-        // J-rule proof: Mat(ih, [refl case], motive)
-        val proofTerm = Term.Mat(
-          Term.Var(ihIdx),
-          List(MatchCase("refl", 1, body)),
-          motiveFunc)
-        TacticM.solveGoalWith(mv, proofTerm)
-      case _ =>
-        // Pattern not recognised: try trivial as fallback
-        trivial
+        val body       = Term.Con("refl", "Eq", List(Term.Con(lname, lref, List(lhsInLam))))
+        Some(Term.Mat(Term.Var(ihIdx), List(MatchCase("refl", 1, body)), motiveFunc))
+      case _ => None
+
+  private def buildJRuleProof(
+    mv:      MetaVar,
+    goal:    Goal,
+    ihIdx:   Int,
+    normLhs: Term,
+    normRhs: Term,
+  )(using env: GlobalEnv): TacticM[Unit] =
+    buildJRuleProofTerm(ihIdx, normLhs, normRhs) match
+      case Some(prf) => TacticM.solveGoalWith(mv, prf)
+      case None      => trivial
+
+  /** Try to build a proof of `Eq(targetLhs, targetRhs)` using global spec `specName`. */
+  private def buildGlobalSpecTerm(
+    goal:       Goal,
+    specName:   String,
+    targetLhs:  Term,
+    targetRhs:  Term,
+    envForCtx:  sproof.eval.Env,
+    n:          Int,
+  )(using env: GlobalEnv): Option[Term] =
+    env.lookupSpec(specName) match
+      case None => None
+      case Some((specPropType, specProofTerm)) =>
+        val arity = collectPiArity(specPropType)
+        if arity > 3 then None
+        else
+          val ctxVars = (0 until n).map(Term.Var(_)).toList
+          cartesianArgs(ctxVars, arity).iterator.flatMap { args =>
+            val instType = instantiateSpec(specPropType, args)
+            Eq.extract(instType) match
+              case None => Iterator.empty
+              case Some((_, lhsSpec, rhsSpec)) =>
+                val normLhsSpec = Quote.normalize(n, envForCtx, lhsSpec)
+                val normRhsSpec = Quote.normalize(n, envForCtx, rhsSpec)
+                val instProof   = args.foldLeft(specProofTerm)(Term.App(_, _))
+                if Quote.convEqual(n, envForCtx, normLhsSpec, targetLhs) &&
+                   Quote.convEqual(n, envForCtx, normRhsSpec, targetRhs) then
+                  Iterator.single(instProof)
+                else if Quote.convEqual(n, envForCtx, normRhsSpec, targetLhs) &&
+                        Quote.convEqual(n, envForCtx, normLhsSpec, targetRhs) then
+                  val elemTpe = Bidirectional.infer(goal.ctx, lhsSpec).getOrElse(Term.Uni(0))
+                  Iterator.single(mkSymm(instProof, lhsSpec, elemTpe))
+                else
+                  Iterator.empty
+          }.nextOption()
+
+  // ---- De Bruijn helpers for global spec instantiation ----
+
+  /** Number of Pi binders at the top of a term. */
+  private def collectPiArity(t: Term): Int = t match
+    case Term.Pi(_, _, cod) => 1 + collectPiArity(cod)
+    case _                  => 0
+
+  /** Instantiate a Pi-chain by substituting args one at a time.
+   *  `Pi(x1, T1, Pi(x2, T2, body))` with args [a1, a2] → body[x1:=a1][x2:=a2]
+   *  Uses `Subst.subst(arg, cod)` which replaces Var(0) and shifts remaining.
+   */
+  private def instantiateSpec(specPropType: Term, args: List[Term]): Term =
+    args.foldLeft(specPropType) { (ty, arg) =>
+      ty match
+        case Term.Pi(_, _, cod) => Subst.subst(arg, cod)
+        case _                  => ty
+    }
+
+  /** All lists of `arity` elements drawn (with repetition) from `vars`. */
+  private def cartesianArgs(vars: List[Term], arity: Int): List[List[Term]] =
+    if arity == 0 then List(Nil)
+    else for v <- vars; rest <- cartesianArgs(vars, arity - 1) yield v :: rest
+
+  /** Build symm proof: given `p: Eq(lhs, rhs)`, returns proof of `Eq(rhs, lhs)`.
+   *  Uses J-rule: Mat(p, [refl => refl(shift(1,lhs))], λx. Eq(x, shift(1,lhs)))
+   *
+   *  @param elemTpe the type of the elements being proved equal (domain of the motive λ)
+   */
+  private def mkSymm(p: Term, lhs: Term, elemTpe: Term): Term =
+    val lhsShifted = Subst.shift(1, lhs)
+    val motiveBody = Term.App(Term.App(Term.Ind("Eq", Nil, Nil), Term.Var(0)), lhsShifted)
+    val motiveFunc = Term.Lam("x", elemTpe, motiveBody)
+    val branchBody = Term.Con("refl", "Eq", List(lhsShifted))
+    Term.Mat(p, List(MatchCase("refl", 1, branchBody)), motiveFunc)
+
+  /** Build transitivity: given `p1: Eq(A, B)` and `p2: Eq(B, C)`, returns proof of `Eq(A, C)`.
+   *  Uses J-rule on p2: Mat(p2, [refl => shift(1,p1)], λx. Eq(shift(1,A), x))
+   *
+   *  @param elemTpe the type of the elements being proved equal (domain of the motive λ)
+   */
+  private def mkTrans(p1: Term, p2: Term, lhsA: Term, elemTpe: Term): Term =
+    val aShifted   = Subst.shift(1, lhsA)
+    val motiveBody = Term.App(Term.App(Term.Ind("Eq", Nil, Nil), aShifted), Term.Var(0))
+    val motiveFunc = Term.Lam("x", elemTpe, motiveBody)
+    val branchBody = Subst.shift(1, p1)
+    Term.Mat(p2, List(MatchCase("refl", 1, branchBody)), motiveFunc)
 
   /** Alias for `simplify` with no lemmas. */
   val simp: TacticM[Unit] = simplify(Nil)
