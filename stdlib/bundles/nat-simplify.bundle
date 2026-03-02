@@ -1,0 +1,5 @@
+# Nat simplification-focused lemmas
+plus_zero_left
+plus_succ_left
+plus_zero_right
+refl

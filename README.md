@@ -323,6 +323,15 @@ Baseline stdlib modules for `Nat`, `List`, `Vec`, and `Bool` are available under
 
 ---
 
+## stdlib Bundles
+
+Reusable lemma bundle manifests are available under `stdlib/bundles/`.
+
+- Bundle documentation and compatibility policy: [docs/lemma-bundles.md](docs/lemma-bundles.md)
+- Representative bundle-oriented example: [examples/bundles/nat_bundle_usage.sproof](examples/bundles/nat_bundle_usage.sproof)
+
+---
+
 ## License
 
 MIT
