@@ -31,6 +31,11 @@ class KernelSuite extends FunSuite:
     val eqTpe = Eq.mkType(Term.Uni(1), Term.Uni(0), Term.Uni(0))
     assert(Kernel.check(empty, refl, eqTpe).isRight)
 
+  test("verify API accepts valid proof"):
+    val refl  = Eq.mkRefl(Term.Uni(0))
+    val eqTpe = Eq.mkType(Term.Uni(1), Term.Uni(0), Term.Uni(0))
+    assert(Kernel.verify(empty, refl, eqTpe).isRight)
+
   // --- defspec validation (proving = type-checking the proof program) ---
 
   test("trivial proof of reflexivity type-checks in kernel"):
@@ -65,6 +70,15 @@ class KernelSuite extends FunSuite:
     val refl      = Eq.mkRefl(Term.Uni(0))
     val falseTpe  = Eq.mkType(Term.Uni(2), Term.Uni(0), Term.Uni(1))
     assert(Kernel.check(empty, refl, falseTpe).isLeft, "Kernel must reject false equality proof!")
+
+  test("verify API returns typed error for invalid proof"):
+    val refl      = Eq.mkRefl(Term.Uni(0))
+    val falseTpe  = Eq.mkType(Term.Uni(2), Term.Uni(0), Term.Uni(1))
+    Kernel.verify(empty, refl, falseTpe) match
+      case Left(Kernel.VerificationError.TypeCheckFailed(err)) =>
+        assert(err.getMessage.contains("Type mismatch"))
+      case Right(_) =>
+        fail("verify must reject invalid proof")
 
   test("SOUNDNESS: wrong universe level is rejected"):
     // Type1 does NOT have type Type0

@@ -60,9 +60,9 @@ object Checker:
               val fullPropTerm = elabParams.foldRight(propTerm) { (p, cod) =>
                 Term.Pi(p._1, p._2, cod)
               }
-              Kernel.check(Context.empty, fullProofTerm, fullPropTerm) match
+              Kernel.verify(Context.empty, fullProofTerm, fullPropTerm) match
                 case Left(err) =>
-                  break(Left(s"Kernel rejected proof of '$name': ${err.getMessage}"))
+                  break(Left(s"Kernel rejected proof of '$name': ${err.message}"))
                 case Right(()) =>
                   ()
       Right((result.env, sorryWarnings.toList))
