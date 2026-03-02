@@ -15,6 +15,7 @@ class StdlibSuite extends FunSuite:
       "stdlib/Vec.sproof",
       "stdlib/Bool.sproof",
       "stdlib/FinSet.sproof",
+      "stdlib/Relation.sproof",
       "stdlib/Effect.sproof",
       "stdlib/Dictionary.sproof",
     )
@@ -31,6 +32,7 @@ class StdlibSuite extends FunSuite:
       ("stdlib/Vec.sproof", "examples/stdlib/vec_usage.sproof"),
       ("stdlib/Bool.sproof", "examples/stdlib/bool_usage.sproof"),
       ("stdlib/FinSet.sproof", "examples/stdlib/finset_usage.sproof"),
+      ("stdlib/Relation.sproof", "examples/stdlib/relation_usage.sproof"),
       ("stdlib/Effect.sproof", "examples/stdlib/effect_usage.sproof"),
       ("stdlib/Dictionary.sproof", "examples/stdlib/dictionary_usage.sproof"),
     )
@@ -47,5 +49,6 @@ class StdlibSuite extends FunSuite:
     assert(doc.contains("stdlib/Vec.sproof"))
     assert(doc.contains("stdlib/Bool.sproof"))
     assert(doc.contains("stdlib/FinSet.sproof"))
+    assert(doc.contains("stdlib/Relation.sproof"))
     assert(doc.contains("stdlib/Effect.sproof"))
     assert(doc.contains("stdlib/Dictionary.sproof"))

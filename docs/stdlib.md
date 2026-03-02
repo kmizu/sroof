@@ -1,6 +1,6 @@
 # stdlib v1 layout and naming
 
-This document defines stdlib v1 layout for `Nat`, `List`, `Vec`, `Bool`, `FinSet`, `Dictionary`, and `Effect`.
+This document defines stdlib v1 layout for `Nat`, `List`, `Vec`, `Bool`, `FinSet`, `Relation`, `Dictionary`, and `Effect`.
 
 ## Layout
 
@@ -9,6 +9,7 @@ This document defines stdlib v1 layout for `Nat`, `List`, `Vec`, `Bool`, `FinSet
 - `stdlib/Vec.sproof`
 - `stdlib/Bool.sproof`
 - `stdlib/FinSet.sproof`
+- `stdlib/Relation.sproof`
 - `stdlib/Effect.sproof`
 - `stdlib/Dictionary.sproof`
 
@@ -16,7 +17,7 @@ Each file is self-contained and checker-runnable by itself.
 
 ## Naming conventions
 
-- File names use PascalCase domain names (`Nat`, `List`, `Vec`, `Bool`, `FinSet`, `Dictionary`, `Effect`).
+- File names use PascalCase domain names (`Nat`, `List`, `Vec`, `Bool`, `FinSet`, `Relation`, `Dictionary`, `Effect`).
 - Definitions and lemmas use `snake_case`.
 - Core operations keep short canonical names (`plus`, `append`, `length`, `concat`, `not`, `and`, `or`).
 - Baseline lemmas use descriptive suffixes (`_nil`, `_left`, `_right`).
