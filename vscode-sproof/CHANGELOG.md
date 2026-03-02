@@ -1,5 +1,12 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+- Goal/subgoal visualization command: `sproof: Show Goals`
+- `sproof goals` output panel integration
+- Automatic goal refresh on save for `.sproof` files
+
 ## [0.1.0] — 2026-02-26
 
 ### Added
