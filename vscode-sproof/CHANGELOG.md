@@ -6,6 +6,8 @@
 - Goal/subgoal visualization command: `sproof: Show Goals`
 - `sproof goals` output panel integration
 - Automatic goal refresh on save for `.sproof` files
+- Structured diagnostics integration via `sproof check --json`
+- Problems panel support with source ranges and expected/actual type details
 
 ## [0.1.0] — 2026-02-26
 

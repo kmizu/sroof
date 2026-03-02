@@ -77,4 +77,27 @@ class JsonOutputSuite extends FunSuite:
     assert(json.contains("\"sorryDiagnostics\""), s"policy error should retain diagnostics:\n$json")
   }
 
+  test("processSourceJson: type mismatch diagnostic includes range/expected/actual") {
+    val source =
+      """|inductive Nat { case zero: Nat  case succ(n: Nat): Nat }
+         |defspec bad(n: Nat): n = Nat.zero { n }
+         |""".stripMargin
+    val json = Main.processSourceJson(source, "mismatch.sproof")
+    assert(json.contains("\"ok\":false"), s"should be failure:\n$json")
+    assert(json.contains("\"diagnostics\""), s"should include diagnostics array:\n$json")
+    assert(json.contains("\"code\":\"type_mismatch\""), s"should classify type mismatch:\n$json")
+    assert(json.contains("\"expected\""), s"should include expected type:\n$json")
+    assert(json.contains("\"actual\""), s"should include actual type:\n$json")
+    assert(json.contains("\"range\""), s"should include diagnostic range:\n$json")
+  }
+
+  test("processSourceJson: parse diagnostics include range") {
+    val source = "inductive Nat { case zero Nat }"
+    val json = Main.processSourceJson(source, "bad.sproof")
+    assert(json.contains("\"ok\":false"), s"should be failure:\n$json")
+    assert(json.contains("\"phase\":\"parse\""), s"should have parse phase:\n$json")
+    assert(json.contains("\"code\":\"parse_error\""), s"should classify parse error:\n$json")
+    assert(json.contains("\"range\""), s"should include parse range:\n$json")
+  }
+
 end JsonOutputSuite

@@ -13,6 +13,12 @@ import sproof.extract.Extractor
   *   - `sproof repl`                — interactive REPL
   */
 object Main:
+  private final case class CheckFailure(
+    phase: String,
+    error: String,
+    diagnostics: List[Diagnostic],
+  )
+
 
   private[sproof] final case class CheckCliOptions(
     filePath: String,
@@ -170,9 +176,11 @@ object Main:
           System.err.println(s"Error reading file: ${e.getMessage}")
           sys.exit(1)
 
-    processSourceWithWarnings(source, filePath) match
-      case Left(err) =>
-        System.err.println(s"Error: $err")
+    processSourceDetailed(source, filePath) match
+      case Left(failure) =>
+        System.err.println(s"Error: ${failure.error}")
+        if failure.diagnostics.nonEmpty then
+          System.err.println(Diagnostics.formatForCli(failure.diagnostics))
         sys.exit(1)
       case Right((env, specCount, warnings)) =>
         warnings.foreach(w => System.err.println(w))
@@ -190,11 +198,10 @@ object Main:
     * @return the final GlobalEnv on success, or an error message
     */
   def processSource(source: String, fileName: String = "<input>"): Either[String, (GlobalEnv, Int)] =
-    for
-      decls  <- Parser.parseProgram(source).left.map(e => s"Parse error in $fileName:\n$e")
-      result <- Elaborator.elaborate(decls).left.map(e => s"Elaboration error in $fileName: ${e.message}")
-      env    <- Checker.checkAll(result)
-    yield (env, result.defspecs.size)
+    processSourceDetailed(source, fileName)
+      .map { case (env, defspecCount, _) => (env, defspecCount) }
+      .left
+      .map(_.error)
 
   /** processSource with sorry warnings.
     *
@@ -204,12 +211,10 @@ object Main:
     source:   String,
     fileName: String = "<input>",
   ): Either[String, (GlobalEnv, Int, List[String])] =
-    for
-      decls          <- Parser.parseProgram(source).left.map(e => s"Parse error in $fileName:\n$e")
-      result         <- Elaborator.elaborate(decls).left.map(e => s"Elaboration error in $fileName: ${e.message}")
-      envAndWarnings <- Checker.checkAllWithWarnings(result)
-      (env, warnings) = envAndWarnings
-    yield (env, result.defspecs.size, warnings)
+    processSourceDetailed(source, fileName)
+      .map { case (env, defspecCount, warnings) => (env, defspecCount, warnings) }
+      .left
+      .map(_.error)
 
   /** processSource with #check results.
     *
@@ -266,39 +271,51 @@ object Main:
     def warningJson(message: String): String =
       s"""{"severity":"warning","code":"sorry","message":"${esc(message)}"}"""
 
-    def toJsonDiagnostic(d: SorryDiagnostic): String =
+    def toJsonSorryDiagnostic(d: SorryDiagnostic): String =
       val occJson = d.occurrences match
         case Some(n) => n.toString
         case None    => "null"
       val depsJson = d.dependsOn.map(dep => s""""${esc(dep)}"""").mkString("[", ",", "]")
       s"""{"code":"${esc(d.code)}","defspec":"${esc(d.defspec)}","transitive":${d.transitive},"occurrences":$occJson,"dependsOn":$depsJson,"message":"${esc(d.message)}"}"""
 
-    def diagnosticJson(phase: String, message: String): String =
-      s"""{"severity":"error","phase":"${esc(phase)}","message":"${esc(message)}"}"""
+    def diagnosticToJson(d: Diagnostic): String =
+      val rangeJson = d.range match
+        case Some(r) =>
+          s"""{"start":{"line":${r.start.line},"column":${r.start.column}},"end":{"line":${r.end.line},"column":${r.end.column}}}"""
+        case None => "null"
+      val expectedJson = d.expected.map(v => s""""${esc(v)}"""").getOrElse("null")
+      val actualJson = d.actual.map(v => s""""${esc(v)}"""").getOrElse("null")
+      val hintJson = d.hint.map(v => s""""${esc(v)}"""").getOrElse("null")
+      s"""{"phase":"${esc(d.phase)}","code":"${esc(d.code)}","message":"${esc(d.message)}","range":$rangeJson,"expected":$expectedJson,"actual":$actualJson,"hint":$hintJson}"""
 
-    def failJson(phase: String, message: String): String =
-      val diagJson = diagnosticJson(phase, message)
-      s"""{"schemaVersion":2,"ok":false,"phase":"${esc(phase)}","file":"${esc(fileName)}","result":null,"warnings":[],"sorryDiagnostics":[],"diagnostics":[$diagJson],"checks":[],"error":"${esc(message)}"}"""
+    def failJson(phase: String, message: String, diagnostics: List[Diagnostic]): String =
+      val diagJson = diagnostics.map(diagnosticToJson).mkString("[", ",", "]")
+      s"""{"schemaVersion":2,"ok":false,"phase":"${esc(phase)}","file":"${esc(fileName)}","result":null,"warnings":[],"sorryDiagnostics":[],"diagnostics":$diagJson,"checks":[],"error":"${esc(message)}"}"""
+
+    def policyDiagnosticJson(message: String): String =
+      s"""{"phase":"policy","code":"policy_error","message":"${esc(message)}","range":null,"expected":null,"actual":null,"hint":null}"""
 
     Parser.parseProgram(source) match
       case Left(parseErr) =>
-        failJson("parse", parseErr.toString)
+        val raw = parseErr.toString
+        failJson("parse", raw, Diagnostics.fromFailure(source, "parse", raw))
       case Right(decls) =>
         Elaborator.elaborate(decls) match
           case Left(elabErr) =>
-            failJson("elab", elabErr.message)
+            val raw = elabErr.message
+            failJson("elab", raw, Diagnostics.fromFailure(source, "elab", raw))
           case Right(result) =>
             given GlobalEnv = result.env
             Checker.checkAllWithWarnings(result) match
               case Left(proofErr) =>
-                failJson("proof", proofErr)
+                failJson("proof", proofErr, Diagnostics.fromFailure(source, "proof", proofErr))
               case Right((env, warnings)) =>
                 val indCount   = env.inductives.size
                 val defCount   = env.defs.size
                 val specCount  = result.defspecs.size
                 val warnJson   = warnings.map(warningJson).mkString("[", ",", "]")
                 val sorryDiagnostics = warnings.map(parseSorryDiagnostic)
-                val sorryDiagJson = sorryDiagnostics.map(toJsonDiagnostic).mkString("[", ",", "]")
+                val sorryDiagJson = sorryDiagnostics.map(toJsonSorryDiagnostic).mkString("[", ",", "]")
                 val checkJson  = result.checks.map { sexpr =>
                   val exprStr = sexpr.toString
                   Elaborator.elabExprPublic(sexpr, env, Nil) match
@@ -313,10 +330,33 @@ object Main:
                 }.mkString("[", ",", "]")
                 if failOnSorry && warnings.nonEmpty then
                   val msg = "sorry policy violation (use of sorry is disallowed in this mode)"
-                  val policyDiagJson = diagnosticJson("policy", msg)
+                  val policyDiagJson = policyDiagnosticJson(msg)
                   s"""{"schemaVersion":2,"ok":false,"phase":"policy","file":"${esc(fileName)}","result":{"inductives":$indCount,"defs":$defCount,"defspecs":$specCount},"warnings":$warnJson,"sorryDiagnostics":$sorryDiagJson,"diagnostics":[$policyDiagJson],"checks":$checkJson,"error":"$msg"}"""
                 else
                   s"""{"schemaVersion":2,"ok":true,"phase":"check","file":"${esc(fileName)}","result":{"inductives":$indCount,"defs":$defCount,"defspecs":$specCount},"warnings":$warnJson,"sorryDiagnostics":$sorryDiagJson,"diagnostics":[],"checks":$checkJson,"error":null}"""
+
+  private def processSourceDetailed(
+    source: String,
+    fileName: String,
+  ): Either[CheckFailure, (GlobalEnv, Int, List[String])] =
+    Parser.parseProgram(source) match
+      case Left(parseErr) =>
+        val raw = parseErr.toString
+        val message = s"Parse error in $fileName:\n$raw"
+        Left(CheckFailure("parse", message, Diagnostics.fromFailure(source, "parse", raw)))
+      case Right(decls) =>
+        Elaborator.elaborate(decls) match
+          case Left(elabErr) =>
+            val message = s"Elaboration error in $fileName: ${elabErr.message}"
+            Left(CheckFailure("elab", message, Diagnostics.fromFailure(source, "elab", elabErr.message)))
+          case Right(result) =>
+            given GlobalEnv = result.env
+            Checker.checkAllWithWarnings(result) match
+              case Left(proofErr) =>
+                val message = proofErr
+                Left(CheckFailure("proof", message, Diagnostics.fromFailure(source, "proof", proofErr)))
+              case Right((env, warnings)) =>
+                Right((env, result.defspecs.size, warnings))
 
   // ---- REPL ----
 
