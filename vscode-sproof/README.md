@@ -46,6 +46,13 @@ Hovering over any sproof keyword shows a brief description of its meaning and us
 
 The VS Code outline panel (and breadcrumbs) show all top-level `def`, `defspec`, and `inductive` definitions in the current file.
 
+### Goal/Subgoal Visualization
+
+- Run `sproof: Show Goals` from the command palette to inspect the current proof state.
+- The extension writes goal output to the `sproof goals` output panel.
+- Saving a `.sproof` file automatically refreshes the goal panel.
+- Solved/empty states are shown as `No open goals`.
+
 ## Installation
 
 ### From source

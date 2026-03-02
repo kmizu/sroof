@@ -36,6 +36,10 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.activate = activate;
 exports.deactivate = deactivate;
 const vscode = __importStar(require("vscode"));
+const fs = __importStar(require("fs"));
+const os = __importStar(require("os"));
+const path = __importStar(require("path"));
+const child_process_1 = require("child_process");
 const KEYWORD_DOCS = {
     'inductive': 'Define an inductive data type.\n\nExample:\n```sproof\ninductive Nat {\n  case zero: Nat\n  case succ(n: Nat): Nat\n}\n```',
     'def': 'Define a function.\n\nExample:\n```sproof\ndef add(n: Nat, m: Nat): Nat = match n {\n  case Nat.zero => m\n  case Nat.succ k => Nat.succ(add(k, m))\n}\n```',
@@ -63,8 +67,102 @@ const KEYWORD_DOCS = {
     'Pi': 'Dependent function type `Pi(x: A, B)`, where `B` may mention `x`.',
     'case': 'Introduces a constructor in an inductive type definition or a branch in a match expression.',
 };
+function extractProofState(output) {
+    const start = output.indexOf('(proof-state');
+    if (start < 0) {
+        return null;
+    }
+    let depth = 0;
+    let inString = false;
+    let escaped = false;
+    for (let i = start; i < output.length; i++) {
+        const ch = output[i];
+        if (inString) {
+            if (escaped) {
+                escaped = false;
+            }
+            else if (ch === '\\') {
+                escaped = true;
+            }
+            else if (ch === '"') {
+                inString = false;
+            }
+            continue;
+        }
+        if (ch === '"') {
+            inString = true;
+            continue;
+        }
+        if (ch === '(') {
+            depth++;
+        }
+        else if (ch === ')') {
+            depth--;
+            if (depth === 0) {
+                return output.slice(start, i + 1);
+            }
+        }
+    }
+    return output.slice(start);
+}
+function formatProofState(proofState) {
+    // Keep formatting deterministic for larger states and avoid overly long single lines.
+    return proofState
+        .replace(/\)\s+\(/g, ')\n(')
+        .replace(/\(goal\b/g, '\n(goal')
+        .trim();
+}
+async function runCheckAndShowGoals(document, channel, reveal, latestRunByDocument) {
+    const documentKey = document.uri.toString();
+    const runId = (latestRunByDocument.get(documentKey) ?? 0) + 1;
+    latestRunByDocument.set(documentKey, runId);
+    const workspaceFolder = vscode.workspace.getWorkspaceFolder(document.uri);
+    const cwd = workspaceFolder ? workspaceFolder.uri.fsPath : path.dirname(document.uri.fsPath);
+    const tmpPath = path.join(os.tmpdir(), `sproof-goals-${Date.now()}-${Math.random().toString(16).slice(2)}.sproof`);
+    fs.writeFileSync(tmpPath, document.getText(), 'utf8');
+    const commandArg = `cli/run check ${tmpPath}`;
+    const output = await new Promise((resolve) => {
+        (0, child_process_1.execFile)('sbt', [commandArg], { cwd, timeout: 120000 }, (err, stdout, stderr) => {
+            resolve((stdout ?? '') + '\n' + (stderr ?? '') + (err ? `\n${String(err)}` : ''));
+        });
+    });
+    try {
+        fs.unlinkSync(tmpPath);
+    }
+    catch {
+        // best-effort cleanup
+    }
+    if (latestRunByDocument.get(documentKey) !== runId) {
+        return;
+    }
+    const proofState = extractProofState(output);
+    channel.clear();
+    if (proofState) {
+        channel.appendLine(`Current goals for: ${document.fileName}`);
+        channel.appendLine('');
+        channel.appendLine(formatProofState(proofState));
+        if (reveal) {
+            channel.show(true);
+        }
+        return;
+    }
+    const ok = output.includes('OK:');
+    if (ok) {
+        channel.appendLine(`No open goals: ${document.fileName}`);
+    }
+    else {
+        channel.appendLine(`Could not extract proof-state for: ${document.fileName}`);
+        channel.appendLine('');
+        channel.appendLine(output.trim());
+    }
+    if (reveal) {
+        channel.show(true);
+    }
+}
 function activate(context) {
     console.log('sproof extension activated');
+    const goalChannel = vscode.window.createOutputChannel('sproof goals');
+    const latestRunByDocument = new Map();
     const hoverProvider = vscode.languages.registerHoverProvider('sproof', {
         provideHover(document, position) {
             const wordRange = document.getWordRangeAtPosition(position, /[A-Za-z_][A-Za-z0-9_]*/);
@@ -110,7 +208,24 @@ function activate(context) {
             return symbols;
         }
     });
-    context.subscriptions.push(hoverProvider, symbolProvider);
+    const showGoalsCommand = vscode.commands.registerCommand('sproof.showGoals', async () => {
+        const editor = vscode.window.activeTextEditor;
+        if (!editor || editor.document.languageId !== 'sproof') {
+            vscode.window.showInformationMessage('Open a .sproof file to show current goals.');
+            return;
+        }
+        await runCheckAndShowGoals(editor.document, goalChannel, true, latestRunByDocument);
+    });
+    const saveWatcher = vscode.workspace.onDidSaveTextDocument(async (doc) => {
+        if (doc.languageId !== 'sproof') {
+            return;
+        }
+        await runCheckAndShowGoals(doc, goalChannel, false, latestRunByDocument);
+    });
+    const closeWatcher = vscode.workspace.onDidCloseTextDocument((doc) => {
+        latestRunByDocument.delete(doc.uri.toString());
+    });
+    context.subscriptions.push(hoverProvider, symbolProvider, showGoalsCommand, saveWatcher, closeWatcher, goalChannel);
 }
 function deactivate() { }
 //# sourceMappingURL=extension.js.map

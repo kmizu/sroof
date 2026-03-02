@@ -15,7 +15,8 @@
     "Programming Languages"
   ],
   "activationEvents": [
-    "onLanguage:sproof"
+    "onLanguage:sproof",
+    "onCommand:sproof.showGoals"
   ],
   "main": "./out/extension.js",
   "contributes": {
@@ -43,6 +44,13 @@
       {
         "language": "sproof",
         "path": "./snippets/sproof.json"
+      }
+    ],
+    "commands": [
+      {
+        "command": "sproof.showGoals",
+        "title": "sproof: Show Goals",
+        "category": "sproof"
       }
     ]
   },

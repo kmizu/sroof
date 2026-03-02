@@ -1,4 +1,8 @@
 import * as vscode from 'vscode';
+import * as fs from 'fs';
+import * as os from 'os';
+import * as path from 'path';
+import { execFile } from 'child_process';
 
 const KEYWORD_DOCS: Record<string, string> = {
   'inductive': 'Define an inductive data type.\n\nExample:\n```sproof\ninductive Nat {\n  case zero: Nat\n  case succ(n: Nat): Nat\n}\n```',
@@ -28,8 +32,112 @@ const KEYWORD_DOCS: Record<string, string> = {
   'case': 'Introduces a constructor in an inductive type definition or a branch in a match expression.',
 };
 
+function extractProofState(output: string): string | null {
+  const start = output.indexOf('(proof-state');
+  if (start < 0) {
+    return null;
+  }
+
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+  for (let i = start; i < output.length; i++) {
+    const ch = output[i];
+    if (inString) {
+      if (escaped) {
+        escaped = false;
+      } else if (ch === '\\') {
+        escaped = true;
+      } else if (ch === '"') {
+        inString = false;
+      }
+      continue;
+    }
+
+    if (ch === '"') {
+      inString = true;
+      continue;
+    }
+    if (ch === '(') {
+      depth++;
+    } else if (ch === ')') {
+      depth--;
+      if (depth === 0) {
+        return output.slice(start, i + 1);
+      }
+    }
+  }
+  return output.slice(start);
+}
+
+function formatProofState(proofState: string): string {
+  // Keep formatting deterministic for larger states and avoid overly long single lines.
+  return proofState
+    .replace(/\)\s+\(/g, ')\n(')
+    .replace(/\(goal\b/g, '\n(goal')
+    .trim();
+}
+
+async function runCheckAndShowGoals(
+  document: vscode.TextDocument,
+  channel: vscode.OutputChannel,
+  reveal: boolean,
+  latestRunByDocument: Map<string, number>,
+): Promise<void> {
+  const documentKey = document.uri.toString();
+  const runId = (latestRunByDocument.get(documentKey) ?? 0) + 1;
+  latestRunByDocument.set(documentKey, runId);
+
+  const workspaceFolder = vscode.workspace.getWorkspaceFolder(document.uri);
+  const cwd = workspaceFolder ? workspaceFolder.uri.fsPath : path.dirname(document.uri.fsPath);
+  const tmpPath = path.join(os.tmpdir(), `sproof-goals-${Date.now()}-${Math.random().toString(16).slice(2)}.sproof`);
+  fs.writeFileSync(tmpPath, document.getText(), 'utf8');
+
+  const commandArg = `cli/run check ${tmpPath}`;
+  const output = await new Promise<string>((resolve) => {
+    execFile('sbt', [commandArg], { cwd, timeout: 120000 }, (err, stdout, stderr) => {
+      resolve((stdout ?? '') + '\n' + (stderr ?? '') + (err ? `\n${String(err)}` : ''));
+    });
+  });
+  try {
+    fs.unlinkSync(tmpPath);
+  } catch {
+    // best-effort cleanup
+  }
+
+  if (latestRunByDocument.get(documentKey) !== runId) {
+    return;
+  }
+
+  const proofState = extractProofState(output);
+  channel.clear();
+  if (proofState) {
+    channel.appendLine(`Current goals for: ${document.fileName}`);
+    channel.appendLine('');
+    channel.appendLine(formatProofState(proofState));
+    if (reveal) {
+      channel.show(true);
+    }
+    return;
+  }
+
+  const ok = output.includes('OK:');
+  if (ok) {
+    channel.appendLine(`No open goals: ${document.fileName}`);
+  } else {
+    channel.appendLine(`Could not extract proof-state for: ${document.fileName}`);
+    channel.appendLine('');
+    channel.appendLine(output.trim());
+  }
+  if (reveal) {
+    channel.show(true);
+  }
+}
+
 export function activate(context: vscode.ExtensionContext): void {
   console.log('sproof extension activated');
+  const goalChannel = vscode.window.createOutputChannel('sproof goals');
+  const latestRunByDocument = new Map<string, number>();
 
   const hoverProvider = vscode.languages.registerHoverProvider('sproof', {
     provideHover(document: vscode.TextDocument, position: vscode.Position): vscode.Hover | null {
@@ -82,7 +190,27 @@ export function activate(context: vscode.ExtensionContext): void {
     }
   });
 
-  context.subscriptions.push(hoverProvider, symbolProvider);
+  const showGoalsCommand = vscode.commands.registerCommand('sproof.showGoals', async () => {
+    const editor = vscode.window.activeTextEditor;
+    if (!editor || editor.document.languageId !== 'sproof') {
+      vscode.window.showInformationMessage('Open a .sproof file to show current goals.');
+      return;
+    }
+    await runCheckAndShowGoals(editor.document, goalChannel, true, latestRunByDocument);
+  });
+
+  const saveWatcher = vscode.workspace.onDidSaveTextDocument(async (doc) => {
+    if (doc.languageId !== 'sproof') {
+      return;
+    }
+    await runCheckAndShowGoals(doc, goalChannel, false, latestRunByDocument);
+  });
+
+  const closeWatcher = vscode.workspace.onDidCloseTextDocument((doc) => {
+    latestRunByDocument.delete(doc.uri.toString());
+  });
+
+  context.subscriptions.push(hoverProvider, symbolProvider, showGoalsCommand, saveWatcher, closeWatcher, goalChannel);
 }
 
 export function deactivate(): void {}
