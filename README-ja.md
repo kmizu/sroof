@@ -87,6 +87,12 @@ sbt "cli/run check examples/nat.sproof"
 OK: examples/nat.sproof — 1 inductive(s), 1 definition(s), 4 defspec(s)
 ```
 
+関連ドキュメント:
+- JSON 出力スキーマ: [docs/json-schema.md](docs/json-schema.md)
+- 証明クックブック: [docs/proof-cookbook.md](docs/proof-cookbook.md)
+- Effect 境界ガイド: [docs/effects.md](docs/effects.md)
+- 複雑性理論向け道具立てロードマップ: [docs/complexity-tooling-roadmap.md](docs/complexity-tooling-roadmap.md)
+
 ---
 
 ## 構文ガイド
