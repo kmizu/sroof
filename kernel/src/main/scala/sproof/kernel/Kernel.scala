@@ -19,6 +19,18 @@ import sproof.tactic.Eq
  */
 object Kernel:
 
+  /** Typed errors returned by [[verify]].
+   *
+   *  `verify` is the stable final-verification API for callers outside the
+   *  kernel package.  It wraps lower-level checker errors while preserving
+   *  the original details.
+   */
+  enum VerificationError:
+    case TypeCheckFailed(cause: TypeError)
+
+    def message: String = this match
+      case TypeCheckFailed(cause) => cause.getMessage
+
   /** Check that `proof` has type `claimedType` in context `ctx`.
    *
    *  Returns Right(()) on success, Left(TypeError) on failure.
@@ -46,6 +58,15 @@ object Kernel:
       case _ =>
         // General case: delegate to the bidirectional checker
         Bidirectional.check(ctx, proof, claimedType)
+
+  /** Final kernel verification API.
+   *
+   *  Call this API for the final accept/reject decision of a proof term.
+   *  It performs independent trusted-kernel checking and returns typed
+   *  verification errors.
+   */
+  def verify(ctx: Context, proof: Term, claimedType: Term)(using env: GlobalEnv): Either[VerificationError, Unit] =
+    check(ctx, proof, claimedType).left.map(VerificationError.TypeCheckFailed.apply)
 
   /** Infer the type of a term; re-export for convenience. */
   def infer(ctx: Context, term: Term)(using env: GlobalEnv): Either[TypeError, Term] =
