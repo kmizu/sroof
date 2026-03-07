@@ -4,3 +4,16 @@
 defspec char_code_mk_use(n: Nat): char_code(Char.mk(n)) = n {
   by trivial
 }
+
+// A ValidChar can only be constructed with a proof that the code is valid.
+// isValidCodepoint(n) = Bool.true is always true (simplified stdlib definition),
+// so the proof is trivially Bool.true = Bool.true.
+defspec valid_char_round_trip(n: Nat, p: isValidCodepoint(n) = Bool.true):
+    valid_char_code(ValidChar.mk(n, p)) = n {
+  by trivial
+}
+
+// Any Nat can serve as a valid code point (because isValidCodepoint is always true).
+defspec any_nat_is_valid(n: Nat): isValidCodepoint(n) = Bool.true {
+  by trivial
+}

@@ -298,7 +298,12 @@ object Elaborator:
         if env.lookupInd(name).isDefined then
           Right(Term.Ind(name, Nil, Nil))
         else nameEnv.indexOf(name) match
-          case -1 => Left(ElabError(s"Unknown type: $name"))
+          case -1 =>
+            // Allow global defs in type position (e.g. sigma_fst(A,B,p) as a type argument).
+            // This enables dependent return types like B(sigma_fst(A, B, p)).
+            env.lookupDef(name) match
+              case Some(defEntry) => Right(defEntry.body)
+              case None           => Left(ElabError(s"Unknown type: $name"))
           case i  => Right(Term.Var(i))
 
       case SType.STApp(fn, arg) =>

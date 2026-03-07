@@ -2,32 +2,41 @@
 //
 // Sigma(A: Type, B: A -> Type) is the type of dependent pairs (a : A, b : B(a)).
 //
-// Requires progressive parameter elaboration: each inductive parameter's type may
-// reference earlier parameters.  Sigma is the first stdlib module to use this feature.
+// Requires:
+//   - Progressive inductive parameter elaboration (each param's type may reference
+//     earlier params: B references A).
+//   - Equality types in constructor arg positions (for refinement types / subtypes).
+//   - Global defs in type position (for sigma_snd's dependent return type).
 //
 // Usage:
-//   Sigma.mk(a, b)              -- construct a pair  (a : A, b : B(a))
-//   sigma_fst(A, B, p)          -- project first component (: A)
-//
-// Note: sigma_snd requires a dependent return type B(fst(p)), which needs
-// a richer type system surface syntax.  Omitted for now.
+//   Sigma.mk(a, b)                    -- construct (a : A, b : B(a))
+//   sigma_fst(A, B, p)                -- project first component (: A)
+//   sigma_snd(A, B, p)                -- project second component (: B(sigma_fst(A,B,p)))
 
 inductive Nat {
   case zero: Nat
   case succ(n: Nat): Nat
 }
 
-// B has type A -> Type: a function from elements of A to types.
-// This means B(a) is the type of the second component when the first is a.
+// B has type A -> Type: a function from A to types.
+// B(a) is the type of the second component when the first is a.
 inductive Sigma(A: Type, B: A -> Type) {
   case mk(fst: A, snd: B(fst)): Sigma
 }
 
 // Project the first component.
-// p: Sigma(A, B) uses multi-arg type application (same as Vec(A, n) syntax).
 def sigma_fst(A: Type, B: A -> Type, p: Sigma(A, B)): A {
   match p {
     case Sigma.mk(x, y) => x
+  }
+}
+
+// Project the second component.
+// Return type B(sigma_fst(A, B, p)) is expressed by using global def sigma_fst in type position.
+// NbE reduces sigma_fst(A,B,Con("mk",[x,y])) → x, so B(x) agrees with y's type B(x). ✓
+def sigma_snd(A: Type, B: A -> Type, p: Sigma(A, B)): B(sigma_fst(A, B, p)) {
+  match p {
+    case Sigma.mk(x, y) => y
   }
 }
 
@@ -36,5 +45,11 @@ def sigma_fst(A: Type, B: A -> Type, p: Sigma(A, B)): A {
 // sigma_fst(A, B, Sigma.mk(a, b)) = a
 defspec sigma_fst_mk(A: Type, B: A -> Type, a: A, b: B(a)):
     sigma_fst(A, B, Sigma.mk(a, b)) = a {
+  by trivial
+}
+
+// sigma_snd(A, B, Sigma.mk(a, b)) = b
+defspec sigma_snd_mk(A: Type, B: A -> Type, a: A, b: B(a)):
+    sigma_snd(A, B, Sigma.mk(a, b)) = b {
   by trivial
 }

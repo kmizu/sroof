@@ -1,15 +1,13 @@
-// stdlib v1: Char
+// stdlib: Char (Unicode code point wrapper)
 //
-// Char is a wrapper around Nat (Unicode code point).
-// This follows the Isabelle approach: the logical representation is a Nat,
-// wrapped in a constructor to distinguish character data from numeric data.
+// Two representations:
 //
-// Char.mk(Nat.zero)            -- U+0000 NULL
-// Char.mk(Nat.succ(...65...))  -- 'A' (U+0041)
+//   Char    — simple wrapper (Isabelle-style): no validity constraint
+//   ValidChar — Lean 4-style: validity proof embedded in the constructor
+//               Enabled by equality types in constructor arg positions.
 //
-// Practical validity constraints (e.g. isValidCodepoint) are not encoded here,
-// keeping proofs manageable.  The Lean 4 style (UInt32 + validity proof) would
-// require sigma types, which are future work.
+// isValidCodepoint is simplified here (all Nats pass) to keep proofs manageable.
+// A production version would check n ≤ 1114111 using Nat comparison.
 
 inductive Nat {
   case zero: Nat
@@ -21,23 +19,56 @@ inductive Bool {
   case false: Bool
 }
 
+// ---- Simple Char (backwards-compatible) ----
+
 inductive Char {
   case mk(code: Nat): Char
 }
 
-// Extract the code point.
 def char_code(c: Char): Nat {
   match c {
     case Char.mk(n) => n
   }
 }
 
-// Equality of characters as equality of their code points.
-// (Relies on Nat.eq from context; here we just expose the accessor.)
+// ---- Validity predicate ----
+
+// Simplified: all Nat values are treated as valid code points.
+// Replace with a proper le_nat check for production use.
+def isValidCodepoint(n: Nat): Bool {
+  Bool.true
+}
+
+// ---- ValidChar: Lean 4 style proof-carrying constructor ----
+//
+// The second constructor argument `valid` is a PROOF that isValidCodepoint(code) = Bool.true.
+// This is a refinement type: ValidChar can only be constructed with valid code points.
+// The equality type in the ctor arg position was enabled by the v2 parser upgrade.
+
+inductive ValidChar {
+  case mk(code: Nat, valid: isValidCodepoint(code) = Bool.true): ValidChar
+}
+
+def valid_char_code(c: ValidChar): Nat {
+  match c {
+    case ValidChar.mk(n, p) => n
+  }
+}
 
 // ---- Defspecs ----
 
 // char_code(Char.mk(n)) = n
 defspec char_code_mk(n: Nat): char_code(Char.mk(n)) = n {
+  by trivial
+}
+
+// isValidCodepoint always returns Bool.true (by definition)
+defspec isValidCodepoint_always_true(n: Nat): isValidCodepoint(n) = Bool.true {
+  by trivial
+}
+
+// valid_char_code(ValidChar.mk(n, p)) = n
+defspec valid_char_code_mk(n: Nat, p: isValidCodepoint(n) = Bool.true):
+    valid_char_code(ValidChar.mk(n, p)) = n {
   by trivial
 }

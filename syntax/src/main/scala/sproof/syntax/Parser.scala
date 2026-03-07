@@ -350,7 +350,8 @@ object Parser:
 
   private lazy val paramDecl: Parsley[SParam] =
     parens(identifier.flatMap { name =>
-      op(":") *> fwd(typeExpr).map { tpe =>
+      // Use propType so equality propositions (p: f(x) = y) work as param types.
+      op(":") *> fwd(propType).map { tpe =>
         SParam(name, tpe)
       }
     })
@@ -358,7 +359,8 @@ object Parser:
   private lazy val paramList: Parsley[List[SParam]] =
     parens(sepBy(
       identifier.flatMap { name =>
-        op(":") *> fwd(typeExpr).map { tpe =>
+        // Use propType so equality propositions (p: f(x) = y) work as param types.
+        op(":") *> fwd(propType).map { tpe =>
           SParam(name, tpe)
         }
       },
@@ -444,7 +446,8 @@ object Parser:
     keyword("case") *> identifier.flatMap { name =>
       option(parens(sepBy(
         identifier.flatMap { pn =>
-          op(":") *> fwd(typeExpr).map { pt =>
+          // Use propType so equality constraints like `valid: f(x) = Bool.true` work.
+          op(":") *> fwd(propType).map { pt =>
             SParam(pn, pt)
           }
         },
