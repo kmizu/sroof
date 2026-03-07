@@ -42,6 +42,11 @@ defspec plus_zero_right(n: Nat): plus(n, Nat.zero) = n {
     case succ k ih => simplify [ih]
   }
 }
+
+// Numeric literals: 2 = succ(succ(zero)), etc.
+defspec two_plus_three: plus(2, 3) = 5 {
+  by trivial
+}
 ```
 
 sproof's design principle: **keep only the essential complexity**.
@@ -142,6 +147,32 @@ inductive Bool {
 }
 ```
 
+### Dependent Types (Sigma / Refinement Types)
+
+Constructors can reference earlier parameters and embed equality proofs — enabling dependent pairs and Lean 4-style refinement types:
+
+```scala
+// Sigma type (dependent pair): B can depend on the first component
+inductive Sigma(A: Type, B: A -> Type) {
+  case mk(fst: A, snd: B(fst)): Sigma
+}
+
+// Proof-carrying constructor: validity proof embedded in the value
+inductive ValidChar {
+  case mk(code: Nat, valid: isValidCodepoint(code) = Bool.true): ValidChar
+}
+```
+
+### Numeric Literals
+
+Integer literals desugar to `Nat.succ` chains automatically:
+
+```scala
+// These three are equivalent:
+defspec ex1: plus(2, 3) = 5            { by trivial }
+defspec ex2: plus(succ(succ(zero)), succ(succ(succ(zero)))) = succ(succ(succ(succ(succ(zero))))) { by trivial }
+```
+
 ### Function Definitions
 
 ```scala
@@ -166,12 +197,21 @@ def id(x: Nat): Nat = x
 defspec name(params): proposition { proof }
 ```
 
+Parameters are optional for ground (parameter-free) theorems:
+
+```
+defspec name: proposition { proof }
+```
+
 Symmetry with `def`:
 
 ```scala
-def     foo(n: Nat): Nat  =         { n }          // function: program for a type
-defspec bar(n: Nat): P(n) { ... }        // spec: proof program for a proposition
+def     foo(n: Nat): Nat  = { n }         // function: program for a type
+defspec bar(n: Nat): P(n) { ... }         // spec: proof program for a proposition
+defspec baz: 1 == 1        { by trivial }  // ground theorem — no params needed
 ```
+
+Both `=` and `==` are accepted as equality connectives in propositions.
 
 If the proof program has the wrong type, it is rejected — just like a type error in regular code.
 
@@ -211,12 +251,15 @@ defspec refl_intro(n: Nat): n = n {
 |--------------------------|------------|---------------------------------------------------------------|
 | `trivial`                | `triv`     | Close goal when both sides are definitionally equal           |
 | `simplify [f, g, ...]`   | `simp`     | Rewrite using listed lemmas, then check trivially             |
+| `simplify`               | `simp`     | Rewrite using all `@[simp]`-tagged lemmas, then check trivially |
 | `induction x { ... }`   | `induct x` | Split on constructors of `x`; adds IH for recursive cases    |
 | `assumption x`           | `assume x` | Introduce `x : A` into context, shifting goal to `B`         |
 | `apply f`                | —          | Unify goal with return type of `f`; generate subgoals        |
 | `cases x { ... }`        | —          | Case-split without induction hypothesis                       |
 | `have h : T = proof`     | —          | Introduce a local lemma                                       |
 | `calc { ... }`           | —          | Chain equational reasoning steps                              |
+| `rewrite [h]`            | `rw [h]`   | Rewrite goal left-to-right using equation `h`                 |
+| `contradiction`          | —          | Close goal when a hypothesis contradicts another              |
 | `ring`                   | —          | Discharge ring-equation goals automatically                   |
 | `sorry`                  | —          | Placeholder for incomplete proofs (emits a warning)           |
 
@@ -347,7 +390,24 @@ sbt sproofRepl     # Interactive REPL
 
 ## stdlib v1
 
-Baseline stdlib modules for `Nat`, `List`, `Vec`, and `Bool` are available under [`stdlib/`](stdlib).
+14 stdlib modules are available under [`stdlib/`](stdlib):
+
+| Module | Contents |
+|--------|----------|
+| `Nat` | Natural numbers, `plus`, `mult`, arithmetic lemmas |
+| `Bool` | Booleans, `not`, `and`, `or` |
+| `List` | Linked lists, `append`, `map`, `filter`, `fold_left`, `fold_right`, `length` |
+| `Vec` | Length-indexed vectors |
+| `Option` | `none`/`some`, `map_option`, `get_or_else`, `is_some`, `is_none` |
+| `Either` | `left`/`right`, `map_either`, `is_left`, `is_right` |
+| `Pair` | Pairs, `fst_val`, `snd_val` |
+| `Sigma` | Dependent pairs `(a : A, b : B(a))`; `sigma_fst`, `sigma_snd` |
+| `Dictionary` | Association lists; `lookup`, `insert`, `eq_nat` |
+| `Relation` | Binary relations; `Reflexive`, `Transitive`, `Symmetric` |
+| `Effect` | IO effect tagging; `Pure`, `IO`, `effectOf` |
+| `Char` | Unicode code points; `Char`, `ValidChar` (proof-carrying) |
+| `String` | Character lists |
+| `PolyList` | Polymorphic lists |
 
 - Layout and naming conventions: [docs/stdlib.md](docs/stdlib.md)
 - Usage examples: [`examples/stdlib/`](examples/stdlib)
