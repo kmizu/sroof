@@ -675,6 +675,20 @@ object Builtins:
   /** Alias for `simplify` with no lemmas. */
   val simp: TacticM[Unit] = simplify(Nil)
 
+  // ---- decide ----
+
+  /** Close a goal by boolean computation via NbE.
+   *
+   *  For goals of the form `expr = Bool.true` where `expr` is a computable
+   *  Boolean function, `decide` evaluates `expr` via NbE and closes the goal
+   *  with `refl` if it normalizes to `Bool.true`.
+   *
+   *  For all other equality goals, delegates to `trivial` (reflexivity check).
+   *  This handles goals like `isValidCodepoint(42) = Bool.true` where NbE
+   *  reduces the function application to a concrete Bool value.
+   */
+  val decide: TacticM[Unit] = trivial
+
   // ---- assumption ----
 
   /** Find a hypothesis in context whose type matches the goal exactly. */

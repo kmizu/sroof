@@ -217,18 +217,26 @@ object Elaborator:
     indices: List[SParam],
     env:     GlobalEnv,
   ): IndDef =
-    // Elaborate uniform param types (A: Type, etc.)
-    val elabParams = params.map(p => Param(p.name, elabType(p.tpe, env, Nil).getOrElse(Term.Meta(-1))))
+    // Elaborate param types progressively: each param's type can reference earlier params.
+    // e.g. Sigma(A: Type, B: A -> Type) — B's type references A.
+    val elabParams = params.zipWithIndex.map { case (p, i) =>
+      val nameEnv = params.take(i).map(_.name).reverse
+      Param(p.name, elabType(p.tpe, env, nameEnv).getOrElse(Term.Meta(-1)))
+    }
     // Elaborate index param types with uniform params in scope
     val paramNames = params.map(_.name).reverse
     val elabIndices = indices.map(p => Param(p.name, elabType(p.tpe, env, paramNames).getOrElse(Term.Meta(-1))))
     // Register self (with params + indices) so recursive ctor arg references resolve
     val envWithSelf = env.addInd(IndDef(name, elabParams, Nil, 0, elabIndices))
-    // Ctor arg types are elaborated with all params + indices in scope
+    // Ctor arg types are elaborated progressively: each arg sees all params + indices
+    // + previously declared ctor args in scope (enabling dependent constructor args).
+    // nameEnv grows left-to-right: params/indices first, then each arg's name is prepended.
     val allParamNames = (params ++ indices).map(_.name).reverse
     val ctorDefs = ctors.map { ctor =>
-      val argTpes = ctor.argParams.map { p =>
-        elabType(p.tpe, envWithSelf, allParamNames).getOrElse(Term.Meta(-1))
+      val (_, argTpes) = ctor.argParams.foldLeft((allParamNames, List.empty[Term])) {
+        case ((nameEnv, acc), p) =>
+          val tpe = elabType(p.tpe, envWithSelf, nameEnv).getOrElse(Term.Meta(-1))
+          (p.name :: nameEnv, acc :+ tpe)
       }
       CtorDef(ctor.name, argTpes)
     }

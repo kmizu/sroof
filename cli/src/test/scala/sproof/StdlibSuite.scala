@@ -23,6 +23,7 @@ class StdlibSuite extends FunSuite:
       "stdlib/PolyList.sproof",
       "stdlib/Char.sproof",
       "stdlib/String.sproof",
+      "stdlib/Sigma.sproof",
     )
     files.foreach { file =>
       val src = read(file)
@@ -45,6 +46,7 @@ class StdlibSuite extends FunSuite:
       ("stdlib/PolyList.sproof", "examples/stdlib/polylist_usage.sproof"),
       ("stdlib/Char.sproof", "examples/stdlib/char_usage.sproof"),
       ("stdlib/String.sproof", "examples/stdlib/string_usage.sproof"),
+      ("stdlib/Sigma.sproof", "examples/stdlib/sigma_usage.sproof"),
     )
     pairs.foreach { (lib, usage) =>
       val src = read(lib) + "\n\n" + read(usage)
@@ -67,3 +69,4 @@ class StdlibSuite extends FunSuite:
     assert(doc.contains("stdlib/PolyList.sproof"))
     assert(doc.contains("stdlib/Char.sproof"))
     assert(doc.contains("stdlib/String.sproof"))
+    assert(doc.contains("stdlib/Sigma.sproof"))

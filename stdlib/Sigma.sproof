@@ -1,0 +1,40 @@
+// stdlib: Sigma (dependent pair type)
+//
+// Sigma(A: Type, B: A -> Type) is the type of dependent pairs (a : A, b : B(a)).
+//
+// Requires progressive parameter elaboration: each inductive parameter's type may
+// reference earlier parameters.  Sigma is the first stdlib module to use this feature.
+//
+// Usage:
+//   Sigma.mk(a, b)              -- construct a pair  (a : A, b : B(a))
+//   sigma_fst(A, B, p)          -- project first component (: A)
+//
+// Note: sigma_snd requires a dependent return type B(fst(p)), which needs
+// a richer type system surface syntax.  Omitted for now.
+
+inductive Nat {
+  case zero: Nat
+  case succ(n: Nat): Nat
+}
+
+// B has type A -> Type: a function from elements of A to types.
+// This means B(a) is the type of the second component when the first is a.
+inductive Sigma(A: Type, B: A -> Type) {
+  case mk(fst: A, snd: B(fst)): Sigma
+}
+
+// Project the first component.
+// p: Sigma(A, B) uses multi-arg type application (same as Vec(A, n) syntax).
+def sigma_fst(A: Type, B: A -> Type, p: Sigma(A, B)): A {
+  match p {
+    case Sigma.mk(x, y) => x
+  }
+}
+
+// ---- Defspecs ----
+
+// sigma_fst(A, B, Sigma.mk(a, b)) = a
+defspec sigma_fst_mk(A: Type, B: A -> Type, a: A, b: B(a)):
+    sigma_fst(A, B, Sigma.mk(a, b)) = a {
+  by trivial
+}

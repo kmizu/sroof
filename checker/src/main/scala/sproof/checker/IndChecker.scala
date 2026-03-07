@@ -1,6 +1,6 @@
 package sproof.checker
 
-import sproof.core.{Term, Context, Subst, GlobalEnv, IndDef, CtorDef, MatchCase}
+import sproof.core.{Term, Context, Subst, GlobalEnv, IndDef, CtorDef, MatchCase, Param, Ctor}
 
 /** Type-checking rules for inductive types: constructors (Con) and eliminators (Mat).
  *
@@ -38,9 +38,11 @@ object IndChecker:
                 s"got ${args.length}"
               ))
             else
-              checkArgs(ctx, args, ctorDef.argTpes).map { _ =>
-                // The type of any constructor is the inductive type itself
-                Term.Ind(indRef, indDef.params, Nil)
+              // Infer param values from arg types (heuristic: works for m=0 and simple m=1 cases)
+              val paramVals = extractParamValsFromArgs(indDef, ctorDef, args, ctx)
+              checkArgsDependent(ctx, args, ctorDef.argTpes, paramVals).map { _ =>
+                // Return type: Ind applied to inferred param values
+                paramVals.foldLeft(Term.Ind(indRef, Nil, Nil): Term)(Term.App.apply)
               }
 
   // ---- Mat: match expression type checking ----
@@ -74,28 +76,203 @@ object IndChecker:
                                      TypeError.Custom(s"Unknown inductive type '$indName'")
                                    )
                         _       <- checkCoverage(cases, indDef)
-                        _       <- checkCases(ctx, scrutinee, cases, indDef, returnTpe)
+                        _       <- checkCases(ctx, scrutinee, scrutTpe, cases, indDef, returnTpe)
                       yield returnTpe
     yield result
 
+  // ---- public helpers for Bidirectional ----
+
+  /** Extract param values from an expected type that is `App(...App(Ind(indRef), p0)..., pN)`.
+   *  Returns Nil if the expected type does not match, or if m=0.
+   */
+  def extractParamsFromExpected(t: Term, indRef: String): List[Term] =
+    def peelApps(t: Term, acc: List[Term]): (Term, List[Term]) = t match
+      case Term.App(fn, arg) => peelApps(fn, arg :: acc)
+      case _                 => (t, acc)
+    val (head, params) = peelApps(t, Nil)
+    head match
+      case Term.Ind(name, _, _) if name == indRef => params
+      case _                                      => Nil
+
+  /** Infer constructor type with explicitly provided param values (check mode support).
+   *  Used when the expected type reveals the param values (e.g. expected = List(Nat)).
+   */
+  def inferConWithParams(
+    ctx:       Context,
+    name:      String,
+    indRef:    String,
+    args:      List[Term],
+    paramVals: List[Term],
+  )(using env: GlobalEnv): Either[TypeError, Term] =
+    env.lookupInd(indRef) match
+      case None =>
+        Left(TypeError.Custom(s"Unknown inductive type '$indRef'"))
+      case Some(indDef) =>
+        indDef.ctors.find(_.name == name) match
+          case None =>
+            Left(TypeError.Custom(s"Unknown constructor '$name' for inductive type '$indRef'"))
+          case Some(ctorDef) =>
+            if args.length != ctorDef.argTpes.length then
+              Left(TypeError.Custom(
+                s"Constructor '$name' expects ${ctorDef.argTpes.length} argument(s), " +
+                s"got ${args.length}"
+              ))
+            else
+              checkArgsDependent(ctx, args, ctorDef.argTpes, paramVals).map { _ =>
+                // Return type: Ind applied to param values
+                paramVals.foldLeft(Term.Ind(indRef, Nil, Nil): Term)(Term.App.apply)
+              }
+
   // ---- private helpers ----
 
-  /** Check each argument against its expected type (pairwise). */
-  private def checkArgs(
-    ctx:  Context,
-    args: List[Term],
-    tpes: List[Term],
+  /** Check constructor args with dependent type support.
+   *
+   *  The argTpes use the progressive De Bruijn convention:
+   *    argTpes(j) has nameEnv = [arg_{j-1}, ..., arg_0, param_{m-1}, ..., param_0]
+   *  So Var(0..j-1) = prev ctor args, Var(j..j+m-1) = type params.
+   *
+   *  For each arg at position j, calls `instantiateArgType` which performs a single-pass
+   *  simultaneous substitution: prev ctor args and param values are all substituted at once,
+   *  avoiding the index-shifting bugs that arise from sequential subst calls.
+   */
+  private def checkArgsDependent(
+    ctx:       Context,
+    args:      List[Term],
+    argTpes:   List[Term],
+    paramVals: List[Term],
   )(using env: GlobalEnv): Either[TypeError, Unit] =
-    args.zip(tpes).foldLeft[Either[TypeError, Unit]](Right(())) { case (acc, (arg, tpe)) =>
-      acc.flatMap(_ => Bidirectional.check(ctx, arg, tpe))
+    args.zip(argTpes).zipWithIndex.foldLeft[Either[TypeError, Unit]](Right(())) {
+      case (acc, ((arg, rawTpe), j)) =>
+        acc.flatMap { _ =>
+          val tpe = instantiateArgType(rawTpe, args.take(j), paramVals)
+          Bidirectional.check(ctx, arg, tpe)
+        }
     }
 
-  /** Extract the inductive type name from a (possibly normalized) type term. */
+  /** Simultaneously substitute prev ctor args and param values into a raw argTpe.
+   *
+   *  In `rawTpe` (elaborated with progressive nameEnv):
+   *    Var(k) for k < j   → prev ctor arg args(k)   (k=0 is the most recent prev arg)
+   *    Var(k) for k in [j, j+m) → paramVals(m-1-(k-j))  (Var(j) = last param, Var(j+m-1) = first)
+   *
+   *  Uses a single recursive traversal to avoid index-shifting errors from sequential subst.
+   *  Under `depth` binders, the substituted values are shifted up by `depth`.
+   */
+  private def instantiateArgType(rawTpe: Term, prevArgs: List[Term], paramVals: List[Term]): Term =
+    val j = prevArgs.length
+    val m = paramVals.length
+    def go(depth: Int, t: Term): Term = t match
+      case Term.Var(i) =>
+        val abs = i - depth
+        if abs < 0 then t  // bound by a binder inside rawTpe
+        else if abs < j then Subst.shift(depth, prevArgs(abs))
+        else if abs < j + m then
+          val paramIdx = m - 1 - (abs - j)
+          Subst.shift(depth, paramVals(paramIdx))
+        else t  // free var beyond ctor args and params (shouldn't appear in well-formed argTpe)
+      case Term.App(f, a)          => Term.App(go(depth, f), go(depth, a))
+      case Term.Lam(x, tp, b)     => Term.Lam(x, go(depth, tp), go(depth + 1, b))
+      case Term.Pi(x, d, c)       => Term.Pi(x, go(depth, d), go(depth + 1, c))
+      case Term.Let(x, tp, df, b) => Term.Let(x, go(depth, tp), go(depth, df), go(depth + 1, b))
+      case Term.Uni(_)             => t
+      case Term.Meta(_)            => t
+      case Term.Ind(nm, ps, cs)   =>
+        Term.Ind(nm,
+          ps.map(p => Param(p.name, go(depth, p.tpe))),
+          cs.map(c => Ctor(c.name, go(depth, c.tpe))))
+      case Term.Con(nm, r, as)    => Term.Con(nm, r, as.map(go(depth, _)))
+      case Term.Fix(nm, tp, b)    => Term.Fix(nm, go(depth, tp), go(depth + 1, b))
+      case Term.Mat(s, cases, rt) =>
+        Term.Mat(
+          go(depth, s),
+          cases.map(mc => mc.copy(body = go(depth + mc.bindings, mc.body))),
+          go(depth, rt),
+        )
+    go(0, rawTpe)
+
+  /** Build the instantiated ctor arg type for position j in the extended context.
+   *
+   *  In `checkCases`, after extending ctx with j ctor args (at Var(0..j-1)),
+   *  the param values from the outer ctx need to be shifted by j.
+   *  This replaces param vars Var(j..j+m-1) in rawTpe with shift(j, paramVals[k]).
+   */
+  private def instantiateCtorArgTpe(rawTpe: Term, j: Int, paramVals: List[Term]): Term =
+    val m = paramVals.length
+    if m == 0 then rawTpe  // non-parameterized: argTpe is already correct in ext ctx
+    else
+      def go(depth: Int, t: Term): Term = t match
+        case Term.Var(i) =>
+          val absI = i - depth
+          if absI >= j && absI < j + m then
+            // This is param at position m-1-(absI-j) from start
+            val paramIdx = m - 1 - (absI - j)
+            Subst.shift(depth + j, paramVals(paramIdx))
+          else
+            Term.Var(i)
+        case Term.App(f, a)          => Term.App(go(depth, f), go(depth, a))
+        case Term.Lam(x, tp, b)     => Term.Lam(x, go(depth, tp), go(depth + 1, b))
+        case Term.Pi(x, d, c)       => Term.Pi(x, go(depth, d), go(depth + 1, c))
+        case Term.Let(x, tp, df, b) => Term.Let(x, go(depth, tp), go(depth, df), go(depth + 1, b))
+        case Term.Uni(_)             => t
+        case Term.Meta(_)            => t
+        case Term.Ind(nm, ps, cs)   =>
+          Term.Ind(nm,
+            ps.map(p => Param(p.name, go(depth, p.tpe))),
+            cs.map(c => Ctor(c.name, go(depth, c.tpe))))
+        case Term.Con(nm, r, as)    => Term.Con(nm, r, as.map(go(depth, _)))
+        case Term.Fix(nm, tp, b)    => Term.Fix(nm, go(depth, tp), go(depth + 1, b))
+        case Term.Mat(s, cases, rt) =>
+          Term.Mat(
+            go(depth, s),
+            cases.map(mc => mc.copy(body = go(depth + mc.bindings, mc.body))),
+            go(depth, rt),
+          )
+      go(0, rawTpe)
+
+  /** Extract the inductive type name from a (possibly App-wrapped) type term. */
   private def extractIndName(t: Term): Either[TypeError, String] = t match
     case Term.Ind(name, _, _) => Right(name)
+    case Term.App(fn, _)      => extractIndName(fn)
     case _ => Left(TypeError.Custom(
       s"Scrutinee must have an inductive type; got: ${t.show}"
     ))
+
+  /** Extract type parameter values from `App(App(Ind(name), p0), p1, ...)`.
+   *  Returns Nil for non-parameterized types. */
+  private def extractIndParams(t: Term): List[Term] =
+    def peel(t: Term, acc: List[Term]): List[Term] = t match
+      case Term.App(fn, arg) => peel(fn, arg :: acc)
+      case _                 => acc
+    peel(t, Nil)
+
+  /** Infer param values from constructor arg types (heuristic for infer mode).
+   *
+   *  For each param position k, finds the first argTpe(j) that is exactly Var(j+m-1-k)
+   *  (i.e., directly the k-th param), and uses the inferred type of the corresponding arg.
+   *  Returns Uni(0) for params that cannot be extracted (fallback).
+   */
+  private def extractParamValsFromArgs(
+    indDef:  IndDef,
+    ctorDef: CtorDef,
+    args:    List[Term],
+    ctx:     Context,
+  )(using env: GlobalEnv): List[Term] =
+    val m = indDef.params.length
+    if m == 0 then Nil
+    else
+      val paramVals = Array.fill[Term](m)(Term.Uni(0))
+      ctorDef.argTpes.zipWithIndex.foreach { (rawTpe, j) =>
+        rawTpe match
+          case Term.Var(i) if i >= j && i < j + m =>
+            val paramIdx = m - 1 - (i - j)
+            args.lift(j).foreach { arg =>
+              Bidirectional.infer(ctx, arg) match
+                case Right(argType) => paramVals(paramIdx) = argType
+                case Left(_)        => ()
+            }
+          case _ => ()
+      }
+      paramVals.toList
 
   /** Extract (tpe, lhs, rhs) from an Eq type term (2-arg or 3-arg form). */
   private def extractEq(t: Term): Option[(Term, Term, Term)] = t match
@@ -158,14 +335,19 @@ object IndChecker:
   /** Check the body of each match case against `returnTpe`.
    *
    *  @param scrutinee the original scrutinee term (used to specialize returnTpe)
+   *  @param scrutTpe  the inferred type of the scrutinee (used to extract param values)
    */
   private def checkCases(
     ctx:       Context,
     scrutinee: Term,
+    scrutTpe:  Term,
     cases:     List[MatchCase],
     indDef:    IndDef,
     returnTpe: Term,
   )(using env: GlobalEnv): Either[TypeError, Unit] =
+    // Extract type param values from the scrutinee's type.
+    // e.g. scrutTpe = App(Ind("PolyList"), Nat) → paramVals = [Nat]
+    val paramVals = extractIndParams(scrutTpe)
     cases.foldLeft[Either[TypeError, Unit]](Right(())) { case (acc, mc) =>
       acc.flatMap { _ =>
         indDef.ctors.find(_.name == mc.ctor) match
@@ -180,9 +362,13 @@ object IndChecker:
             else
               val n = ctorDef.argTpes.length
               // Extend context with constructor argument bindings.
-              // foldLeft prepends each arg type; last arg in argTpes → Var(0).
-              val extCtx = ctorDef.argTpes.foldLeft(ctx) { (c, argTpe) =>
-                c.extend("_", argTpe)
+              // For each arg at position j (0-indexed from left), instantiate its type:
+              // - substitute param values (shifted by j for the j already-added args)
+              // - Var(0..j-1) in argTpes(j) are the prev ctor args, already correct in ext ctx
+              val (extCtx, _) = ctorDef.argTpes.zipWithIndex.foldLeft((ctx, 0)) {
+                case ((c, j), (rawTpe, _)) =>
+                  val instantiated = instantiateCtorArgTpe(rawTpe, j, paramVals)
+                  (c.extend("_", instantiated), j + 1)
               }
               // Build the constructor application term in the extended context.
               // Ctor args are Var(n-1)..Var(0) (most recent = Var(0)).

@@ -1,0 +1,10 @@
+// sigma_usage.sproof — examples of using Sigma (dependent pairs)
+//
+// This file is concatenated with stdlib/Sigma.sproof in tests.
+// Demonstrates the Sigma type and its defspecs.
+
+// Additional defspec using different param names — exercises the reuse path.
+defspec sigma_fst_reuse(A: Type, B: A -> Type, x: A, y: B(x)):
+    sigma_fst(A, B, Sigma.mk(x, y)) = x {
+  by trivial
+}

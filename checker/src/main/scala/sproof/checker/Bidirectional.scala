@@ -51,6 +51,24 @@ object Bidirectional:
       case (Term.Mat(scrutinee, cases, Term.Meta(id)), _) if id < 0 =>
         IndChecker.checkMat(ctx, scrutinee, cases, expected).map(_ => ())
 
+      // Con in check mode: when the expected type is an applied parameterized inductive
+      // that is registered in GlobalEnv, extract param values from the expected type
+      // and use them for dependent checking.
+      // This enables `Sigma.mk(a, b)` to type-check against `Sigma(A)(B)`.
+      // Note: Eq is NOT in GlobalEnv (it is a built-in), so this path is skipped for refl.
+      case (Term.Con(name, indRef, args), _)
+           if env.lookupInd(indRef).exists(_.params.nonEmpty) =>
+        val paramVals = IndChecker.extractParamsFromExpected(normExpected, indRef)
+        if paramVals.nonEmpty then
+          IndChecker.inferConWithParams(ctx, name, indRef, args, paramVals).flatMap { actual =>
+            convCheck(ctx, actual, expected, term)
+          }
+        else
+          for
+            actual <- infer(ctx, term)
+            _      <- convCheck(ctx, actual, expected, term)
+          yield ()
+
       // Fall through: infer type and check conversion
       case _ =>
         for
@@ -121,8 +139,14 @@ object Bidirectional:
 
     case Term.Ind(name, _, _) =>
       env.lookupInd(name) match
-        case Some(indDef) => Right(Term.Uni(indDef.universe))
-        case None         => Right(Term.Uni(0))  // fallback for anonymous/unknown Ind
+        case Some(indDef) =>
+          // Parameterized inductives return a Pi type: List : Type → Type, etc.
+          val base: Term = Term.Uni(indDef.universe)
+          val withParams = indDef.params.foldRight(base) { (p, acc) =>
+            Term.Pi(p.name, p.tpe, acc)
+          }
+          Right(withParams)
+        case None => Right(Term.Uni(0))  // fallback for anonymous/unknown Ind (e.g. Eq)
 
     case Term.Mat(scrutinee, cases, returnTpe) =>
       IndChecker.checkMat(ctx, scrutinee, cases, returnTpe)
@@ -133,14 +157,25 @@ object Bidirectional:
    *
    *  Special case: Eq type applications `Eq a b` or `Eq a` are treated as Prop-level
    *  (universe 0).  The bidirectional checker cannot infer through `App(Ind("Eq",...), ...)`
-   *  because `Ind("Eq",...)` is typed as `Uni(0)` (not a Pi type) in the Ind case.
-   *  This shortcut avoids the NotAFunction error when computing the universe of the
-   *  Pi type inside a Fix binder whose codomain is an Eq proposition.
+   *  because `Ind("Eq",...)` is NOT registered in GlobalEnv (it is a built-in), so it
+   *  types as `Uni(0)` (not a Pi type).  This shortcut avoids the NotAFunction error.
+   *
+   *  For user-defined parameterized inductives (List, PolyList, Sigma, etc.), their
+   *  `Ind(name)` now properly returns a Pi type, so `App(Ind("List"), A)` infers
+   *  through the normal App case and returns `Uni(0)`.
    */
   def inferUniverse(ctx: Context, t: Term)(using env: GlobalEnv): Either[TypeError, Int] =
     t match
       case Term.App(Term.App(Term.Ind("Eq", _, _), _), _) => Right(0)
       case Term.App(Term.Ind("Eq", _, _), _)              => Right(0)
+      // Bare Ind(name) used as a type: always return the declared universe.
+      // This preserves backward compat for inductives like Vec used as bare types
+      // (without applying type params/indices), even though infer(Ind(name)) now
+      // returns a Pi type for parameterized inductives.
+      case Term.Ind(name, _, _) =>
+        env.lookupInd(name) match
+          case Some(indDef) => Right(indDef.universe)
+          case None         => Right(0)
       case _ =>
         infer(ctx, t).flatMap { tp =>
           whnf(ctx, tp) match

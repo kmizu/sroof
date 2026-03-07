@@ -309,6 +309,9 @@ object Checker:
     case STactic.SContradiction =>
       Builtins.contradiction
 
+    case STactic.SDecide =>
+      Builtins.decide
+
     case STactic.SCases(varName, cases) =>
       val caseSpecs = cases.map(c => (c.ctorName, c.extraBindings))
       Builtins.cases(varName, caseSpecs).flatMap { _ =>

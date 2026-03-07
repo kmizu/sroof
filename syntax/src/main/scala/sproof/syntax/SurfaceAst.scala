@@ -100,6 +100,8 @@ enum STactic:
   case SContradiction
   /** cases x { case c1 => t1 ... } — case split without induction hypothesis */
   case SCases(varName: String, cases: List[STacticCase])
+  /** decide — close a goal by boolean computation (NbE evaluation to Bool.true) */
+  case SDecide
 
 /** A step in a calc block: lhs = rhs { proof }. lhs=None means _ (carry forward). */
 case class SCalcStep(lhs: Option[SExpr], rhs: SExpr, proof: SProof)

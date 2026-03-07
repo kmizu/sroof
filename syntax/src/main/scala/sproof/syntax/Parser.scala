@@ -521,6 +521,7 @@ object Parser:
     keyword("trivial") #> STactic.STrivial,
     keyword("triv") #> STactic.STriv,
     keyword("rfl") #> STactic.SRfl,
+    keyword("decide") #> STactic.SDecide,
     keyword("sorry") #> STactic.SSorry,
     keyword("skip") #> STactic.SSkip,
     keyword("assumption") #> STactic.SAssumption,
@@ -698,7 +699,7 @@ object Parser:
 
   private val keywords = Set(
     "inductive", "enum", "def", "defspec", "theorem", "case", "match", "by",
-    "trivial", "triv", "rfl", "assume", "intro", "intros",
+    "trivial", "triv", "rfl", "decide", "assume", "intro", "intros",
     "apply", "exact", "simplify", "simp",
     "induction", "sorry", "fun", "Pi", "Type",
     "structure", "trait", "instance", "given", "operator",
