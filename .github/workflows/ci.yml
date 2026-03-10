@@ -43,11 +43,11 @@ jobs:
       - name: Run tests
         run: sbt test
 
-      - name: Check nat.sproof end-to-end
-        run: sbt "cli/run check examples/nat.sproof"
+      - name: Check nat.sroof end-to-end
+        run: sbt "cli/run check examples/nat.sroof"
 
-      - name: Check int.sproof end-to-end
-        run: sbt "cli/run check examples/int.sproof"
+      - name: Check int.sroof end-to-end
+        run: sbt "cli/run check examples/int.sroof"
 
       - name: Check Effect runtime extraction
         run: ./scripts/check_effect_runtime.sh
@@ -106,16 +106,16 @@ jobs:
 
       - name: Smoke-test native binary
         run: |
-          BINARY=$(find cli-native/target -name "sproof-cli-native" -type f | head -1)
+          BINARY=$(find cli-native/target -name "sroof-cli-native" -type f | head -1)
           echo "Binary: $BINARY ($(du -sh $BINARY | cut -f1))"
-          $BINARY check examples/nat.sproof
-          $BINARY check examples/int.sproof
+          $BINARY check examples/nat.sroof
+          $BINARY check examples/int.sroof
 
       - name: Upload native binary
         uses: actions/upload-artifact@v4
         with:
-          name: sproof-cli-linux-amd64
-          path: cli-native/target/scala-3.3.6/sproof-cli-native
+          name: sroof-cli-linux-amd64
+          path: cli-native/target/scala-3.3.6/sroof-cli-native
           if-no-files-found: error
 
   # ---- sbt plugin: compile ----
@@ -133,5 +133,5 @@ jobs:
 
       - uses: sbt/setup-sbt@v1
 
-      - name: Compile sbt-sproof plugin
-        run: cd sbt-sproof && sbt compile
+      - name: Compile sbt-sroof plugin
+        run: cd sbt-sroof && sbt compile

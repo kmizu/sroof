@@ -1,0 +1,344 @@
+import * as vscode from 'vscode';
+import * as fs from 'fs';
+import * as os from 'os';
+import * as path from 'path';
+import { execFile } from 'child_process';
+
+const KEYWORD_DOCS: Record<string, string> = {
+  'inductive': 'Define an inductive data type.\n\nExample:\n```sroof\ninductive Nat {\n  case zero: Nat\n  case succ(n: Nat): Nat\n}\n```',
+  'def': 'Define a function.\n\nExample:\n```sroof\ndef add(n: Nat, m: Nat): Nat = match n {\n  case Nat.zero => m\n  case Nat.succ k => Nat.succ(add(k, m))\n}\n```',
+  'defspec': 'Define a theorem together with its proof.\n\nExample:\n```sroof\ndefspec add_zero(n: Nat): add(n, Nat.zero) = n program = {\n  by induction n { ... }\n}\n```',
+  'match': 'Eliminate an inductive type by pattern matching.\n\nExample:\n```sroof\nmatch n {\n  case Nat.zero => ...\n  case Nat.succ k => ...\n}\n```',
+  'by': 'Introduce a tactic proof block.',
+  'program': 'Mark a definition as a proof program (used in `defspec`).',
+  'fun': 'Lambda abstraction (anonymous function).\n\nExample:\n```sroof\nfun x: Nat => Nat.succ(x)\n```',
+  'trivial': 'Close a goal that holds by reflexivity (both sides normalize to the same term).',
+  'triv': 'Alias for `trivial`.',
+  'assume': 'Introduce a Pi-bound variable into the local context.\n\nExample:\n```sroof\nassume n: Nat\n```',
+  'apply': 'Apply a previously proved lemma or hypothesis to transform the current goal.',
+  'simplify': 'Normalize both sides of the goal using NbE (Normalization by Evaluation) and close if equal.',
+  'simp': 'Alias for `simplify`.',
+  'induction': 'Perform structural induction on an inductive type.\n\nExample:\n```sroof\ninduction n {\n  case zero => trivial\n  case succ k => ...\n}\n```',
+  'induct': 'Alias for `induction`.',
+  'sorry': '**Warning**: Placeholder for an incomplete proof. Acts as an axiom and should be removed before considering a proof complete.',
+  'have': 'Introduce an intermediate result (local lemma) into the proof context.',
+  'calc': 'Equational reasoning: chain equalities step by step.',
+  'ring': 'Discharge ring-equational goals automatically.',
+  'Type': 'The universe of types. `Type` is `Type0`. Subtypes: `Type0`, `Type1`, `Type2`.',
+  'Type0': 'The base universe of small types.',
+  'Type1': 'The universe containing `Type0`.',
+  'Type2': 'The universe containing `Type1`.',
+  'Pi': 'Dependent function type `Pi(x: A, B)`, where `B` may mention `x`.',
+  'case': 'Introduces a constructor in an inductive type definition or a branch in a match expression.',
+};
+
+type CheckJsonRange = {
+  start?: { line?: number; column?: number };
+  end?: { line?: number; column?: number };
+};
+
+type CheckJsonDiagnostic = {
+  phase?: string;
+  code?: string;
+  message?: string;
+  range?: CheckJsonRange | null;
+  expected?: string | null;
+  actual?: string | null;
+  hint?: string | null;
+};
+
+type CheckJsonResult = {
+  ok?: boolean;
+  error?: string;
+  diagnostics?: CheckJsonDiagnostic[];
+};
+
+function extractProofState(output: string): string | null {
+  const start = output.indexOf('(proof-state');
+  if (start < 0) {
+    return null;
+  }
+
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+  for (let i = start; i < output.length; i++) {
+    const ch = output[i];
+    if (inString) {
+      if (escaped) {
+        escaped = false;
+      } else if (ch === '\\') {
+        escaped = true;
+      } else if (ch === '"') {
+        inString = false;
+      }
+      continue;
+    }
+
+    if (ch === '"') {
+      inString = true;
+      continue;
+    }
+    if (ch === '(') {
+      depth++;
+    } else if (ch === ')') {
+      depth--;
+      if (depth === 0) {
+        return output.slice(start, i + 1);
+      }
+    }
+  }
+  return output.slice(start);
+}
+
+function formatProofState(proofState: string): string {
+  return proofState
+    .replace(/\)\s+\(/g, ')\n(')
+    .replace(/\(goal\b/g, '\n(goal')
+    .trim();
+}
+
+function extractJsonPayload(output: string): string | null {
+  const lines = output.split(/\r?\n/).map(line => line.trim()).filter(line => line.length > 0);
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const line = lines[i];
+    if (line.startsWith('{') && line.endsWith('}')) {
+      return line;
+    }
+  }
+  return null;
+}
+
+function clampPosition(document: vscode.TextDocument, line: number, column: number): vscode.Position {
+  const maxLine = Math.max(0, document.lineCount - 1);
+  const clampedLine = Math.max(0, Math.min(line, maxLine));
+  const maxChar = document.lineAt(clampedLine).text.length;
+  const clampedChar = Math.max(0, Math.min(column, maxChar));
+  return new vscode.Position(clampedLine, clampedChar);
+}
+
+function toRange(document: vscode.TextDocument, range?: CheckJsonRange | null): vscode.Range {
+  const startLine = Math.max(0, ((range?.start?.line ?? 1) - 1));
+  const startCol = Math.max(0, ((range?.start?.column ?? 1) - 1));
+  const endLine = Math.max(startLine, ((range?.end?.line ?? (startLine + 1)) - 1));
+  const rawEndCol = Math.max(startCol + 1, ((range?.end?.column ?? (startCol + 2)) - 1));
+  const start = clampPosition(document, startLine, startCol);
+  const end = clampPosition(document, endLine, rawEndCol);
+  return new vscode.Range(start, end);
+}
+
+function toMessage(d: CheckJsonDiagnostic): string {
+  const lines: string[] = [];
+  lines.push(d.message ?? 'sroof check failed');
+  if (d.expected) {
+    lines.push(`expected: ${d.expected}`);
+  }
+  if (d.actual) {
+    lines.push(`actual:   ${d.actual}`);
+  }
+  if (d.hint) {
+    lines.push(`hint:     ${d.hint}`);
+  }
+  return lines.join('\n');
+}
+
+async function refreshDiagnostics(
+  document: vscode.TextDocument,
+  collection: vscode.DiagnosticCollection,
+): Promise<void> {
+  const workspaceFolder = vscode.workspace.getWorkspaceFolder(document.uri);
+  const cwd = workspaceFolder ? workspaceFolder.uri.fsPath : path.dirname(document.uri.fsPath);
+  const escapedPath = document.uri.fsPath.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+  const commandArg = `cli/run check --json "${escapedPath}"`;
+  const output = await new Promise<string>((resolve) => {
+    execFile('sbt', [commandArg], { cwd, timeout: 120000 }, (err, stdout, stderr) => {
+      resolve((stdout ?? '') + '\n' + (stderr ?? '') + (err ? `\n${String(err)}` : ''));
+    });
+  });
+
+  const jsonPayload = extractJsonPayload(output);
+  if (!jsonPayload) {
+    return;
+  }
+
+  try {
+    const parsed = JSON.parse(jsonPayload) as CheckJsonResult;
+    if (parsed.ok) {
+      collection.delete(document.uri);
+      return;
+    }
+
+    const diagnostics = (parsed.diagnostics ?? []).map((d) => {
+      const diagnostic = new vscode.Diagnostic(
+        toRange(document, d.range),
+        toMessage(d),
+        vscode.DiagnosticSeverity.Error,
+      );
+      diagnostic.source = 'sroof';
+      diagnostic.code = d.code ?? d.phase ?? 'error';
+      return diagnostic;
+    });
+
+    if (diagnostics.length === 0) {
+      const fallback = new vscode.Diagnostic(
+        toRange(document),
+        parsed.error ?? 'sroof check failed',
+        vscode.DiagnosticSeverity.Error,
+      );
+      fallback.source = 'sroof';
+      fallback.code = 'error';
+      collection.set(document.uri, [fallback]);
+    } else {
+      collection.set(document.uri, diagnostics);
+    }
+  } catch {
+    // Ignore malformed output from command execution.
+  }
+}
+
+async function runCheckAndShowGoals(
+  document: vscode.TextDocument,
+  channel: vscode.OutputChannel,
+  reveal: boolean,
+  latestRunByDocument: Map<string, number>,
+): Promise<void> {
+  const documentKey = document.uri.toString();
+  const runId = (latestRunByDocument.get(documentKey) ?? 0) + 1;
+  latestRunByDocument.set(documentKey, runId);
+
+  const workspaceFolder = vscode.workspace.getWorkspaceFolder(document.uri);
+  const cwd = workspaceFolder ? workspaceFolder.uri.fsPath : path.dirname(document.uri.fsPath);
+  const tmpPath = path.join(os.tmpdir(), `sroof-goals-${Date.now()}-${Math.random().toString(16).slice(2)}.sroof`);
+  fs.writeFileSync(tmpPath, document.getText(), 'utf8');
+
+  const commandArg = `cli/run check ${tmpPath}`;
+  const output = await new Promise<string>((resolve) => {
+    execFile('sbt', [commandArg], { cwd, timeout: 120000 }, (err, stdout, stderr) => {
+      resolve((stdout ?? '') + '\n' + (stderr ?? '') + (err ? `\n${String(err)}` : ''));
+    });
+  });
+  try {
+    fs.unlinkSync(tmpPath);
+  } catch {
+    // best-effort cleanup
+  }
+
+  if (latestRunByDocument.get(documentKey) !== runId) {
+    return;
+  }
+
+  const proofState = extractProofState(output);
+  channel.clear();
+  if (proofState) {
+    channel.appendLine(`Current goals for: ${document.fileName}`);
+    channel.appendLine('');
+    channel.appendLine(formatProofState(proofState));
+    if (reveal) {
+      channel.show(true);
+    }
+    return;
+  }
+
+  const ok = output.includes('OK:');
+  if (ok) {
+    channel.appendLine(`No open goals: ${document.fileName}`);
+  } else {
+    channel.appendLine(`Could not extract proof-state for: ${document.fileName}`);
+    channel.appendLine('');
+    channel.appendLine(output.trim());
+  }
+  if (reveal) {
+    channel.show(true);
+  }
+}
+
+export function activate(context: vscode.ExtensionContext): void {
+  console.log('sroof extension activated');
+  const goalChannel = vscode.window.createOutputChannel('sroof goals');
+  const latestRunByDocument = new Map<string, number>();
+  const diagnosticCollection = vscode.languages.createDiagnosticCollection('sroof');
+
+  const hoverProvider = vscode.languages.registerHoverProvider('sroof', {
+    provideHover(document: vscode.TextDocument, position: vscode.Position): vscode.Hover | null {
+      const wordRange = document.getWordRangeAtPosition(position, /[A-Za-z_][A-Za-z0-9_]*/);
+      if (!wordRange) {
+        return null;
+      }
+      const word = document.getText(wordRange);
+      const doc = KEYWORD_DOCS[word];
+      if (doc) {
+        const md = new vscode.MarkdownString(`**sroof** - ${doc}`);
+        md.isTrusted = true;
+        return new vscode.Hover(md, wordRange);
+      }
+      return null;
+    }
+  });
+
+  const symbolProvider = vscode.languages.registerDocumentSymbolProvider('sroof', {
+    provideDocumentSymbols(document: vscode.TextDocument): vscode.DocumentSymbol[] {
+      const symbols: vscode.DocumentSymbol[] = [];
+      const defPattern = /^\s*(def|defspec|inductive)\s+([A-Za-z_][A-Za-z0-9_]*)/gm;
+      const text = document.getText();
+      let match: RegExpExecArray | null;
+
+      while ((match = defPattern.exec(text)) !== null) {
+        const keyword = match[1];
+        const name = match[2];
+        const startPos = document.positionAt(match.index);
+        const endPos = document.positionAt(match.index + match[0].length);
+        const range = new vscode.Range(startPos, endPos);
+
+        let kind: vscode.SymbolKind;
+        switch (keyword) {
+          case 'inductive':
+            kind = vscode.SymbolKind.Class;
+            break;
+          case 'defspec':
+            kind = vscode.SymbolKind.Interface;
+            break;
+          default:
+            kind = vscode.SymbolKind.Function;
+        }
+
+        symbols.push(new vscode.DocumentSymbol(name, keyword, kind, range, range));
+      }
+
+      return symbols;
+    }
+  });
+
+  const showGoalsCommand = vscode.commands.registerCommand('sroof.showGoals', async () => {
+    const editor = vscode.window.activeTextEditor;
+    if (!editor || editor.document.languageId !== 'sroof') {
+      vscode.window.showInformationMessage('Open a .sroof file to show current goals.');
+      return;
+    }
+    await runCheckAndShowGoals(editor.document, goalChannel, true, latestRunByDocument);
+  });
+
+  const saveWatcher = vscode.workspace.onDidSaveTextDocument(async (doc) => {
+    if (doc.languageId !== 'sroof') {
+      return;
+    }
+    await runCheckAndShowGoals(doc, goalChannel, false, latestRunByDocument);
+    await refreshDiagnostics(doc, diagnosticCollection);
+  });
+
+  const closeWatcher = vscode.workspace.onDidCloseTextDocument((doc) => {
+    latestRunByDocument.delete(doc.uri.toString());
+    diagnosticCollection.delete(doc.uri);
+  });
+
+  context.subscriptions.push(
+    hoverProvider,
+    symbolProvider,
+    showGoalsCommand,
+    saveWatcher,
+    closeWatcher,
+    goalChannel,
+    diagnosticCollection,
+  );
+}
+
+export function deactivate(): void {}

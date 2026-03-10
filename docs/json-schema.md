@@ -1,9 +1,9 @@
-# `sproof check --json` Schema v2
+# `sroof check --json` Schema v2
 
 This document defines the stable JSON contract for:
 
 ```bash
-sproof check --json <file.sproof>
+sroof check --json <file.sroof>
 ```
 
 ## Versioning
@@ -22,7 +22,7 @@ All responses include the same keys:
   "schemaVersion": 2,
   "ok": true,
   "phase": "check",
-  "file": "examples/nat.sproof",
+  "file": "examples/nat.sroof",
   "result": { "inductives": 1, "defs": 1, "defspecs": 4 },
   "warnings": [],
   "diagnostics": [],

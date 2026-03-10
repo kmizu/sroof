@@ -2,7 +2,7 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-## What is sproof?
+## What is sroof?
 
 A dependently-typed theorem prover (proof assistant) written in Scala 3. Uses a predicative Calculus of Inductive Constructions (CIC) with Scala-like brace syntax. The goal is making formal verification accessible to programmers familiar with Scala/Java/Rust/C++.
 
@@ -21,29 +21,29 @@ sbt cli/test
 sbt tactic/test
 
 # Run a single test suite by name
-sbt "cli/testOnly sproof.TacticHintSuite"
+sbt "cli/testOnly sroof.TacticHintSuite"
 
 # Check a proof file
-sbt "cli/run check examples/nat.sproof"
+sbt "cli/run check examples/nat.sroof"
 
 # Check with JSON output (for tooling)
-sbt "cli/run check --json examples/nat.sproof"
+sbt "cli/run check --json examples/nat.sroof"
 
 # Treat sorry as error (exit 1)
-sbt "cli/run check --fail-on-sorry examples/nat.sproof"
+sbt "cli/run check --fail-on-sorry examples/nat.sroof"
 
 # Auto-repair sorry proofs using the proof agent
-sbt "cli/run agent examples/nat.sproof"
+sbt "cli/run agent examples/nat.sroof"
 
 # Extract Scala 3 code from proofs
-sbt "cli/run extract examples/nat.sproof"
+sbt "cli/run extract examples/nat.sroof"
 
 # Start the interactive REPL
 sbt "cli/run repl"
 
 # Build native binary (requires clang, lld, libunwind-dev)
 sbt cliNative/nativeLink
-# Native binary location: ./cli-native/target/scala-3.3.6/sproof-cli-native-out
+# Native binary location: ./cli-native/target/scala-3.3.6/sroof-cli-native-out
 
 # Run all native tests (LLVM required)
 sbt nativeRoot/test
@@ -52,7 +52,7 @@ sbt nativeRoot/test
 ## Module Dependency Graph
 
 ```
-cli (entry point: sproof.Main)
+cli (entry point: sroof.Main)
 ├── syntax (Parsley parser → SurfaceAst → Elaborator → core Terms)
 │   └── core (Term ADT, De Bruijn indices, Context, GlobalEnv)
 ├── tactic (TacticM monad, built-in tactics, ProofState)
@@ -81,7 +81,7 @@ Note: in `build.sbt` the `eval` directory's project variable is named `nbe` (so 
 
 **TacticM monad** (`tactic/TacticM.scala`): Pure functional proof state management via `Either[TacticError, ?]`. Tactics manipulate a goal stack with context.
 
-**Elaboration pipeline**: `.sproof` file → `Parser.scala` (Parsley combinators) → `SurfaceAst` → `Elaborator.scala` → core `Term`s + `GlobalEnv`. The `ElabResult` carries the `GlobalEnv` (inductives, defs, structures, operators, simpSet), elaborated def bodies, and `defspecs` (proposition + `SProof`).
+**Elaboration pipeline**: `.sroof` file → `Parser.scala` (Parsley combinators) → `SurfaceAst` → `Elaborator.scala` → core `Term`s + `GlobalEnv`. The `ElabResult` carries the `GlobalEnv` (inductives, defs, structures, operators, simpSet), elaborated def bodies, and `defspecs` (proposition + `SProof`).
 
 **Checker pipeline** (`cli/Checker.scala`): Two-phase. Phase 1 (`generateProofCandidates`) runs tactics to produce proof terms. Phase 2 (`finalizeProofCandidates`) passes every term through `Kernel.verify` — this is the trust boundary. Tactics are untrusted generators; the kernel is the sole arbiter.
 
@@ -91,7 +91,7 @@ Note: in `build.sbt` the `eval` directory's project variable is named `nbe` (so 
 
 **GlobalEnv extensions**: Beyond inductives and defs, `GlobalEnv` tracks `structures` (record types, desugared to single-constructor inductives + field accessor defs), `operators` (symbol → def name, no overloading), and `simpSet` (def names tagged `@[simp]` for the `simplify` tactic's default lemma set).
 
-## sproof Language Syntax
+## sroof Language Syntax
 
 ```scala
 inductive Nat {
@@ -120,15 +120,15 @@ Additional language features:
 - `structure Name { field: Type ... }` — record types (desugared to inductive + field accessor defs)
 - `@[simp] def ...` — marks a def as a default simplification lemma
 - `#check expr` — type-checks an expression inline (results appear in `--json` output under `checks`)
-- `import "stdlib/Nat.sproof"` — imports a stdlib file; stdlib lives in `stdlib/` at repo root (Nat, Bool, List, Vec, Dictionary, Relation, Effect)
+- `import "stdlib/Nat.sroof"` — imports a stdlib file; stdlib lives in `stdlib/` at repo root (Nat, Bool, List, Vec, Dictionary, Relation, Effect)
 - Operator overloading via `def (+)(...)` syntax, registered in `GlobalEnv.operators`
 
 ## CI Pipeline
 
 Three parallel GitHub Actions jobs:
-1. **JVM tests** — `sbt test` + end-to-end checks on `nat.sproof` and `int.sproof`
+1. **JVM tests** — `sbt test` + end-to-end checks on `nat.sroof` and `int.sroof`
 2. **Scala Native** — compile + link + smoke-test native binary
-3. **sbt plugin** — compile `sbt-sproof/` (Scala 2.12)
+3. **sbt plugin** — compile `sbt-sroof/` (Scala 2.12)
 
 ## Common Pitfalls
 

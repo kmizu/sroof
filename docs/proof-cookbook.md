@@ -6,9 +6,9 @@ This cookbook is a quick-start path for common proofs in about 10 minutes.
 
 When the goal depends on a recursive structure, split by constructors and use `ih` in recursive branches.
 
-Broken (`sproof-fail`):
+Broken (`sroof-fail`):
 
-```sproof-fail
+```sroof-fail
 inductive Nat {
   case zero: Nat
   case succ(n: Nat): Nat
@@ -28,7 +28,7 @@ defspec plus_zero_right_bad(n: Nat): plus(n, Nat.zero) = n {
 
 Fixed:
 
-```sproof
+```sroof
 inductive Nat {
   case zero: Nat
   case succ(n: Nat): Nat
@@ -53,9 +53,9 @@ defspec plus_zero_right(n: Nat): plus(n, Nat.zero) = n {
 
 Use `simplify [ih]` to rewrite with induction hypotheses.
 
-Broken (`sproof-fail`):
+Broken (`sroof-fail`):
 
-```sproof-fail
+```sroof-fail
 defspec succ_case_bad(n: Nat): Nat.succ(n) = Nat.succ(n) {
   by simplify [missing_ih]
 }
@@ -63,7 +63,7 @@ defspec succ_case_bad(n: Nat): Nat.succ(n) = Nat.succ(n) {
 
 Fixed:
 
-```sproof
+```sroof
 inductive Nat {
   case zero: Nat
   case succ(n: Nat): Nat
@@ -78,7 +78,7 @@ defspec succ_case_ok(n: Nat): Nat.succ(n) = Nat.succ(n) {
 
 Use `have` to stage a local lemma before continuing.
 
-```sproof
+```sroof
 inductive Nat {
   case zero: Nat
   case succ(n: Nat): Nat
@@ -93,7 +93,7 @@ defspec have_demo(n: Nat): n = n {
 
 Use `calc` for equational chains.
 
-```sproof
+```sroof
 inductive Nat {
   case zero: Nat
   case succ(n: Nat): Nat

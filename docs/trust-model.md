@@ -1,17 +1,17 @@
 # Trust Model and Trusted Computing Base (TCB)
 
-This document defines the soundness boundary of `sproof`.
+This document defines the soundness boundary of `sroof`.
 
 ## Safety Principle
 
-`sproof` is sound only if the trusted kernel is sound.
+`sroof` is sound only if the trusted kernel is sound.
 Bugs outside the kernel may cause proof search failures, bad UX, or false negatives, but they must not be able to accept an invalid proof term as valid.
 
 ## Trusted vs Untrusted Components
 
 Trusted (TCB):
 
-- `kernel/` (`sproof.kernel.Kernel`)
+- `kernel/` (`sroof.kernel.Kernel`)
 - Core type-checking semantics used by kernel verification (`checker.Bidirectional`, term/eval semantics)
 
 Untrusted (must be re-checked by kernel):
@@ -20,7 +20,7 @@ Untrusted (must be re-checked by kernel):
 - `checker/` orchestration logic
 - `syntax/` parser/elaborator
 - `cli/` command-line and JSON formatting
-- `vscode-sproof/` editor integration
+- `vscode-sroof/` editor integration
 - `cli/agent` automated proof search
 
 ## Kernel Responsibilities

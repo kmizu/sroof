@@ -1,6 +1,6 @@
 # Incremental Checking Strategy
 
-`sproof` uses a file-scoped, stage-aware cache during repeated checks in the same JVM process.
+`sroof` uses a file-scoped, stage-aware cache during repeated checks in the same JVM process.
 
 ## Stages and cache keys
 
@@ -29,5 +29,5 @@
 
 ## Safety fallback
 
-Whenever a key mismatch or missing cache entry is detected, sproof falls back to full re-check from that stage onward. This guarantees correctness even when cache reuse is uncertain.
+Whenever a key mismatch or missing cache entry is detected, sroof falls back to full re-check from that stage onward. This guarantees correctness even when cache reuse is uncertain.
 

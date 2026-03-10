@@ -4,20 +4,20 @@ This document defines stdlib v1 layout for `Nat`, `List`, `Vec`, `Bool`, `Relati
 
 ## Layout
 
-- `stdlib/Nat.sproof`
-- `stdlib/List.sproof`
-- `stdlib/Vec.sproof`
-- `stdlib/Bool.sproof`
-- `stdlib/Relation.sproof`
-- `stdlib/Effect.sproof`
-- `stdlib/Dictionary.sproof`
-- `stdlib/Option.sproof`
-- `stdlib/Either.sproof`
-- `stdlib/Pair.sproof`
-- `stdlib/PolyList.sproof`
-- `stdlib/Char.sproof`
-- `stdlib/String.sproof`
-- `stdlib/Sigma.sproof`
+- `stdlib/Nat.sroof`
+- `stdlib/List.sroof`
+- `stdlib/Vec.sroof`
+- `stdlib/Bool.sroof`
+- `stdlib/Relation.sroof`
+- `stdlib/Effect.sroof`
+- `stdlib/Dictionary.sroof`
+- `stdlib/Option.sroof`
+- `stdlib/Either.sroof`
+- `stdlib/Pair.sroof`
+- `stdlib/PolyList.sroof`
+- `stdlib/Char.sroof`
+- `stdlib/String.sroof`
+- `stdlib/Sigma.sroof`
 
 Each file is self-contained and checker-runnable by itself.
 

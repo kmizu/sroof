@@ -11,7 +11,7 @@
 
 ### Changed
 - Updated release documentation and v0.2 release checklist.
-- Refined `examples/vec.sproof` to satisfy structural recursion checks.
+- Refined `examples/vec.sroof` to satisfy structural recursion checks.
 
 ### Known limitations
 - Some advanced recursive patterns still require argument ordering that is friendly to the structural termination checker.

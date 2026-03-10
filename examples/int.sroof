@@ -1,0 +1,118 @@
+// ============================================================
+// Standard library: Integer numbers
+//
+// Int is defined inductively as a sroof type, but is extracted
+// to Scala's built-in Int when using `sroof extract`.
+//
+//   Int.zero      →  0
+//   Int.pos(n)    →  n + 1     (n : Nat)
+//   Int.neg(n)    →  -(n + 1)  (n : Nat)
+// ============================================================
+
+// Natural numbers (prerequisite)
+inductive Nat {
+  case zero: Nat
+  case succ(n: Nat): Nat
+}
+
+// Integer numbers
+inductive Int {
+  case zero: Int
+  case pos(n: Nat): Int
+  case neg(n: Nat): Int
+}
+
+// ---- Helper functions (avoid nested pattern matching) ----
+
+// nat_neg_pred(zero)    = Int.zero
+// nat_neg_pred(succ(k)) = Int.neg(k)
+def nat_neg_pred(n: Nat): Int {
+  match n {
+    case Nat.zero    => Int.zero
+    case Nat.succ(k) => Int.neg(k)
+  }
+}
+
+// nat_pos_pred(zero)    = Int.zero
+// nat_pos_pred(succ(k)) = Int.pos(k)
+def nat_pos_pred(n: Nat): Int {
+  match n {
+    case Nat.zero    => Int.zero
+    case Nat.succ(k) => Int.pos(k)
+  }
+}
+
+// ---- Core integer operations ----
+
+// int_succ: a + 1
+def int_succ(a: Int): Int {
+  match a {
+    case Int.zero   => Int.pos(Nat.zero)
+    case Int.pos(n) => Int.pos(Nat.succ(n))
+    case Int.neg(n) => nat_neg_pred(n)
+  }
+}
+
+// int_pred: a - 1
+def int_pred(a: Int): Int {
+  match a {
+    case Int.zero   => Int.neg(Nat.zero)
+    case Int.pos(n) => nat_pos_pred(n)
+    case Int.neg(n) => Int.neg(Nat.succ(n))
+  }
+}
+
+// int_neg: unary negation
+def int_neg(a: Int): Int {
+  match a {
+    case Int.zero   => Int.zero
+    case Int.pos(n) => Int.neg(n)
+    case Int.neg(n) => Int.pos(n)
+  }
+}
+
+// int_add_pos: add (n+1) to b by repeated int_succ
+def int_add_pos(n: Nat, b: Int): Int {
+  match n {
+    case Nat.zero    => int_succ(b)
+    case Nat.succ(k) => int_succ(int_add_pos(k, b))
+  }
+}
+
+// int_add_neg: add -(n+1) to b by repeated int_pred
+def int_add_neg(n: Nat, b: Int): Int {
+  match n {
+    case Nat.zero    => int_pred(b)
+    case Nat.succ(k) => int_pred(int_add_neg(k, b))
+  }
+}
+
+// int_add: integer addition
+def int_add(a: Int, b: Int): Int {
+  match a {
+    case Int.zero   => b
+    case Int.pos(n) => int_add_pos(n, b)
+    case Int.neg(n) => int_add_neg(n, b)
+  }
+}
+
+// ---- Theorems ----
+
+// int_add_zero_left: 0 + a = a  (holds definitionally)
+defspec int_add_zero_left(a: Int): int_add(Int.zero, a) = a {
+  by trivial
+}
+
+// int_neg_neg: neg(neg(a)) = a  (negation is an involution)
+defspec int_neg_neg(a: Int): int_neg(int_neg(a)) = a {
+  by induction a {
+    case zero   => trivial
+    case pos n  => trivial
+    case neg n  => trivial
+  }
+}
+
+// int_neg_zero: neg(0) = 0
+defspec int_neg_zero(): int_neg(Int.zero) = Int.zero {
+  by trivial
+}

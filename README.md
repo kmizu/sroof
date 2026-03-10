@@ -1,15 +1,15 @@
-# sproof
+# sroof
 
 **A Proof Assistant for Programmers**
 
-sproof is a dependently-typed theorem prover written in Scala 3. It aims to make formal verification accessible to programmers who already know Scala, Java, Rust, or C++.
+sroof is a dependently-typed theorem prover written in Scala 3. It aims to make formal verification accessible to programmers who already know Scala, Java, Rust, or C++.
 
-[![CI](https://github.com/kmizu/sproof/actions/workflows/ci.yml/badge.svg)](https://github.com/kmizu/sproof/actions/workflows/ci.yml)
+[![CI](https://github.com/kmizu/sroof/actions/workflows/ci.yml/badge.svg)](https://github.com/kmizu/sroof/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 ---
 
-## Why sproof?
+## Why sroof?
 
 Traditional proof assistants (Coq, Lean, Agda) haven't reached mainstream programmers — not just because dependent types are hard, but because **the syntax acts as an unnecessary barrier**.
 
@@ -28,7 +28,7 @@ Qed.
 ```
 
 ```scala
-// sproof — readable if you know Scala/Java/Rust
+// sroof — readable if you know Scala/Java/Rust
 def plus(n: Nat, m: Nat): Nat {
   match n {
     case Nat.zero    => m
@@ -44,7 +44,7 @@ defspec plus_zero_right(n: Nat): plus(n, Nat.zero) = n {
 }
 ```
 
-sproof's design principle: **keep only the essential complexity**.
+sroof's design principle: **keep only the essential complexity**.
 
 - **Learning cost = type theory concepts only** — syntax adds no extra burden
 - **Uniform brace `{ }` syntax** — familiar to anyone who knows Java, Rust, or Scala
@@ -56,7 +56,7 @@ sproof's design principle: **keep only the essential complexity**.
 
 ## Comparison
 
-|                    | Coq        | Lean 4       | sproof                  |
+|                    | Coq        | Lean 4       | sroof                  |
 |--------------------|------------|--------------|-------------------------|
 | Implementation     | OCaml      | C++          | **Scala 3**             |
 | Type theory        | CIC        | CIC          | **Predicative CIC**     |
@@ -72,18 +72,18 @@ sproof's design principle: **keep only the essential complexity**.
 
 ```bash
 # Clone and build
-git clone https://github.com/kmizu/sproof
-cd sproof
+git clone https://github.com/kmizu/sroof
+cd sroof
 sbt cli/run
 
 # Check a proof file
-sbt "cli/run check examples/nat.sproof"
+sbt "cli/run check examples/nat.sroof"
 ```
 
 ### Output
 
 ```
-OK: examples/nat.sproof — 1 inductive(s), 1 definition(s), 4 defspec(s)
+OK: examples/nat.sroof — 1 inductive(s), 1 definition(s), 4 defspec(s)
 ```
 
 JSON output schema is documented in [docs/json-schema.md](docs/json-schema.md).
@@ -95,7 +95,7 @@ Effect boundary guidance: [docs/effects.md](docs/effects.md)
 Repeated checks in the same JVM process reuse parse/elaboration/proof results with staged invalidation.
 
 - strategy document: [`INCREMENTAL_CHECKING.md`](INCREMENTAL_CHECKING.md)
-- safe fallback: if cache keys mismatch, sproof re-checks from the affected stage
+- safe fallback: if cache keys mismatch, sroof re-checks from the affected stage
 
 ### Benchmark Suite
 
@@ -117,7 +117,7 @@ python3 scripts/benchmark.py --runs 3 --thresholds benchmarks/thresholds.json --
 
 - Core CLI commands are unchanged.
 - `check --json` remains the machine-readable integration path.
-- `examples/vec.sproof` uses argument ordering in `concat` that is compatible with structural recursion checking.
+- `examples/vec.sroof` uses argument ordering in `concat` that is compatible with structural recursion checking.
 
 ---
 
@@ -226,7 +226,7 @@ defspec refl_intro(n: Nat): n = n {
 
 ## Coq Syntax Comparison
 
-| Concept              | Coq                     | sproof                             |
+| Concept              | Coq                     | sroof                             |
 |----------------------|-------------------------|------------------------------------|
 | Inductive type       | `Inductive Nat : Set :=` | `inductive Nat {`                 |
 | Function definition  | `Fixpoint plus ...`      | `def plus ...`                    |
@@ -243,13 +243,13 @@ defspec refl_intro(n: Nat): n = n {
 ## Scala 3 Extraction
 
 ```bash
-sbt "cli/run extract examples/nat.sproof --output Nat.scala"
+sbt "cli/run extract examples/nat.sroof --output Nat.scala"
 ```
 
 Proofs (propositions) are erased at runtime; only the computational content remains.
 
 ```scala
-// sproof
+// sroof
 def plus(n: Nat, m: Nat): Nat { ... }
 defspec plus_zero_right(n: Nat): plus(n, Nat.zero) = n { ... }
 
@@ -263,7 +263,7 @@ def plus_zero_right(n: Nat): Unit = ()   // proof erased
 ## Architecture
 
 ```
-sproof/
+sroof/
 ├── core/       # Term ADT, De Bruijn substitution, typing context
 ├── eval/       # Normalization by Evaluation (NbE)
 ├── checker/    # Bidirectional type checking
@@ -291,7 +291,7 @@ Pipeline note:
 
 ## Scala Native (native binary)
 
-sproof compiles to a self-contained native binary via [Scala Native](https://scala-native.org/). No JVM required at runtime.
+sroof compiles to a self-contained native binary via [Scala Native](https://scala-native.org/). No JVM required at runtime.
 
 ### Prerequisites
 
@@ -307,7 +307,7 @@ sudo apt-get install clang lld libunwind-dev
 sbt cliNative/nativeLink
 
 # Run the native binary
-./cli-native/target/scala-3.3.6/sproof-cli-native-out check examples/nat.sproof
+./cli-native/target/scala-3.3.6/sroof-cli-native-out check examples/nat.sroof
 ```
 
 ### Performance
@@ -329,20 +329,20 @@ sbt cliNative/compile
 
 ## sbt Plugin
 
-See [sbt-sproof](sbt-sproof/README.md) for integrating sproof into an sbt build.
+See [sbt-sroof](sbt-sroof/README.md) for integrating sroof into an sbt build.
 
 ```sbt
 // project/plugins.sbt
-addSbtPlugin("io.sproof" % "sbt-sproof" % "0.1.0")
+addSbtPlugin("io.sroof" % "sbt-sroof" % "0.1.0")
 
 // build.sbt
-enablePlugins(SproofPlugin)
+enablePlugins(SroofPlugin)
 ```
 
 ```bash
-sbt sproofCheck    # Type-check all .sproof files
-sbt sproofExtract  # Extract to Scala 3 source (runs before compile)
-sbt sproofRepl     # Interactive REPL
+sbt sroofCheck    # Type-check all .sroof files
+sbt sroofExtract  # Extract to Scala 3 source (runs before compile)
+sbt sroofRepl     # Interactive REPL
 ```
 
 ## stdlib v1
@@ -359,7 +359,7 @@ Baseline stdlib modules for `Nat`, `List`, `Vec`, and `Bool` are available under
 Reusable lemma bundle manifests are available under `stdlib/bundles/`.
 
 - Bundle documentation and compatibility policy: [docs/lemma-bundles.md](docs/lemma-bundles.md)
-- Representative bundle-oriented example: [examples/bundles/nat_bundle_usage.sproof](examples/bundles/nat_bundle_usage.sproof)
+- Representative bundle-oriented example: [examples/bundles/nat_bundle_usage.sroof](examples/bundles/nat_bundle_usage.sroof)
 
 ---
 

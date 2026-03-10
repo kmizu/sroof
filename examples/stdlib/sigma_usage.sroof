@@ -1,0 +1,14 @@
+// sigma_usage.sroof — examples of Sigma (dependent pairs)
+// Prepend stdlib/Sigma.sroof before this file.
+
+// Additional fst projection (exercises defspec reuse pattern)
+defspec sigma_fst_reuse(A: Type, B: A -> Type, x: A, y: B(x)):
+    sigma_fst(A, B, Sigma.mk(x, y)) = x {
+  by trivial
+}
+
+// snd projection: sigma_snd(A, B, Sigma.mk(x, y)) = y
+defspec sigma_snd_reuse(A: Type, B: A -> Type, x: A, y: B(x)):
+    sigma_snd(A, B, Sigma.mk(x, y)) = y {
+  by trivial
+}

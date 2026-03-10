@@ -1,0 +1,28 @@
+// Representative bundle usage target: keep Nat simplification lemmas grouped in one manifest.
+// This example references the canonical theorem names from stdlib/Nat.sroof.
+
+inductive Nat {
+  case zero: Nat
+  case succ(n: Nat): Nat
+}
+
+def plus(n: Nat, m: Nat): Nat {
+  match n {
+    case Nat.zero    => m
+    case Nat.succ(k) => Nat.succ(plus(k, m))
+  }
+}
+
+defspec plus_zero_right(n: Nat): plus(n, Nat.zero) = n {
+  by induction n {
+    case zero      => trivial
+    case succ k ih => simplify [ih]
+  }
+}
+
+defspec plus_succ_right(n: Nat, m: Nat): plus(n, Nat.succ(m)) = Nat.succ(plus(n, m)) {
+  by induction n {
+    case zero      => trivial
+    case succ k ih => simplify [ih]
+  }
+}

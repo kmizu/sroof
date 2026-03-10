@@ -1,0 +1,72 @@
+{
+  "name": "vscode-sroof",
+  "displayName": "sroof",
+  "description": "Language support for the sroof theorem prover",
+  "version": "0.2.0",
+  "publisher": "sroof",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/kmizu/sroof"
+  },
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Programming Languages"
+  ],
+  "activationEvents": [
+    "onLanguage:sroof",
+    "onCommand:sroof.showGoals"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "languages": [
+      {
+        "id": "sroof",
+        "aliases": [
+          "sroof",
+          "Sroof"
+        ],
+        "extensions": [
+          ".sroof"
+        ],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "sroof",
+        "scopeName": "source.sroof",
+        "path": "./syntaxes/sroof.tmLanguage.json"
+      }
+    ],
+    "snippets": [
+      {
+        "language": "sroof",
+        "path": "./snippets/sroof.json"
+      }
+    ],
+    "commands": [
+      {
+        "command": "sroof.showGoals",
+        "title": "sroof: Show Goals",
+        "category": "sroof"
+      }
+    ]
+  },
+  "scripts": {
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "package": "vsce package"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@types/vscode": "^1.85.0",
+    "typescript": "^5.0.0",
+    "vscode-languageserver": "^9.0.1",
+    "vscode-languageserver-textdocument": "^1.0.12"
+  },
+  "dependencies": {
+    "vscode-languageclient": "^9.0.0"
+  }
+}

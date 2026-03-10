@@ -12,17 +12,17 @@ Target release date: 2026-03-02
 ## Regression and Smoke Checks
 
 - [x] `sbt test`
-- [x] `sbt "cli/run check examples/nat.sproof"`
-- [x] `sbt "cli/run check examples/int.sproof"`
-- [x] `sbt "cli/run check examples/list.sproof"`
-- [x] `sbt "cli/run check examples/vec.sproof"`
-- [x] `cd vscode-sproof && npm ci && npm run compile`
+- [x] `sbt "cli/run check examples/nat.sroof"`
+- [x] `sbt "cli/run check examples/int.sroof"`
+- [x] `sbt "cli/run check examples/list.sroof"`
+- [x] `sbt "cli/run check examples/vec.sroof"`
+- [x] `cd vscode-sroof && npm ci && npm run compile`
 
 ## CI and Artifacts
 
 - [x] Verify CI workflows include JVM tests + native smoke checks.
 - [ ] Ensure benchmark artifact/report job exists in CI (tracked separately in #20).
-- [x] Confirm native binary artifact name/path (`sproof-cli-linux-amd64`).
+- [x] Confirm native binary artifact name/path (`sroof-cli-linux-amd64`).
 
 ## Known Limitations
 

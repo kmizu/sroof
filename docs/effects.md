@@ -1,6 +1,6 @@
 # Effects and IO Boundary
 
-This document describes the recommended effect model for `sproof`.
+This document describes the recommended effect model for `sroof`.
 
 ## Principle
 
@@ -12,7 +12,7 @@ This preserves soundness: kernel checking never depends on host-side side effect
 
 ## Current model
 
-`stdlib/Effect.sproof` provides a free-monad-like script type:
+`stdlib/Effect.sroof` provides a free-monad-like script type:
 
 - `IO.pure(value)`      : pure result
 - `IO.read_int`         : request runtime input

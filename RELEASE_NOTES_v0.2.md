@@ -1,4 +1,4 @@
-# sproof v0.2 Release Notes
+# sroof v0.2 Release Notes
 
 Release date: 2026-03-02
 
@@ -8,7 +8,7 @@ Release date: 2026-03-02
 - Added/expanded end-to-end example coverage (`nat`, `int`, `list`, `vec`).
 - Improved tooling story:
   - machine-readable `check --json`
-  - VS Code extension packaging flow (`vscode-sproof`)
+  - VS Code extension packaging flow (`vscode-sroof`)
   - Scala Native binary CI smoke checks
 
 ## Migration Notes (from v0.1)
@@ -16,7 +16,7 @@ Release date: 2026-03-02
 - Core CLI commands are unchanged.
 - `check --json` is available for automation/tool integration.
 - VS Code extension version bumped to `0.2.0`.
-- `examples/vec.sproof` updated so `concat` uses argument ordering compatible with structural recursion checking.
+- `examples/vec.sroof` updated so `concat` uses argument ordering compatible with structural recursion checking.
 
 ## Known Limitations
 
@@ -28,6 +28,6 @@ Release date: 2026-03-02
 
 - Source release tag: `v0.2.0`
 - JVM build via sbt
-- Scala Native binary artifact from CI: `sproof-cli-linux-amd64`
-- VS Code extension package built from `vscode-sproof/`
+- Scala Native binary artifact from CI: `sroof-cli-linux-amd64`
+- VS Code extension package built from `vscode-sroof/`
 

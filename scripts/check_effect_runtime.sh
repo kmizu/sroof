@@ -8,7 +8,7 @@ TMP_OUT="$(mktemp)"
 trap 'rm -f "$TMP_OUT"' EXIT
 
 # Extract Effect stdlib and verify runtime helpers are emitted.
-sbt "cli/run extract stdlib/Effect.sproof" >"$TMP_OUT"
+sbt "cli/run extract stdlib/Effect.sroof" >"$TMP_OUT"
 
 grep -q "object IORuntime" "$TMP_OUT"
 grep -q "def run(script: IO): Int" "$TMP_OUT"

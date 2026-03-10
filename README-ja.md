@@ -1,15 +1,15 @@
-# sproof
+# sroof
 
 **やさしい定理証明系 — プログラマーのための Proof Assistant**
 
-sproof は Scala 3 で書かれた依存型定理証明系です。Scala・Java・Rust・C++ を知っているプログラマーが、形式的検証を自然に書けることを目指しています。
+sroof は Scala 3 で書かれた依存型定理証明系です。Scala・Java・Rust・C++ を知っているプログラマーが、形式的検証を自然に書けることを目指しています。
 
-[![CI](https://github.com/kmizu/sproof/actions/workflows/ci.yml/badge.svg)](https://github.com/kmizu/sproof/actions/workflows/ci.yml)
+[![CI](https://github.com/kmizu/sroof/actions/workflows/ci.yml/badge.svg)](https://github.com/kmizu/sroof/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 ---
 
-## なぜ sproof？
+## なぜ sroof？
 
 従来の証明支援系（Coq・Lean・Agda）が一般プログラマーに広まらなかった原因は、依存型の難しさだけではありません。**構文という UI が「プログラマーに使ってもらう気がない」設計**だったことも大きな原因です。
 
@@ -28,7 +28,7 @@ Qed.
 ```
 
 ```scala
-// sproof — Scala/Java/Rust を知っていれば初見で読める
+// sroof — Scala/Java/Rust を知っていれば初見で読める
 def plus(n: Nat, m: Nat): Nat {
   match n {
     case Nat.zero    => m
@@ -45,7 +45,7 @@ defspec plus_zero_right(n: Nat): plus(n, Nat.zero) = n {
 }
 ```
 
-sproof が目指すのは「**本質的な難しさだけを残す**」こと。
+sroof が目指すのは「**本質的な難しさだけを残す**」こと。
 
 - **学習コスト = 型理論の概念のみ** — 構文は追加コストにしない
 - **ブレース `{ }` で統一** — Java/Rust/Scala を知る人が初見で読める
@@ -57,7 +57,7 @@ sproof が目指すのは「**本質的な難しさだけを残す**」こと。
 
 ## 比較表
 
-|                | Coq             | Lean 4         | sproof                        |
+|                | Coq             | Lean 4         | sroof                        |
 |----------------|-----------------|----------------|-------------------------------|
 | 実装言語        | OCaml           | C++            | **Scala 3**                   |
 | 型理論          | CIC             | CIC            | **Predicative CIC**           |
@@ -73,18 +73,18 @@ sproof が目指すのは「**本質的な難しさだけを残す**」こと。
 
 ```bash
 # クローン & ビルド
-git clone https://github.com/kmizu/sproof
-cd sproof
+git clone https://github.com/kmizu/sroof
+cd sroof
 sbt cli/run
 
 # 証明ファイルを検査
-sbt "cli/run check examples/nat.sproof"
+sbt "cli/run check examples/nat.sroof"
 ```
 
 ### 出力例
 
 ```
-OK: examples/nat.sproof — 1 inductive(s), 1 definition(s), 4 defspec(s)
+OK: examples/nat.sroof — 1 inductive(s), 1 definition(s), 4 defspec(s)
 ```
 
 ---
@@ -194,7 +194,7 @@ defspec refl_intro(n: Nat): n = n {
 
 ## Coq との構文対比
 
-| 概念         | Coq                        | sproof                              |
+| 概念         | Coq                        | sroof                              |
 |-------------|----------------------------|-------------------------------------|
 | 帰納型定義   | `Inductive Nat : Set :=`   | `inductive Nat {`                   |
 | 関数定義     | `Fixpoint plus ...`        | `def plus ...`                      |
@@ -211,13 +211,13 @@ defspec refl_intro(n: Nat): n = n {
 ## Scala 3 への Extraction
 
 ```bash
-sbt "cli/run extract examples/nat.sproof --output Nat.scala"
+sbt "cli/run extract examples/nat.sroof --output Nat.scala"
 ```
 
 命題（証明）は実行時に消去され、計算部分だけが Scala 3 コードとして出力されます。
 
 ```scala
-// sproof
+// sroof
 def plus(n: Nat, m: Nat): Nat { ... }
 defspec plus_zero_right(n: Nat): plus(n, Nat.zero) = n { ... }
 
@@ -231,7 +231,7 @@ def plus_zero_right(n: Nat): Unit = ()   // 証明は消去
 ## アーキテクチャ
 
 ```
-sproof/
+sroof/
 ├── core/       # Term ADT、De Bruijn 置換、型付けコンテキスト
 ├── eval/       # NbE（Normalization by Evaluation）
 ├── checker/    # 双方向型検査（bidirectional type checking）
@@ -251,7 +251,7 @@ sproof/
 
 ## Scala Native（ネイティブバイナリ）
 
-sproof は [Scala Native](https://scala-native.org/) 経由で自己完結型のネイティブバイナリにコンパイルできます。実行時に JVM が不要になります。
+sroof は [Scala Native](https://scala-native.org/) 経由で自己完結型のネイティブバイナリにコンパイルできます。実行時に JVM が不要になります。
 
 ### 前提条件
 
@@ -267,7 +267,7 @@ sudo apt-get install clang lld libunwind-dev
 sbt cliNative/nativeLink
 
 # 生成されたネイティブバイナリを実行
-./cli-native/target/scala-3.3.6/sproof-cli-native-out check examples/nat.sproof
+./cli-native/target/scala-3.3.6/sroof-cli-native-out check examples/nat.sroof
 ```
 
 ### 設定
@@ -289,20 +289,20 @@ sbt cliNative/compile
 
 ## sbt プラグイン
 
-sbt ビルドへの組み込みは [sbt-sproof](sbt-sproof/README.md) を参照してください。
+sbt ビルドへの組み込みは [sbt-sroof](sbt-sroof/README.md) を参照してください。
 
 ```sbt
 // project/plugins.sbt
-addSbtPlugin("io.sproof" % "sbt-sproof" % "0.1.0")
+addSbtPlugin("io.sroof" % "sbt-sroof" % "0.1.0")
 
 // build.sbt
-enablePlugins(SproofPlugin)
+enablePlugins(SroofPlugin)
 ```
 
 ```bash
-sbt sproofCheck    # すべての .sproof ファイルを型検査
-sbt sproofExtract  # Scala 3 ソースへ抽出（コンパイル前に自動実行）
-sbt sproofRepl     # 対話的 REPL を起動
+sbt sroofCheck    # すべての .sroof ファイルを型検査
+sbt sroofExtract  # Scala 3 ソースへ抽出（コンパイル前に自動実行）
+sbt sroofRepl     # 対話的 REPL を起動
 ```
 
 ---

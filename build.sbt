@@ -10,7 +10,7 @@ val munitVersion   = "1.0.2"
 val commonSettings = Seq(
   scalaVersion := scala3Version,
   version := "0.2.0",
-  organization := "io.sproof",
+  organization := "io.sroof",
   libraryDependencies ++= Seq(
     "org.typelevel" %% "cats-core" % catsVersion,
     "org.scalameta" %% "munit"     % munitVersion % Test,
@@ -24,7 +24,7 @@ val commonSettings = Seq(
 val nativeCommonSettings = Seq(
   scalaVersion := scala3Version,
   version := "0.2.0",
-  organization := "io.sproof",
+  organization := "io.sroof",
   libraryDependencies ++= Seq(
     "org.typelevel" %%% "cats-core" % catsVersion,
     "org.scalameta" %%% "munit"     % munitVersion % Test,
@@ -55,7 +55,7 @@ def shareSourcesWith(jvmProject: Project): Seq[Setting[?]] = Seq(
 lazy val root = project.in(file("."))
   .aggregate(core, nbe, checker, tactic, syntax, extract, kernel, cli)
   .settings(
-    name := "sproof",
+    name := "sroof",
     publish / skip := true,
   )
 
@@ -65,7 +65,7 @@ lazy val nativeRoot = project.in(file("native-root"))
   .aggregate(coreNative, nbeNative, checkerNative, tacticNative,
              syntaxNative, extractNative, kernelNative, cliNative)
   .settings(
-    name := "sproof-native",
+    name := "sroof-native",
     publish / skip := true,
     // Exclude from the default `sbt test` run so LLVM is optional
     aggregate := false,
@@ -77,47 +77,47 @@ lazy val nativeRoot = project.in(file("native-root"))
 
 lazy val core = project.in(file("core"))
   .settings(commonSettings)
-  .settings(name := "sproof-core")
+  .settings(name := "sroof-core")
 
 lazy val nbe = project.in(file("eval"))
   .dependsOn(core)
   .settings(commonSettings)
-  .settings(name := "sproof-eval")
+  .settings(name := "sroof-eval")
 
 lazy val checker = project.in(file("checker"))
   .dependsOn(nbe)
   .settings(commonSettings)
-  .settings(name := "sproof-checker")
+  .settings(name := "sroof-checker")
 
 lazy val tactic = project.in(file("tactic"))
   .dependsOn(checker)
   .settings(commonSettings)
-  .settings(name := "sproof-tactic")
+  .settings(name := "sroof-tactic")
 
 lazy val syntax = project.in(file("syntax"))
   .dependsOn(core)
   .settings(commonSettings)
   .settings(
-    name := "sproof-syntax",
+    name := "sroof-syntax",
     libraryDependencies += "com.github.j-mie6" %% "parsley" % parsleyVersion,
   )
 
 lazy val extract = project.in(file("extract"))
   .dependsOn(checker, tactic)
   .settings(commonSettings)
-  .settings(name := "sproof-extract")
+  .settings(name := "sroof-extract")
 
 lazy val kernel = project.in(file("kernel"))
   .dependsOn(checker, tactic)
   .settings(commonSettings)
-  .settings(name := "sproof-kernel")
+  .settings(name := "sroof-kernel")
 
 lazy val cli = project.in(file("cli"))
   .dependsOn(syntax, tactic, extract, kernel)
   .settings(commonSettings)
   .settings(
-    name := "sproof-cli",
-    Compile / mainClass := Some("sproof.Main"),
+    name := "sroof-cli",
+    Compile / mainClass := Some("sroof.Main"),
   )
 
 // ============================================================
@@ -133,35 +133,35 @@ lazy val cli = project.in(file("cli"))
 //
 // Build native CLI binary:
 //   sbt cliNative/nativeLink
-//   ./cli-native/target/scala-3.3.6/sproof-cli-native-out
+//   ./cli-native/target/scala-3.3.6/sroof-cli-native-out
 // ============================================================
 
 lazy val coreNative = project.in(file("core-native"))
   .enablePlugins(ScalaNativePlugin)
   .settings(nativeCommonSettings)
   .settings(shareSourcesWith(core))
-  .settings(name := "sproof-core-native")
+  .settings(name := "sroof-core-native")
 
 lazy val nbeNative = project.in(file("eval-native"))
   .enablePlugins(ScalaNativePlugin)
   .dependsOn(coreNative)
   .settings(nativeCommonSettings)
   .settings(shareSourcesWith(nbe))
-  .settings(name := "sproof-eval-native")
+  .settings(name := "sroof-eval-native")
 
 lazy val checkerNative = project.in(file("checker-native"))
   .enablePlugins(ScalaNativePlugin)
   .dependsOn(nbeNative)
   .settings(nativeCommonSettings)
   .settings(shareSourcesWith(checker))
-  .settings(name := "sproof-checker-native")
+  .settings(name := "sroof-checker-native")
 
 lazy val tacticNative = project.in(file("tactic-native"))
   .enablePlugins(ScalaNativePlugin)
   .dependsOn(checkerNative)
   .settings(nativeCommonSettings)
   .settings(shareSourcesWith(tactic))
-  .settings(name := "sproof-tactic-native")
+  .settings(name := "sroof-tactic-native")
 
 lazy val syntaxNative = project.in(file("syntax-native"))
   .enablePlugins(ScalaNativePlugin)
@@ -169,7 +169,7 @@ lazy val syntaxNative = project.in(file("syntax-native"))
   .settings(nativeCommonSettings)
   .settings(shareSourcesWith(syntax))
   .settings(
-    name := "sproof-syntax-native",
+    name := "sroof-syntax-native",
     libraryDependencies += "com.github.j-mie6" %%% "parsley" % parsleyVersion,
   )
 
@@ -178,14 +178,14 @@ lazy val extractNative = project.in(file("extract-native"))
   .dependsOn(checkerNative, tacticNative)
   .settings(nativeCommonSettings)
   .settings(shareSourcesWith(extract))
-  .settings(name := "sproof-extract-native")
+  .settings(name := "sroof-extract-native")
 
 lazy val kernelNative = project.in(file("kernel-native"))
   .enablePlugins(ScalaNativePlugin)
   .dependsOn(checkerNative, tacticNative)
   .settings(nativeCommonSettings)
   .settings(shareSourcesWith(kernel))
-  .settings(name := "sproof-kernel-native")
+  .settings(name := "sroof-kernel-native")
 
 lazy val cliNative = project.in(file("cli-native"))
   .enablePlugins(ScalaNativePlugin)
@@ -194,6 +194,6 @@ lazy val cliNative = project.in(file("cli-native"))
   .settings(shareSourcesWith(cli))
   .settings(nativeLinkSettings)
   .settings(
-    name := "sproof-cli-native",
-    Compile / mainClass := Some("sproof.Main"),
+    name := "sroof-cli-native",
+    Compile / mainClass := Some("sroof.Main"),
   )

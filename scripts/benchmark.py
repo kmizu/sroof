@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run sproof benchmarks and compare medians against thresholds."""
+"""Run sroof benchmarks and compare medians against thresholds."""
 
 from __future__ import annotations
 
@@ -22,10 +22,10 @@ class Workload:
 
 
 DEFAULT_WORKLOADS: List[Workload] = [
-    Workload("nat", "examples/nat.sproof"),
-    Workload("int", "examples/int.sproof"),
-    Workload("list", "examples/list.sproof"),
-    Workload("bool", "examples/bool.sproof"),
+    Workload("nat", "examples/nat.sroof"),
+    Workload("int", "examples/int.sroof"),
+    Workload("list", "examples/list.sroof"),
+    Workload("bool", "examples/bool.sroof"),
 ]
 
 
