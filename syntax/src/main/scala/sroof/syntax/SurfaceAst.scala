@@ -102,6 +102,24 @@ enum STactic:
   case SCases(varName: String, cases: List[STacticCase])
   /** decide — close a goal by boolean computation (NbE evaluation to Bool.true) */
   case SDecide
+  /** split / constructor — split a single-constructor goal into one subgoal per field */
+  case SSplit
+  case SConstructor
+  /** left — apply the first constructor (for disjunctions / Either) */
+  case SLeft
+  /** right — apply the second constructor */
+  case SRight
+  /** use e / exists e — provide a witness for the first constructor argument */
+  case SUse(expr: SExpr)
+  case SExists(expr: SExpr)
+  /** by_contra h — introduce the negation of the goal as hypothesis h */
+  case SByContra(varName: String)
+  /** tauto — close a propositional goal by trying trivial, assumption, contradiction */
+  case STauto
+  /** obtain [a, b] := h ; cont — destruct a single-constructor hypothesis */
+  case SObtain(bindings: List[String], hypName: String, cont: STactic)
+  /** specialize h arg1 arg2 ; cont — apply a hypothesis to arguments */
+  case SSpecialize(hypName: String, args: List[SExpr], cont: STactic)
 
 /** A step in a calc block: lhs = rhs { proof }. lhs=None means _ (carry forward). */
 case class SCalcStep(lhs: Option[SExpr], rhs: SExpr, proof: SProof)

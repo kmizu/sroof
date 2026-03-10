@@ -480,4 +480,87 @@ class MainSuite extends FunSuite:
     assert(result.isRight, s"expected Right but got: $result")
   }
 
+  // ---- split / left / right tactics ----
+
+  test("check: split tactic applies single-constructor inductive") {
+    val source =
+      """|inductive Nat {
+         |  case zero: Nat
+         |  case succ(n: Nat): Nat
+         |}
+         |inductive MyPair {
+         |  case mk(fst: Nat, snd: Nat): MyPair
+         |}
+         |defspec pair_proof: MyPair {
+         |  by { split; exact Nat.zero; exact Nat.zero }
+         |}
+         |""".stripMargin
+    val result = Main.processSource(source, "split-test")
+    assert(result.isRight, s"expected Right but got: $result")
+  }
+
+  test("check: left tactic applies first constructor") {
+    val source =
+      """|inductive Nat {
+         |  case zero: Nat
+         |  case succ(n: Nat): Nat
+         |}
+         |inductive Either {
+         |  case left(value: Nat): Either
+         |  case right(value: Nat): Either
+         |}
+         |defspec either_left: Either {
+         |  by { left; exact Nat.zero }
+         |}
+         |""".stripMargin
+    val result = Main.processSource(source, "left-test")
+    assert(result.isRight, s"expected Right but got: $result")
+  }
+
+  test("check: right tactic applies second constructor") {
+    val source =
+      """|inductive Nat {
+         |  case zero: Nat
+         |  case succ(n: Nat): Nat
+         |}
+         |inductive Either {
+         |  case left(value: Nat): Either
+         |  case right(value: Nat): Either
+         |}
+         |defspec either_right: Either {
+         |  by { right; exact Nat.zero }
+         |}
+         |""".stripMargin
+    val result = Main.processSource(source, "right-test")
+    assert(result.isRight, s"expected Right but got: $result")
+  }
+
+  test("check: tauto closes trivial equality goal") {
+    val source =
+      """|inductive Nat {
+         |  case zero: Nat
+         |  case succ(n: Nat): Nat
+         |}
+         |defspec tauto_zero: Nat.zero = Nat.zero {
+         |  by tauto
+         |}
+         |""".stripMargin
+    val result = Main.processSource(source, "tauto-test")
+    assert(result.isRight, s"expected Right but got: $result")
+  }
+
+  test("check: specialize tactic instantiates a hypothesis") {
+    val source =
+      """|inductive Nat {
+         |  case zero: Nat
+         |  case succ(n: Nat): Nat
+         |}
+         |defspec specialize_test(h: Nat -> Nat): Nat.zero = Nat.zero {
+         |  by specialize h Nat.zero ; trivial
+         |}
+         |""".stripMargin
+    val result = Main.processSource(source, "specialize-test")
+    assert(result.isRight, s"expected Right but got: $result")
+  }
+
 end MainSuite

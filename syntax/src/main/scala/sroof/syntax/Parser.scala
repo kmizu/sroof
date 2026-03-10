@@ -41,6 +41,9 @@ object Parser:
         "try", "first", "repeat", "all_goals", "skip",
         "assumption", "contradiction", "cases",
         "if", "then", "else",
+        "split", "constructor",
+        "use", "exists", "by_contra", "tauto",
+        "obtain", "specialize",
       ),
       hardOperators = Set("->", "==", "=", "=>", ":=", ":", ",", "{", "}", "(", ")", "[", "]", ".", "+", "*", ";", "-", "@", "|"),
     ),
@@ -247,10 +250,13 @@ object Parser:
       }
     }
 
-  /** Match pattern: Nat.zero, Nat.succ(k) */
+  /** Match pattern: Nat.zero, Nat.succ(k)
+   *  The type/ctor names may be user-defined identifiers including hardKeywords,
+   *  so `rawIdentifier` is used.  Binding names stay as regular identifiers.
+   */
   private lazy val matchPattern: Parsley[(String, List[String])] =
-    identifier.flatMap { first =>
-      option(op(".") *> identifier).flatMap {
+    rawIdentifier.flatMap { first =>
+      option(op(".") *> rawIdentifier).flatMap {
         case Some(ctorName) =>
           val fullName = s"$first.$ctorName"
           option(parens(sepBy(identifier, op(",")))).map { bindings =>
@@ -277,7 +283,7 @@ object Parser:
    */
   private lazy val primaryExpr: Parsley[SExpr] =
     anyIdentifier.flatMap { first =>
-      option(op(".") *> identifier).flatMap {
+      option(op(".") *> rawIdentifier).flatMap {
         case Some(ctorName) =>
           // Constructor: parse first arg-list inline (Type.ctor(...) syntax)
           option(parens(sepBy(fwd(expr), op(",")))).map { argsOpt =>
@@ -349,7 +355,7 @@ object Parser:
   // ---- Parameter declarations ----
 
   private lazy val paramDecl: Parsley[SParam] =
-    parens(identifier.flatMap { name =>
+    parens(rawIdentifier.flatMap { name =>
       // Use propType so equality propositions (p: f(x) = y) work as param types.
       op(":") *> fwd(propType).map { tpe =>
         SParam(name, tpe)
@@ -358,7 +364,7 @@ object Parser:
 
   private lazy val paramList: Parsley[List[SParam]] =
     parens(sepBy(
-      identifier.flatMap { name =>
+      rawIdentifier.flatMap { name =>
         // Use propType so equality propositions (p: f(x) = y) work as param types.
         op(":") *> fwd(propType).map { tpe =>
           SParam(name, tpe)
@@ -443,9 +449,9 @@ object Parser:
     }
 
   private lazy val ctorDecl: Parsley[SCtor] =
-    keyword("case") *> identifier.flatMap { name =>
+    keyword("case") *> rawIdentifier.flatMap { name =>
       option(parens(sepBy(
-        identifier.flatMap { pn =>
+        rawIdentifier.flatMap { pn =>
           // Use propType so equality constraints like `valid: f(x) = Bool.true` work.
           op(":") *> fwd(propType).map { pt =>
             SParam(pn, pt)
@@ -557,6 +563,16 @@ object Parser:
     seqTactic,
     casesTactic,
     inductionTactic,
+    keyword("split") #> STactic.SSplit,
+    keyword("constructor") #> STactic.SConstructor,
+    keyword("left") #> STactic.SLeft,
+    keyword("right") #> STactic.SRight,
+    keyword("tauto") #> STactic.STauto,
+    keyword("use") *> fwd(expr).map(STactic.SUse.apply),
+    keyword("exists") *> fwd(expr).map(STactic.SExists.apply),
+    keyword("by_contra") *> identifier.map(STactic.SByContra.apply),
+    obtainTactic,
+    specializeTactic,
   )
 
   /** { t1; t2; t3 } — tactic sequence */
@@ -624,6 +640,26 @@ object Parser:
       }
     }
 
+  /** obtain [a, b] := h ; cont — destruct a single-constructor hypothesis */
+  private lazy val obtainTactic: Parsley[STactic] =
+    keyword("obtain") *> brackets(sepBy(identifier, op(","))).flatMap { bindings =>
+      op(":=") *> identifier.flatMap { hypName =>
+        op(";") *> fwd(tactic).map { cont =>
+          STactic.SObtain(bindings, hypName, cont)
+        }
+      }
+    }
+
+  /** specialize h arg1 arg2 ; cont — apply a hypothesis to arguments */
+  private lazy val specializeTactic: Parsley[STactic] =
+    keyword("specialize") *> identifier.flatMap { hypName =>
+      some(fwd(simpleExpr)).flatMap { args =>
+        op(";") *> fwd(tactic).map { cont =>
+          STactic.SSpecialize(hypName, args, cont)
+        }
+      }
+    }
+
   private lazy val tacticCase: Parsley[STacticCase] =
     keyword("case") *> identifier.flatMap { ctorName =>
       many(atomic(identifier.filter(n => !isKeyword(n) && n != "=>"))).flatMap { bindings =>
@@ -653,7 +689,7 @@ object Parser:
 
   /** field: Type  (inside structure body) */
   private lazy val structureField: Parsley[SParam] =
-    identifier.flatMap { name =>
+    rawIdentifier.flatMap { name =>
       op(":") *> fwd(typeExpr).map { tpe =>
         SParam(name, tpe)
       }
@@ -681,7 +717,7 @@ object Parser:
 
   /** field = expr  (inside instance body) */
   private lazy val instanceBinding: Parsley[(String, SExpr)] =
-    atomic(identifier.filter(n => !isKeyword(n))).flatMap { name =>
+    atomic(rawIdentifier).flatMap { name =>
       op("=") *> fwd(expr).map { body =>
         (name, body)
       }
@@ -718,6 +754,9 @@ object Parser:
     "try", "first", "repeat", "all_goals", "skip",
     "assumption", "contradiction", "cases",
     "if", "then", "else",
+    "split", "constructor", "left", "right",
+    "use", "exists", "by_contra", "tauto",
+    "obtain", "specialize",
   )
 
   private def isKeyword(s: String): Boolean = keywords.contains(s)

@@ -2,9 +2,9 @@ package sroof
 
 import scala.util.boundary
 import scala.util.boundary.break
-import sroof.core.{Term, Context, GlobalEnv, Subst, DefEntry}
+import sroof.core.{Term, Context, GlobalEnv, Subst, MatchCase, DefEntry}
 import sroof.syntax.{ElabResult, SProof, STactic, STacticCase, SType, SCalcStep, SExpr}
-import sroof.tactic.{TacticM, Builtins, TacticError, ProofStatePretty}
+import sroof.tactic.{TacticM, Builtins, TacticError, ProofStatePretty, Eq, Goal}
 import sroof.kernel.Kernel
 
 /** Checks and proves all declarations from an elaboration result.
@@ -318,6 +318,60 @@ object Checker:
         closeRemainingGoals(cases)
       }
 
+    case STactic.SSplit =>
+      Builtins.split_
+
+    case STactic.SConstructor =>
+      Builtins.split_
+
+    case STactic.SLeft =>
+      Builtins.leftTactic
+
+    case STactic.SRight =>
+      Builtins.rightTactic
+
+    case STactic.STauto =>
+      Builtins.tauto
+
+    case STactic.SByContra(varName) =>
+      Builtins.byContra(varName)
+
+    case STactic.SUse(sexpr) =>
+      import sroof.syntax.Elaborator
+      for
+        goalPair  <- TacticM.currentGoal
+        (_, goal)  = goalPair
+        nameEnv    = goal.ctx.entries.map(_.name).toList
+        witness   <- Elaborator.elabExprPublic(sexpr, env, nameEnv) match
+          case Right(t) => TacticM.pure(t)
+          case Left(e)  => TacticM.fail(TacticError.Custom(s"use: elaboration failed: ${e.message}"))
+        _         <- Builtins.use_(witness)
+      yield ()
+
+    case STactic.SExists(sexpr) =>
+      tacticFromSurface(STactic.SUse(sexpr))
+
+    case STactic.SObtain(bindings, hypName, cont) =>
+      Builtins.obtain(bindings, hypName).flatMap { _ =>
+        tacticFromSurface(cont)
+      }
+
+    case STactic.SSpecialize(hypName, sexprs, cont) =>
+      import sroof.syntax.Elaborator
+      for
+        goalPair  <- TacticM.currentGoal
+        (_, goal)  = goalPair
+        nameEnv    = goal.ctx.entries.map(_.name).toList
+        args      <- sexprs.foldLeft(TacticM.pure(List.empty[Term])) { (acc, sexpr) =>
+          acc.flatMap { argsSoFar =>
+            Elaborator.elabExprPublic(sexpr, env, nameEnv) match
+              case Right(t) => TacticM.pure(argsSoFar :+ t)
+              case Left(e)  => TacticM.fail(TacticError.Custom(s"specialize: ${e.message}"))
+          }
+        }
+        _         <- Builtins.specialize(hypName, args, tacticFromSurface(cont))
+      yield ()
+
   /** Close remaining sub-goals using the specified case tactics in order.
    *
    *  Each STacticCase is consumed one-by-one as subgoals are closed.
@@ -410,12 +464,72 @@ object Checker:
       _          <- TacticM.solveGoalWith(mv, proofTerm)
     yield ()
 
-  /** calc { step1 step2 ... } — chain equality proofs by transitivity */
+  /** calc { step1 step2 ... } — chain equality proofs by transitivity.
+   *
+   *  Each step `lhs = rhs { proof }` is proved independently; steps are then
+   *  chained using J-rule transitivity into a single proof of the overall goal.
+   */
   private def calcTactic(
-    steps: List[sroof.syntax.SCalcStep],
+    steps: List[SCalcStep],
   )(using env: GlobalEnv): TacticM[Unit] =
-    // For now, just try trivial for each step (minimal implementation)
-    // A full implementation would chain transitivity proofs
-    Builtins.trivial
+    for
+      goalPair  <- TacticM.currentGoal
+      (mv, goal) = goalPair
+      nameEnv    = goal.ctx.entries.map(_.name).toList
+      chainProof <- buildCalcChain(goal, nameEnv, steps, None)
+      _          <- TacticM.solveGoalWith(mv, chainProof)
+    yield ()
+
+  /** Recursively elaborate calc steps and build a transitivity chain.
+   *
+   *  @param prevRhs the RHS of the previous step (used when current step has lhs = None)
+   */
+  private def buildCalcChain(
+    goal:    Goal,
+    nameEnv: List[String],
+    steps:   List[SCalcStep],
+    prevRhs: Option[Term],
+  )(using env: GlobalEnv): TacticM[Term] =
+    import sroof.syntax.Elaborator
+    steps match
+      case Nil =>
+        TacticM.fail(TacticError.Custom("calc: empty calc block"))
+      case step :: rest =>
+        for
+          lhs <- step.lhs match
+            case None =>
+              prevRhs match
+                case Some(r) => TacticM.pure(r)
+                case None    => TacticM.fail(TacticError.Custom("calc: first step must have explicit LHS"))
+            case Some(e) =>
+              Elaborator.elabExprPublic(e, env, nameEnv) match
+                case Right(t) => TacticM.pure(t)
+                case Left(e)  => TacticM.fail(TacticError.Custom(s"calc: LHS elaboration: ${e.message}"))
+          rhs <- Elaborator.elabExprPublic(step.rhs, env, nameEnv) match
+            case Right(t) => TacticM.pure(t)
+            case Left(e)  => TacticM.fail(TacticError.Custom(s"calc: RHS elaboration: ${e.message}"))
+          stepProp  = Eq.mkType(Term.Meta(-1), lhs, rhs)
+          stepProof <- executeProof(goal.ctx, stepProp, step.proof) match
+            case Right(t) => TacticM.pure(t)
+            case Left(e)  => TacticM.fail(TacticError.Custom(s"calc: step proof failed: $e"))
+          result    <- rest match
+            case Nil => TacticM.pure(stepProof)
+            case _   =>
+              buildCalcChain(goal, nameEnv, rest, Some(rhs)).map { restProof =>
+                buildTransProof(stepProof, restProof, lhs, rhs)
+              }
+        yield result
+
+  /** Build a transitivity proof: given `h1 : lhs = mid` and `h2 : mid = rhs`,
+   *  returns a proof of `lhs = rhs` via J-rule elimination on `h2`.
+   *
+   *  Proof term: `Mat(h2, [refl => shift(1, h1)], Lam("y", _, lhs_shifted = Var(0)))`
+   */
+  private def buildTransProof(h1: Term, h2: Term, lhs: Term, mid: Term): Term =
+    val shiftedLhs  = Subst.shift(1, lhs)
+    val motiveBody  = Eq.mkType(Term.Meta(-1), shiftedLhs, Term.Var(0))
+    val motive      = Term.Lam("y", Subst.shift(1, mid), motiveBody)
+    val branchBody  = Subst.shift(1, h1)
+    Term.Mat(h2, List(MatchCase("refl", 1, branchBody)), motive)
 
 end Checker

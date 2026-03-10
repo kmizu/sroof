@@ -887,3 +887,302 @@ object Builtins:
         case Context.Entry.Def(_, _, defn) =>
           Eval.eval(partialEnv, defn) :: partialEnv
     }
+
+  // ---- peelApps helper ----
+
+  /** Peel a left-associative chain of App nodes, returning (head, args-in-order). */
+  private def peelApps(t: Term): (Term, List[Term]) =
+    def go(t: Term, acc: List[Term]): (Term, List[Term]) = t match
+      case Term.App(fn, arg) => go(fn, arg :: acc)
+      case other             => (other, acc)
+    go(t, Nil)
+
+  // ---- applyNthCtor — common engine for split / left / right ----
+
+  /** Apply one constructor of an inductive type, generating a subgoal per arg.
+   *
+   *  Given the current goal `Ind(name, params...) args...` and a constructor
+   *  `ctor(a0: T0, a1: T1(a0), ...)`, generates subgoals for each Tk and builds
+   *  the proof term `Con(ctorName, indName, [Meta(mv0), Meta(mv1), ...])`.
+   *
+   *  Substitution order for each argTpe[k]:
+   *  1. Fold with prevMvIds (innermost Var(0) = most recent prev ctor arg).
+   *  2. Fold with paramArgs.reverse (substitute params after ctor-arg refs are gone).
+   */
+  private def applyNthCtor(
+    mv:      MetaVar,
+    goal:    Goal,
+    indDef:  IndDef,
+    ctorDef: CtorDef,
+  )(using env: GlobalEnv): TacticM[Unit] =
+    val normalizedGoal = Bidirectional.whnf(goal.ctx, goal.target)
+    val (_, appliedArgs) = peelApps(normalizedGoal)
+    val numParams = indDef.params.length
+    val paramArgs = appliedArgs.take(numParams)
+    def loop(remaining: List[Term], prevMvIds: List[Int]): TacticM[List[Int]] =
+      remaining match
+        case Nil => TacticM.pure(prevMvIds.reverse)
+        case argTpe :: rest =>
+          // Substitute previous ctor arg metas (head = most recent = Var(0)).
+          val withCtorArgs = prevMvIds.foldLeft(argTpe) { (t, id) =>
+            Subst.subst(Term.Meta(id), t)
+          }
+          // Substitute params (now at Var(0..numParams-1) after ctor-arg vars removed).
+          val actualType = paramArgs.reverse.foldLeft(withCtorArgs) { (t, p) =>
+            Subst.subst(p, t)
+          }
+          TacticM.addGoal(goal.ctx, actualType).flatMap { subMv =>
+            loop(rest, subMv.id :: prevMvIds)
+          }
+    loop(ctorDef.argTpes, Nil).flatMap { ids =>
+      val metaArgs = ids.map(id => Term.Meta(id))
+      val proofTerm = Term.Con(ctorDef.name, indDef.name, metaArgs)
+      TacticM.solveGoalWith(mv, proofTerm)
+    }
+
+  // ---- split / constructor ----
+
+  /** Split a single-constructor goal into one subgoal per constructor argument.
+   *
+   *  Equivalent to Lean's `constructor` or Coq's `split` for propositions like
+   *  `And A B` or `Sigma A P`.  Fails if the head inductive has ≠ 1 constructor.
+   */
+  def split_(using env: GlobalEnv): TacticM[Unit] =
+    for
+      goalPair           <- TacticM.currentGoal
+      (mv, goal)          = goalPair
+      normalizedGoal      = Bidirectional.whnf(goal.ctx, goal.target)
+      (head, _)           = peelApps(normalizedGoal)
+      result             <- head match
+        case Term.Ind(name, _, _) =>
+          for
+            indDef <- TacticM.liftEither(resolveIndDef(name))
+            _ <- indDef.ctors match
+              case List(ctorDef) =>
+                applyNthCtor(mv, goal, indDef, ctorDef)
+              case ctors =>
+                TacticM.fail(TacticError.Custom(
+                  s"split: '$name' has ${ctors.length} constructors; use left/right instead"
+                ))
+          yield ()
+        case _ =>
+          TacticM.fail(TacticError.Custom(
+            s"split: goal is not an inductive type: ${goal.target.show}"
+          ))
+    yield result
+
+  // ---- left / right ----
+
+  private def applyCtorByIndex(idx: Int)(using env: GlobalEnv): TacticM[Unit] =
+    val tacName = if idx == 0 then "left" else "right"
+    for
+      goalPair       <- TacticM.currentGoal
+      (mv, goal)      = goalPair
+      normalizedGoal  = Bidirectional.whnf(goal.ctx, goal.target)
+      (head, _)       = peelApps(normalizedGoal)
+      result         <- head match
+        case Term.Ind(name, _, _) =>
+          for
+            indDef <- TacticM.liftEither(resolveIndDef(name))
+            _ <- if idx < indDef.ctors.length then
+              applyNthCtor(mv, goal, indDef, indDef.ctors(idx))
+            else
+              TacticM.fail(TacticError.Custom(
+                s"$tacName: '$name' has only ${indDef.ctors.length} constructor(s)"
+              ))
+          yield ()
+        case _ =>
+          TacticM.fail(TacticError.Custom(s"$tacName: goal is not an inductive type"))
+    yield result
+
+  /** Apply the first constructor of the goal's inductive type. */
+  def leftTactic(using env: GlobalEnv): TacticM[Unit] = applyCtorByIndex(0)
+
+  /** Apply the second constructor of the goal's inductive type. */
+  def rightTactic(using env: GlobalEnv): TacticM[Unit] = applyCtorByIndex(1)
+
+  // ---- use / exists ----
+
+  /** Provide a witness for the first constructor argument and leave the rest as subgoals.
+   *
+   *  For `Sigma A P` goal with `use e`: generates subgoal `P(e)` and builds
+   *  `Con("mk", "Sigma", [e, Meta(mv_snd)])`.
+   */
+  def use_(witness: Term)(using env: GlobalEnv): TacticM[Unit] =
+    for
+      goalPair           <- TacticM.currentGoal
+      (mv, goal)          = goalPair
+      normalizedGoal      = Bidirectional.whnf(goal.ctx, goal.target)
+      (head, appliedArgs) = peelApps(normalizedGoal)
+      result             <- head match
+        case Term.Ind(name, _, _) =>
+          TacticM.liftEither(resolveIndDef(name)).flatMap { indDef =>
+            indDef.ctors match
+              case List(ctorDef) =>
+                val numParams = indDef.params.length
+                val paramArgs = appliedArgs.take(numParams)
+                // Build remaining subgoals (ctor args after the first, with witness substituted).
+                def buildRemainingGoals(
+                  remaining: List[Term],
+                  prevTerms: List[Term],  // innermost first (Var(0) = most recent)
+                ): TacticM[List[Term]] =
+                  remaining match
+                    case Nil => TacticM.pure(Nil)
+                    case argTpe :: rest =>
+                      val withPrev = prevTerms.foldLeft(argTpe) { (t, pv) =>
+                        Subst.subst(pv, t)
+                      }
+                      val actualType = paramArgs.reverse.foldLeft(withPrev) { (t, p) =>
+                        Subst.subst(p, t)
+                      }
+                      TacticM.addGoal(goal.ctx, actualType).flatMap { subMv =>
+                        buildRemainingGoals(rest, Term.Meta(subMv.id) :: prevTerms)
+                          .map(Term.Meta(subMv.id) :: _)
+                      }
+                val remainingArgTpes = ctorDef.argTpes.tail
+                buildRemainingGoals(remainingArgTpes, List(witness)).flatMap { restMetas =>
+                  val allArgs  = witness :: restMetas
+                  val proofTerm = Term.Con(ctorDef.name, indDef.name, allArgs)
+                  TacticM.solveGoalWith(mv, proofTerm)
+                }
+              case _ =>
+                TacticM.fail(TacticError.Custom(
+                  s"use: '$name' must have exactly one constructor"
+                ))
+          }
+        case _ =>
+          TacticM.fail(TacticError.Custom(
+            "use: goal is not a single-constructor inductive type"
+          ))
+    yield result
+
+  // ---- obtain ----
+
+  /** Destruct a single-constructor hypothesis into named local variables.
+   *
+   *  `obtain [a, b] := h` where `h : Sigma A P` binds `a` and `b` in the context
+   *  and generates a subgoal for the original goal in that extended context.
+   *
+   *  Proof term: `Mat(Var(hypIdx), [MatchCase(ctor, n, Meta(mv))], goal.target)`.
+   */
+  def obtain(bindings: List[String], hypName: String)(using env: GlobalEnv): TacticM[Unit] =
+    for
+      goalPair           <- TacticM.currentGoal
+      (mv, goal)          = goalPair
+      hypIdxTpe          <- TacticM.liftEither(findVarByName(goal.ctx, hypName))
+      (hypIdx, hypTpe)    = hypIdxTpe
+      normalizedHypTpe    = Bidirectional.whnf(goal.ctx, hypTpe)
+      (head, appliedArgs) = peelApps(normalizedHypTpe)
+      result             <- head match
+        case Term.Ind(name, _, _) =>
+          TacticM.liftEither(resolveIndDef(name)).flatMap { indDef =>
+            indDef.ctors match
+              case List(ctorDef) =>
+                val n         = ctorDef.argTpes.length
+                val names     = bindings.padTo(n, "_")
+                val numParams = indDef.params.length
+                val paramArgs = appliedArgs.take(numParams)
+                // Build the extended context: for each ctor arg, compute its actual type
+                // by substituting previous ctor arg references and params.
+                def buildExtCtx(
+                  remaining: List[(Term, String)],
+                  prevTerms: List[Term],  // [most-recent, ..., oldest] matching Var(0), Var(1)...
+                  ctx:       Context,
+                ): TacticM[Context] =
+                  remaining match
+                    case Nil => TacticM.pure(ctx)
+                    case (argTpe, argName) :: rest =>
+                      val withPrev = prevTerms.foldLeft(argTpe) { (t, pv) =>
+                        Subst.subst(pv, t)
+                      }
+                      val actualType = paramArgs.reverse.foldLeft(withPrev) { (t, p) =>
+                        Subst.subst(p, t)
+                      }
+                      val newCtx = ctx.extend(argName, actualType)
+                      // For the next arg: most recent var is Var(0) in the new context;
+                      // existing prevTerms need to be shifted up by 1 for the new binder.
+                      val nextPrev = Term.Var(0) :: prevTerms.map(Subst.shift(1, _))
+                      buildExtCtx(rest, nextPrev, newCtx)
+                buildExtCtx(ctorDef.argTpes.zip(names), Nil, goal.ctx).flatMap { extCtx =>
+                  val extGoal = Subst.shift(n, goal.target)
+                  TacticM.addGoal(extCtx, extGoal).flatMap { mv_cont =>
+                    val proofTerm = Term.Mat(
+                      Term.Var(hypIdx),
+                      List(MatchCase(ctorDef.name, n, Term.Meta(mv_cont.id))),
+                      goal.target,
+                    )
+                    TacticM.solveGoalWith(mv, proofTerm)
+                  }
+                }
+              case _ =>
+                TacticM.fail(TacticError.Custom(
+                  s"obtain: '$name' must have exactly one constructor"
+                ))
+          }
+        case _ =>
+          TacticM.fail(TacticError.Custom(
+            s"obtain: '$hypName' is not of a single-constructor inductive type"
+          ))
+    yield result
+
+  // ---- by_contra ----
+
+  /** Introduce the negation of the goal as a hypothesis and change the goal.
+   *
+   *  When the goal is a Pi type `A → B`, introduces `h : A` and leaves goal `B`.
+   *  (This handles the constructive case: to prove ¬P = P → False, introduce P as h.)
+   */
+  def byContra(hypName: String)(using env: GlobalEnv): TacticM[Unit] =
+    assume(hypName)
+
+  // ---- tauto ----
+
+  /** Close a propositional goal by trying trivial, assumption, and contradiction in order. */
+  def tauto(using env: GlobalEnv): TacticM[Unit] =
+    def tryAll(tactics: List[TacticM[Unit]]): TacticM[Unit] = tactics match
+      case Nil => TacticM.fail(TacticError.Custom("tauto: all tactics failed"))
+      case tac :: rest =>
+        TacticM.get.flatMap { s =>
+          val (newState, result) = TacticM.run(tac, s)
+          result match
+            case Right(()) => TacticM.set(newState)
+            case Left(_)   => tryAll(rest)
+        }
+    tryAll(List(trivial, assumption, contradiction, simplify(Nil)))
+
+  // ---- specialize ----
+
+  /** Apply a hypothesis to a list of arguments and introduce the result.
+   *
+   *  `specialize h [arg1, arg2]` where `h : ∀ x: A, ∀ y: B, C`:
+   *  - Computes the specialized type C[arg1/x, arg2/y]
+   *  - Introduces `h_spec : C[...]` via Let
+   *  - Runs the continuation tactic in the extended context
+   */
+  def specialize(
+    hypName: String,
+    args:    List[Term],
+    cont:    TacticM[Unit],
+  )(using env: GlobalEnv): TacticM[Unit] =
+    for
+      goalPair       <- TacticM.currentGoal
+      (mv, goal)      = goalPair
+      hypIdxTpe      <- TacticM.liftEither(findVarByName(goal.ctx, hypName))
+      (hypIdx, hypTpe) = hypIdxTpe
+      // Apply hypothesis term to each argument.
+      specPair        = args.foldLeft((Term.Var(hypIdx): Term, hypTpe)) {
+        case ((t, tpe), arg) =>
+          val newTpe = Bidirectional.whnf(goal.ctx, tpe) match
+            case Term.Pi(_, _, cod) => Subst.subst(arg, cod)
+            case other              => other
+          (Term.App(t, arg), newTpe)
+      }
+      (specTerm, specType) = specPair
+      // Introduce the specialized hypothesis as a Let binding.
+      newCtx          = goal.ctx.extend(hypName + "_spec", specType)
+      newTarget       = Subst.shift(1, goal.target)
+      mv_cont        <- TacticM.addGoal(newCtx, newTarget)
+      _              <- TacticM.solveGoalWith(mv,
+                          Term.Let(hypName + "_spec", specType, specTerm, Term.Meta(mv_cont.id)))
+      _              <- cont
+    yield ()
