@@ -1,6 +1,6 @@
 # stdlib v1 layout and naming
 
-This document defines stdlib v1 layout for `Nat`, `List`, `Vec`, `Bool`, `Relation`, `Dictionary`, `Effect`, `Option`, `Either`, `Pair`, `PolyList`, `Char`, `String`, and `Sigma`.
+This document defines stdlib v1 layout for `Nat`, `List`, `Vec`, `Bool`, `Relation`, `Dictionary`, `Effect`, `Option`, `Either`, `Pair`, `PolyList`, `Char`, `String`, `Sigma`, and `Regex`.
 
 ## Layout
 
@@ -18,12 +18,13 @@ This document defines stdlib v1 layout for `Nat`, `List`, `Vec`, `Bool`, `Relati
 - `stdlib/Char.sroof`
 - `stdlib/String.sroof`
 - `stdlib/Sigma.sroof`
+- `stdlib/Regex.sroof`
 
 Each file is self-contained and checker-runnable by itself.
 
 ## Naming conventions
 
-- File names use PascalCase domain names (`Nat`, `List`, `Vec`, `Bool`, `Relation`, `Dictionary`, `Effect`, `Option`, `Either`, `Pair`, `PolyList`, `Char`, `String`, `Sigma`).
+- File names use PascalCase domain names (`Nat`, `List`, `Vec`, `Bool`, `Relation`, `Dictionary`, `Effect`, `Option`, `Either`, `Pair`, `PolyList`, `Char`, `String`, `Sigma`, `Regex`).
 - Definitions and lemmas use `snake_case`.
 - Core operations keep short canonical names (`plus`, `append`, `length`, `concat`, `not`, `and`, `or`, `map_option`, `get_or_else`, `map_either`, `fst`, `snd`).
 - Baseline lemmas use descriptive suffixes (`_nil`, `_left`, `_right`, `_none`, `_some`, `_mk`).
@@ -46,6 +47,7 @@ Each file is self-contained and checker-runnable by itself.
 | Char | Nat, Char | char_code | char_code_mk |
 | String | Nat, Bool, Char, String | string_length, string_append, string_reverse | string_length_empty, string_append_empty_left/right, string_append_assoc, string_length_append |
 | Sigma | Nat, Sigma(A, B) | sigma_fst | sigma_fst_mk |
+| Regex | Nat, Bool, List, Regex | nullable, derive, matches, nat_eqb | nullable_*, derive_*, matches_*, nat_eqb_refl, matches_char_self |
 
 ## Compatibility policy
 

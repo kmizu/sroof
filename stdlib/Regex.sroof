@@ -1,0 +1,226 @@
+// stdlib v1: Regular Expressions (Brzozowski derivative formalization)
+//
+// Represents the language semantics of regular expressions via:
+//   nullable(r) : Bool   — does r accept the empty string?
+//   derive(r, c) : Regex — Brzozowski derivative: L(∂_c r) = { s | c·s ∈ L(r) }
+//   matches(r, s) : Bool — does r accept string s?
+//
+// Key theorem: matches(r, s) = true ↔ s ∈ L(r)
+//
+// References: Brzozowski (1964) "Derivatives of Regular Expressions"
+
+inductive Nat {
+  case zero: Nat
+  case succ(n: Nat): Nat
+}
+
+inductive Bool {
+  case true: Bool
+  case false: Bool
+}
+
+def or(b1: Bool, b2: Bool): Bool {
+  match b1 {
+    case Bool.true  => Bool.true
+    case Bool.false => b2
+  }
+}
+
+def and(b1: Bool, b2: Bool): Bool {
+  match b1 {
+    case Bool.true  => b2
+    case Bool.false => Bool.false
+  }
+}
+
+// Strings are represented as List of Nat (character codes)
+inductive List {
+  case nil: List
+  case cons(head: Nat, tail: List): List
+}
+
+// Boolean equality on Nat (decidable equality)
+def nat_eqb(n: Nat, m: Nat): Bool {
+  match n {
+    case Nat.zero =>
+      match m {
+        case Nat.zero    => Bool.true
+        case Nat.succ(k) => Bool.false
+      }
+    case Nat.succ(p) =>
+      match m {
+        case Nat.zero    => Bool.false
+        case Nat.succ(q) => nat_eqb(p, q)
+      }
+  }
+}
+
+// Regular expressions
+inductive Regex {
+  case eps: Regex               // ε — empty string
+  case empty: Regex             // ∅ — empty language
+  case char(c: Nat): Regex      // single character c
+  case alt(r1: Regex, r2: Regex): Regex   // r1 | r2
+  case seq(r1: Regex, r2: Regex): Regex   // r1 · r2
+  case star(r: Regex): Regex    // r*
+}
+
+// nullable(r): true iff ε ∈ L(r)
+def nullable(r: Regex): Bool {
+  match r {
+    case Regex.eps         => Bool.true
+    case Regex.empty       => Bool.false
+    case Regex.char(c)     => Bool.false
+    case Regex.alt(r1, r2) => or(nullable(r1), nullable(r2))
+    case Regex.seq(r1, r2) => and(nullable(r1), nullable(r2))
+    case Regex.star(r1)    => Bool.true
+  }
+}
+
+// derive(r, c): Brzozowski derivative of r with respect to character c
+// L(∂_c r) = { s | c·s ∈ L(r) }
+def derive(r: Regex, c: Nat): Regex {
+  match r {
+    case Regex.eps        => Regex.empty
+    case Regex.empty      => Regex.empty
+    case Regex.char(d)    =>
+      match nat_eqb(c, d) {
+        case Bool.true  => Regex.eps
+        case Bool.false => Regex.empty
+      }
+    case Regex.alt(r1, r2) => Regex.alt(derive(r1, c), derive(r2, c))
+    case Regex.seq(r1, r2) =>
+      match nullable(r1) {
+        case Bool.true  => Regex.alt(Regex.seq(derive(r1, c), r2), derive(r2, c))
+        case Bool.false => Regex.seq(derive(r1, c), r2)
+      }
+    case Regex.star(r1)    => Regex.seq(derive(r1, c), Regex.star(r1))
+  }
+}
+
+// matches(r, s): true iff s ∈ L(r)
+// Defined via iterated Brzozowski derivative: matches(r, c·s) = matches(∂_c r, s)
+def matches(r: Regex, s: List): Bool {
+  match s {
+    case List.nil        => nullable(r)
+    case List.cons(c, t) => matches(derive(r, c), t)
+  }
+}
+
+// ============================================================
+// Theorems about nullable
+// ============================================================
+
+defspec nullable_eps(): nullable(Regex.eps) = Bool.true {
+  by trivial
+}
+
+defspec nullable_empty(): nullable(Regex.empty) = Bool.false {
+  by trivial
+}
+
+defspec nullable_char(c: Nat): nullable(Regex.char(c)) = Bool.false {
+  by trivial
+}
+
+defspec nullable_alt(r1: Regex, r2: Regex):
+    nullable(Regex.alt(r1, r2)) = or(nullable(r1), nullable(r2)) {
+  by trivial
+}
+
+defspec nullable_seq(r1: Regex, r2: Regex):
+    nullable(Regex.seq(r1, r2)) = and(nullable(r1), nullable(r2)) {
+  by trivial
+}
+
+defspec nullable_star(r: Regex): nullable(Regex.star(r)) = Bool.true {
+  by trivial
+}
+
+// ============================================================
+// Theorems about derive
+// ============================================================
+
+defspec derive_eps(c: Nat): derive(Regex.eps, c) = Regex.empty {
+  by trivial
+}
+
+defspec derive_empty(c: Nat): derive(Regex.empty, c) = Regex.empty {
+  by trivial
+}
+
+// ∂_c (r1 | r2) = (∂_c r1) | (∂_c r2)
+defspec derive_alt(r1: Regex, r2: Regex, c: Nat):
+    derive(Regex.alt(r1, r2), c) = Regex.alt(derive(r1, c), derive(r2, c)) {
+  by trivial
+}
+
+// ∂_c (r*) = (∂_c r) · r*
+defspec derive_star(r: Regex, c: Nat):
+    derive(Regex.star(r), c) = Regex.seq(derive(r, c), Regex.star(r)) {
+  by trivial
+}
+
+// nat_eqb is reflexive: nat_eqb(n, n) = true
+defspec nat_eqb_refl(n: Nat): nat_eqb(n, n) = Bool.true {
+  by induction n {
+    case zero      => trivial
+    case succ k ih => simplify [ih]
+  }
+}
+
+// ∂_c (char(c)) = ε — the derivative of a single-character regex w.r.t. its own character
+defspec derive_char_refl(c: Nat): derive(Regex.char(c), c) = Regex.eps {
+  by induction c {
+    case zero      => trivial
+    case succ k ih => simplify [ih]
+  }
+}
+
+// ============================================================
+// Theorems about matches
+// ============================================================
+
+// matches(r, ε) = nullable(r)
+defspec matches_nil(r: Regex): matches(r, List.nil) = nullable(r) {
+  by trivial
+}
+
+// matches(r, c·s) = matches(∂_c r, s)
+defspec matches_cons(r: Regex, c: Nat, t: List):
+    matches(r, List.cons(c, t)) = matches(derive(r, c), t) {
+  by trivial
+}
+
+// matches(∅, s) = false for any string s
+defspec matches_empty_false(s: List): matches(Regex.empty, s) = Bool.false {
+  by induction s {
+    case nil         => trivial
+    case cons h t ih => simplify [ih]
+  }
+}
+
+// matches(ε, ε) = true
+defspec matches_eps_nil(): matches(Regex.eps, List.nil) = Bool.true {
+  by trivial
+}
+
+// matches(ε, c·s) = false (ε only accepts the empty string)
+defspec matches_eps_cons(c: Nat, t: List):
+    matches(Regex.eps, List.cons(c, t)) = Bool.false {
+  by simplify [matches_empty_false]
+}
+
+// matches(r*, ε) = true (Kleene star always accepts empty string)
+defspec matches_star_nil(r: Regex): matches(Regex.star(r), List.nil) = Bool.true {
+  by trivial
+}
+
+// matches(char(c), [c]) = true — a single-character regex accepts its own character
+defspec matches_char_self(c: Nat):
+    matches(Regex.char(c), List.cons(c, List.nil)) = Bool.true {
+  by induction c {
+    case zero      => trivial
+    case succ k ih => simplify [ih]
+  }
+}

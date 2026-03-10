@@ -1,0 +1,28 @@
+// Uses stdlib/Regex.sroof declarations directly (prepend stdlib source before this file)
+
+// The empty regex matches nothing
+defspec empty_matches_nothing(s: List): matches(Regex.empty, s) = Bool.false {
+  by induction s {
+    case nil         => trivial
+    case cons h t ih => simplify [ih]
+  }
+}
+
+// The derivative of eps is always empty
+defspec derive_eps_always_empty(c: Nat): derive(Regex.eps, c) = Regex.empty {
+  by trivial
+}
+
+// The derivative distributes over alternation
+defspec derive_alt_use(r1: Regex, r2: Regex, c: Nat):
+    derive(Regex.alt(r1, r2), c) = Regex.alt(derive(r1, c), derive(r2, c)) {
+  by trivial
+}
+
+// nat_eqb is reflexive
+defspec eqb_refl_use(n: Nat): nat_eqb(n, n) = Bool.true {
+  by induction n {
+    case zero      => trivial
+    case succ k ih => simplify [ih]
+  }
+}

@@ -24,6 +24,7 @@ class StdlibSuite extends FunSuite:
       "stdlib/Char.sroof",
       "stdlib/String.sroof",
       "stdlib/Sigma.sroof",
+      "stdlib/Regex.sroof",
     )
     files.foreach { file =>
       val src = read(file)
@@ -47,6 +48,7 @@ class StdlibSuite extends FunSuite:
       ("stdlib/Char.sroof", "examples/stdlib/char_usage.sroof"),
       ("stdlib/String.sroof", "examples/stdlib/string_usage.sroof"),
       ("stdlib/Sigma.sroof", "examples/stdlib/sigma_usage.sroof"),
+      ("stdlib/Regex.sroof", "examples/stdlib/regex_usage.sroof"),
     )
     pairs.foreach { (lib, usage) =>
       val src = read(lib) + "\n\n" + read(usage)
@@ -70,3 +72,4 @@ class StdlibSuite extends FunSuite:
     assert(doc.contains("stdlib/Char.sroof"))
     assert(doc.contains("stdlib/String.sroof"))
     assert(doc.contains("stdlib/Sigma.sroof"))
+    assert(doc.contains("stdlib/Regex.sroof"))
