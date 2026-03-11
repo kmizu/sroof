@@ -73,7 +73,7 @@ enum STactic:
   case SExact(expr: SExpr)
   case SSimplify(lemmas: List[String])
   case SSimp(lemmas: List[String])
-  case SInduction(varName: String, cases: List[STacticCase])
+  case SInduction(varName: String, cases: List[STacticCase], generalizing: List[String] = Nil)
   case SSorry
   /** have h: T = { proof } ; cont_tactic */
   case SHave(name: String, tpe: SType, proof: SProof, cont: STactic)

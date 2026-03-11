@@ -112,7 +112,7 @@ object Checker:
   private def countSorryTactic(t: STactic): Int = t match
     case STactic.SSorry           => 1
     case STactic.SSeq(ts)         => ts.map(countSorryTactic).sum
-    case STactic.SInduction(_, cases) => cases.map(c => countSorryTactic(c.tactic)).sum
+    case STactic.SInduction(_, cases, _) => cases.map(c => countSorryTactic(c.tactic)).sum
     case STactic.SCases(_, cases)     => cases.map(c => countSorryTactic(c.tactic)).sum
     case STactic.SFirst(ts)       => ts.map(countSorryTactic).sum
     case STactic.SRepeat(t)       => countSorryTactic(t)
@@ -166,7 +166,7 @@ object Checker:
     case STactic.SExact(expr)         => collectLemmaRefsExpr(expr)
     case STactic.SCalc(steps)         => steps.flatMap(step => collectLemmaRefs(step.proof)).toSet
     case STactic.SSeq(ts)             => ts.flatMap(collectLemmaRefsTactic).toSet
-    case STactic.SInduction(_, cases) => cases.flatMap(c => collectLemmaRefsTactic(c.tactic)).toSet
+    case STactic.SInduction(_, cases, _) => cases.flatMap(c => collectLemmaRefsTactic(c.tactic)).toSet
     case STactic.SCases(_, cases)     => cases.flatMap(c => collectLemmaRefsTactic(c.tactic)).toSet
     case STactic.SFirst(ts)           => ts.flatMap(collectLemmaRefsTactic).toSet
     case STactic.SRepeat(t)           => collectLemmaRefsTactic(t)
@@ -226,9 +226,9 @@ object Checker:
     case STactic.SSimp(lemmas) =>
       Builtins.simplify(lemmas)
 
-    case STactic.SInduction(varName, cases) =>
+    case STactic.SInduction(varName, cases, generalizing) =>
       val caseSpecs = cases.map(c => (c.ctorName, c.extraBindings))
-      Builtins.induction(varName, caseSpecs).flatMap { _ =>
+      Builtins.induction(varName, caseSpecs, generalizing).flatMap { _ =>
         closeRemainingGoals(cases)
       }
 

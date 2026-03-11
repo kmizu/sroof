@@ -224,3 +224,14 @@ defspec matches_char_self(c: Nat):
     case succ k ih => simplify [ih]
   }
 }
+
+// matches(alt(r1,r2), s) = or(matches(r1,s), matches(r2,s))
+// Proved by induction on s, generalizing r1 and r2 so the IH applies to derivatives.
+defspec matches_alt(r1: Regex, r2: Regex, s: List):
+    matches(Regex.alt(r1, r2), s) = or(matches(r1, s), matches(r2, s)) {
+  by induction s generalizing r1 r2 {
+    case nil        => trivial
+    case cons h t ih =>
+      exact ih(derive(r1, h))(derive(r2, h))
+  }
+}

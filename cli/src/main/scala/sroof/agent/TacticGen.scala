@@ -101,7 +101,7 @@ object TacticGen:
         // IH-first ordering: prioritize branches where induction hypothesis may help.
         withIH :: withoutIH
     }
-    cartesian(perCtorOptions).map(cases => STactic.SInduction(varName, cases))
+    cartesian(perCtorOptions).map(cases => STactic.SInduction(varName, cases, Nil))
 
   private def fallbackInductionCandidates(
     rankedVars: List[(String, IndDef)],
@@ -114,7 +114,7 @@ object TacticGen:
           val argNames = ctor.argTpes.indices.map(i => s"_arg$i").toList
           STacticCase(ctor.name, argNames :+ "ih", STactic.SSimplify(List("ih")))
       }
-      (STactic.SInduction(varName, cases), indDef)
+      (STactic.SInduction(varName, cases, Nil), indDef)
     }
 
   // ---- Scoring ----

@@ -85,12 +85,13 @@ object FileRepairer:
       if lemmas.isEmpty then "simplify" else s"simplify [${lemmas.mkString(", ")}]"
     case STactic.SSimp(lemmas) =>
       if lemmas.isEmpty then "simplify" else s"simplify [${lemmas.mkString(", ")}]"
-    case STactic.SInduction(varName, cases) =>
+    case STactic.SInduction(varName, cases, generalizing) =>
+      val genSuffix = if generalizing.isEmpty then "" else s" generalizing ${generalizing.mkString(" ")}"
       val caseLines = cases.map { c =>
         val bindings = if c.extraBindings.isEmpty then "" else " " + c.extraBindings.mkString(" ")
         s"    case ${c.ctorName}$bindings => ${renderTactic(c.tactic)}"
       }
-      s"induction $varName {\n${caseLines.mkString("\n")}\n  }"
+      s"induction $varName$genSuffix {\n${caseLines.mkString("\n")}\n  }"
     case STactic.SSeq(ts) => ts.map(renderTactic).mkString("; ")
     case STactic.SSorry    => "sorry"
     case STactic.SSkip     => "skip"
@@ -105,7 +106,7 @@ object FileRepairer:
   private def tacticHasSorry(t: STactic): Boolean = t match
     case STactic.SSorry        => true
     case STactic.SSeq(ts)      => ts.exists(tacticHasSorry)
-    case STactic.SInduction(_, cases) => cases.exists(c => tacticHasSorry(c.tactic))
+    case STactic.SInduction(_, cases, _) => cases.exists(c => tacticHasSorry(c.tactic))
     case STactic.SCases(_, cases)     => cases.exists(c => tacticHasSorry(c.tactic))
     case STactic.SFirst(ts)    => ts.exists(tacticHasSorry)
     case STactic.SRepeat(t)    => tacticHasSorry(t)

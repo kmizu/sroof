@@ -95,7 +95,13 @@ object Bidirectional:
     case Term.App(fn, arg) =>
       for
         fnTp   <- infer(ctx, fn)
-        piNorm  = whnf(ctx, fnTp)
+        // Optimization: if fnTp is already syntactically a Pi, skip the NbE round-trip.
+        // whnf(Pi(...)) would quote the Pi body through fresh variables, introducing Mat
+        // terms into the inferred type that break convCheck against a syntactic expected type.
+        // This mirrors the same shortcut already present in `check` for the expected type.
+        piNorm  = fnTp match
+                    case _: Term.Pi => fnTp
+                    case _          => whnf(ctx, fnTp)
         result <- piNorm match
           case Term.Pi(_, dom, cod) =>
             check(ctx, arg, dom).map(_ => Subst.subst(arg, cod))

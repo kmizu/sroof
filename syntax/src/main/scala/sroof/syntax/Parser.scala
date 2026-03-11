@@ -44,6 +44,7 @@ object Parser:
         "split", "constructor",
         "use", "exists", "by_contra", "tauto",
         "obtain", "specialize",
+        "generalizing",
       ),
       hardOperators = Set("->", "==", "=", "=>", ":=", ":", ",", "{", "}", "(", ")", "[", "]", ".", "+", "*", ";", "-", "@", "|"),
     ),
@@ -649,8 +650,10 @@ object Parser:
 
   private lazy val inductionTactic: Parsley[STactic] =
     keyword("induction") *> identifier.flatMap { varName =>
-      braces(many(tacticCase)).map { cases =>
-        STactic.SInduction(varName, cases)
+      option(keyword("generalizing") *> many(identifier)).flatMap { genOpt =>
+        braces(many(tacticCase)).map { cases =>
+          STactic.SInduction(varName, cases, genOpt.getOrElse(Nil))
+        }
       }
     }
 

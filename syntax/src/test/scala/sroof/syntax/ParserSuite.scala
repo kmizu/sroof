@@ -178,7 +178,7 @@ class ParserSuite extends FunSuite:
     val result = Parser.parseDecl(input)
     assert(result.isRight, s"Parse failed: $result")
     val SDecl.SDefspec(_, _, _, proof) = result.toOption.get: @unchecked
-    val SProof.SBy(STactic.SInduction(varName, cases)) = proof: @unchecked
+    val SProof.SBy(STactic.SInduction(varName, cases, _)) = proof: @unchecked
     assertEquals(varName, "n")
     assertEquals(cases.length, 2)
     assertEquals(cases(0).ctorName, "zero")
@@ -237,7 +237,7 @@ class ParserSuite extends FunSuite:
     val input = "induction n { case zero => triv case succ k ih => sorry }"
     val result = Parser.parseTactic(input)
     assert(result.isRight, s"Parse failed: $result")
-    val STactic.SInduction(varName, cases) = result.toOption.get: @unchecked
+    val STactic.SInduction(varName, cases, _) = result.toOption.get: @unchecked
     assertEquals(varName, "n")
     assertEquals(cases.length, 2)
     assertEquals(cases(0).ctorName, "zero")

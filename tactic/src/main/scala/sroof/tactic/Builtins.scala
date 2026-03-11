@@ -146,7 +146,7 @@ object Builtins:
    *
    *  NOTE: Context variable must have an inductive type present in GlobalEnv.
    */
-  def induction(varName: String, caseSpecs: List[(String, List[String])] = Nil)(using env: GlobalEnv): TacticM[Unit] =
+  def induction(varName: String, caseSpecs: List[(String, List[String])] = Nil, generalizing: List[String] = Nil)(using env: GlobalEnv): TacticM[Unit] =
     for
       goalPair     <- TacticM.currentGoal
       (mv, goal)    = goalPair
@@ -159,7 +159,17 @@ object Builtins:
                         indDef.ctors.find(_.name == ctorName)
                           .exists(ctor => bindings.length > ctor.argTpes.length)
                       }
-      _            <- (if needsIH
+      // Look up generalizing variable indices and types
+      genVarInfo   <- generalizing.foldLeft(TacticM.pure(List.empty[(String, Int, Term)])) { (acc, name) =>
+                        acc.flatMap { infos =>
+                          TacticM.liftEither(findVarByName(goal.ctx, name)).map { case (idx, tpe) =>
+                            infos :+ (name, idx, tpe)
+                          }
+                        }
+                      }
+      _            <- (if needsIH && generalizing.nonEmpty
+                       then inductionWithIHGeneralized(mv, goal, varIdx, varTpe, indDef, caseSpecs, genVarInfo)
+                       else if needsIH
                        then inductionWithIH(mv, goal, varIdx, varTpe, indDef, caseSpecs)
                        else plainInduction(mv, goal, varIdx, indDef))
     yield ()
@@ -218,6 +228,239 @@ object Builtins:
       proofTerm     = Term.App(fixTerm, Term.Var(varIdx))
       _            <- TacticM.solveGoalWith(mv, proofTerm)
     yield ()
+
+  // ---- generalized induction (induction x generalizing y z) ----
+
+  /** Induction with universally quantified IH over additional variables.
+   *
+   *  For `induction s generalizing r1 r2` with goal G(s, r1, r2):
+   *  - The Fix has type Pi(_n, T, Pi(r1, T1, Pi(r2, T2, G_abs)))
+   *  - The Fix body is Lam(_n, Lam(r1, Lam(r2, Mat(Var(K), cases, propForMat))))
+   *  - The IH for each recursive case is Pi(r1', T1, Pi(r2', T2, G_abs[_n -> tail]))
+   *  - The proof term is App(App(App(Fix, s), r1), r2)
+   */
+  private def inductionWithIHGeneralized(
+    mv:         MetaVar,
+    goal:       Goal,
+    varIdx:     Int,
+    varTpe:     Term,
+    indDef:     IndDef,
+    caseSpecs:  List[(String, List[String])],
+    genVarInfo: List[(String, Int, Term)],  // (name, idx, tpe) in user order
+  )(using env: GlobalEnv): TacticM[Unit] =
+    val K       = genVarInfo.length
+    val genIdxs = genVarInfo.map(_._2)
+
+    // gAbs: the generalized motive body.
+    // Sequential abstractVar over [varIdx, genIdxs...]:
+    // - Var(K)   = _n (induction var, outermost Pi binder)
+    // - Var(K-1) = first gen var (second Pi binder)
+    // - ...
+    // - Var(0)   = last gen var (innermost Pi binder)
+    // - Var(K+1+) = ctx_base vars
+    val gAbs = computeGeneralizedMotiveBody(goal.target, varIdx :: genIdxs)
+
+    // propForMat: gAbs shifted for _rec binder (Var(K+1+) → Var(K+2+))
+    val propForMat = Subst.shiftFrom(K + 1, 1, gAbs)
+
+    // fixType: Pi(_n, T, Pi(r1, T1, Pi(r2, T2, ... gAbs)))
+    // genVarInfo in user order [r1, r2]: build from innermost (r2) to outermost (r1)
+    val genPiBody = genVarInfo.reverse.foldLeft(gAbs: Term) { case (body, (name, _, tpe)) =>
+      Term.Pi(name, tpe, body)
+    }
+    val fixType = Term.Pi("_n", varTpe, genPiBody)
+
+    // ctx_base: goal.ctx without the induction var and all generalizing vars
+    val ctx_without_ind = removeFromContext(goal.ctx, varIdx)
+    val genIdxsInCtxWithoutInd = genIdxs.map(g => if g < varIdx then g else g - 1)
+    val ctx_base = genIdxsInCtxWithoutInd.sortBy(-_).foldLeft(ctx_without_ind) { (ctx, gIdx) =>
+      removeFromContext(ctx, gIdx)
+    }
+
+    for
+      fixCasesData <- buildFixCasesGeneralized(ctx_base, varIdx, varTpe, goal.target, genVarInfo, genIdxs, gAbs, fixType, indDef, caseSpecs)
+      fixCases      = fixCasesData.map(_._1)
+      // Mat scrutinee: Var(K) = _n inside the K gen Lam binders
+      innerMat      = Term.Mat(Term.Var(K), fixCases, propForMat)
+      // Wrap with K Lam binders for gen vars (user order: r1 first = outermost = wrapped last)
+      lamGenBody    = genVarInfo.reverse.foldLeft(innerMat: Term) { case (body, (name, _, tpe)) =>
+                        Term.Lam(name, tpe, body)
+                      }
+      fixBody       = Term.Lam("_n", varTpe, lamGenBody)
+      fixTerm       = Term.Fix("_rec", fixType, fixBody)
+      // Apply Fix to induction var, then each gen var
+      withInd       = Term.App(fixTerm, Term.Var(varIdx))
+      proofTerm     = genVarInfo.foldLeft(withInd: Term) { case (t, (_, gIdx, _)) =>
+                        Term.App(t, Term.Var(gIdx))
+                      }
+      _            <- TacticM.solveGoalWith(mv, proofTerm)
+    yield ()
+
+  /** Compute the generalized motive body by sequentially abstracting each pivot.
+   *
+   *  For allPivots = [varIdx, g0, g1, ..., gK-1]:
+   *  After applying: Var(K) = _n, Var(K-1) = g0, ..., Var(0) = gK-1, Var(K+1+) = ctx_base.
+   */
+  private def computeGeneralizedMotiveBody(goal: Term, allPivots: List[Int]): Term =
+    val indices = allPivots.toArray
+    var current = goal
+    for i <- indices.indices do
+      val pivot = indices(i)
+      current = computeMotiveBody(current, pivot)
+      for j <- (i + 1) until indices.length do
+        if indices(j) < pivot then indices(j) += 1
+    current
+
+  /** Compute the specialized goal for a constructor case in generalized induction.
+   *
+   *  Substitutes simultaneously in goal:
+   *  - Var(varIdx)       → ctorTerm (shifted for depth)
+   *  - Var(genIdxs[i])   → Var(n + K - 1 - i) (gen lam binder position in case body)
+   *  - Other ctx vars    → Var(depth + n + K + 2 + ctxBaseIdx(absI)) (ctx_base position)
+   *
+   *  In case body (n ctor args, K gen lam vars, _n, _rec):
+   *  - Var(0..n-1) = ctor args
+   *  - Var(n..n+K-1) = gen lam vars (Var(n) = last gen var, Var(n+K-1) = first gen var)
+   *  - Var(n+K) = _n, Var(n+K+1) = _rec, Var(n+K+2+) = ctx_base
+   */
+  private def genSpecializeGoal(
+    goal:     Term,
+    varIdx:   Int,
+    genIdxs:  List[Int],  // user order: first = outermost gen lam
+    ctorTerm: Term,       // uses Var(0..n-1) for ctor args
+    n:        Int,        // ctor arity
+  ): Term =
+    val K          = genIdxs.length
+    val removedSet = (varIdx :: genIdxs).toSet
+    // genIdxs[i] → case body Var(n + K - 1 - i)
+    val genIdxToVar = genIdxs.zipWithIndex.map { (gIdx, i) =>
+      gIdx -> Term.Var(n + K - 1 - i)
+    }.toMap
+
+    def ctxBaseIdx(absI: Int): Int = absI - removedSet.count(_ < absI)
+
+    def go(depth: Int, t: Term): Term = t match
+      case Term.Var(i) =>
+        val absI = i - depth
+        if absI < 0 then t
+        else genIdxToVar.get(absI) match
+          case Some(genLamVar) =>
+            // Shift the gen lam var for depth inner binders
+            Subst.shiftFrom(0, depth, genLamVar)
+          case None if absI == varIdx =>
+            Subst.shift(depth, ctorTerm)
+          case None =>
+            Term.Var(depth + n + K + 2 + ctxBaseIdx(absI))
+      case Term.App(f, a)          => Term.App(go(depth, f), go(depth, a))
+      case Term.Lam(x, tp, b)     => Term.Lam(x, go(depth, tp), go(depth + 1, b))
+      case Term.Pi(x, d, c)       => Term.Pi(x, go(depth, d), go(depth + 1, c))
+      case Term.Let(x, tp, df, b) => Term.Let(x, go(depth, tp), go(depth, df), go(depth + 1, b))
+      case Term.Uni(_)             => t
+      case Term.Meta(_)            => t
+      case Term.Ind(nm, ps, cs)   =>
+        Term.Ind(nm,
+          ps.map(p => Param(p.name, go(depth, p.tpe))),
+          cs.map(c => Ctor(c.name, go(depth, c.tpe))))
+      case Term.Con(nm, r, args)  => Term.Con(nm, r, args.map(go(depth, _)))
+      case Term.Fix(nm, tp, b)    => Term.Fix(nm, go(depth, tp), go(depth + 1, b))
+      case Term.Mat(s, cases, rt) =>
+        Term.Mat(
+          go(depth, s),
+          cases.map(mc => mc.copy(body = go(depth + mc.bindings, mc.body))),
+          go(depth, rt),
+        )
+    go(0, goal)
+
+  private def buildFixCasesGeneralized(
+    ctx_base:   Context,
+    varIdx:     Int,
+    varTpe:     Term,
+    goal:       Term,
+    genVarInfo: List[(String, Int, Term)],
+    genIdxs:    List[Int],
+    gAbs:       Term,
+    fixType:    Term,
+    indDef:     IndDef,
+    caseSpecs:  List[(String, List[String])],
+  )(using env: GlobalEnv): TacticM[List[(MatchCase, Context, Term)]] =
+    indDef.ctors.foldLeft(TacticM.pure(List.empty[(MatchCase, Context, Term)])) { (acc, ctorDef) =>
+      acc.flatMap { cases =>
+        val extraBindings = caseSpecs
+          .collectFirst { case (name, bindings) if name == ctorDef.name => bindings }
+          .getOrElse(Nil)
+        val hasIH = extraBindings.length > ctorDef.argTpes.length
+        buildFixCaseGeneralized(ctx_base, varIdx, varTpe, goal, genVarInfo, genIdxs, gAbs, fixType, indDef, ctorDef, hasIH, extraBindings).map { triple =>
+          cases :+ triple
+        }
+      }
+    }
+
+  /** Build a single Fix-style match case for generalized induction.
+   *
+   *  Context inside Fix > Lam(_n) > Lam(r1) > ... > Lam(rK) > Mat > case with n ctor args:
+   *    Var(0..n-1)       = ctor args (last arg = Var(0))
+   *    Var(n..n+K-1)     = gen lam vars (Var(n) = last gen var rK, Var(n+K-1) = first gen var r1)
+   *    Var(n+K)          = _n
+   *    Var(n+K+1)        = _rec
+   *    Var(n+K+2+)       = ctx_base vars
+   *
+   *  IH type: Pi(r1', T1, Pi(r2', T2, ... gAbs_shifted)) — universally quantified over gen vars.
+   *  IH def:  App(_rec, tail) = App(Var(n+K+1), Var(0))  [just _rec applied to the recursive arg]
+   */
+  private def buildFixCaseGeneralized(
+    ctx_base:      Context,
+    varIdx:        Int,
+    varTpe:        Term,
+    goal:          Term,
+    genVarInfo:    List[(String, Int, Term)],
+    genIdxs:       List[Int],
+    gAbs:          Term,
+    fixType:       Term,
+    indDef:        IndDef,
+    ctorDef:       CtorDef,
+    hasIH:         Boolean,
+    extraBindings: List[String],
+  )(using env: GlobalEnv): TacticM[(MatchCase, Context, Term)] =
+    val K            = genVarInfo.length
+    val n            = ctorDef.argTpes.length
+    val ctorArgVars  = (0 until n).toList.map(i => Term.Var(n - 1 - i))
+    val ctorTerm     = Term.Con(ctorDef.name, indDef.name, ctorArgVars)
+    // Specialized goal for this case
+    val genSpecGoal  = genSpecializeGoal(goal, varIdx, genIdxs, ctorTerm, n)
+    // Build ctorCtx: ctx_base + [_rec : fixType] + [_n : varTpe] + gen lam binders (user order) + ctor args
+    val ctxWithRec   = ctx_base.extend("_rec", fixType)
+    val ctxWithRecN  = ctxWithRec.extend("_n", varTpe)
+    // Add gen lam binders in user order (first = outermost, added first → higher index)
+    val ctxWithGens  = genVarInfo.foldLeft(ctxWithRecN) { case (ctx, (name, _, tpe)) =>
+                         ctx.extend(name, tpe)
+                       }
+    val argNames     = extraBindings.take(n).padTo(n, "_")
+    val ctorCtx      = ctorDef.argTpes.zip(argNames).foldLeft(ctxWithGens)((c, pair) => c.extend(pair._2, pair._1))
+
+    if !hasIH then
+      for mv <- TacticM.addGoal(ctorCtx, genSpecGoal)
+      yield (MatchCase(ctorDef.name, n, Term.Meta(mv.id)), ctorCtx, genSpecGoal)
+    else
+      // IH type: Pi(r1', T1, Pi(r2', T2, ... gAbs_shifted))
+      // gAbs_shifted = shiftFrom(K+1, K+n+1, gAbs) — adjusts ctx_base refs for ctorCtx
+      val gAbsShifted = Subst.shiftFrom(K + 1, K + n + 1, gAbs)
+      // Wrap with K Pi binders (innermost = last gen var)
+      val ihType      = genVarInfo.reverse.foldLeft(gAbsShifted: Term) { case (body, (name, _, tpe)) =>
+                          Term.Pi(s"${name}'", tpe, body)
+                        }
+      // IH def: _rec applied to the last (recursive) ctor arg
+      // _rec = Var(n+K+1), recursive arg = Var(0)
+      val recFuncRef  = Term.Var(n + K + 1)
+      val recArgRef   = Term.Var(0)
+      val ihDef       = Term.App(recFuncRef, recArgRef)
+      // Extend subCtx with ih; shift spec goal for the ih binder
+      val ihTypeInSub = Subst.shift(1, ihType)
+      val subCtx      = ctorCtx.extend("ih", ihTypeInSub)
+      val genSpecGoalInSub = Subst.shift(1, genSpecGoal)
+      for mv <- TacticM.addGoal(subCtx, genSpecGoalInSub)
+      yield
+        val letBody = Term.Let("ih", ihType, ihDef, Term.Meta(mv.id))
+        (MatchCase(ctorDef.name, n, letBody), subCtx, genSpecGoalInSub)
 
   /** Build Fix-style match cases for each constructor.
    *  Returns list of (MatchCase, subCtx, subGoal).
