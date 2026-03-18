@@ -20,23 +20,23 @@ DIR="$(dirname "$INPUT")"
 case "$FORMAT" in
   pptx)
     echo "→ PPTX"
-    marp "$INPUT" --pptx -o "${BASE}.pptx"
+    npx @marp-team/marp-cli@latest "$INPUT" --pptx -o "${BASE}.pptx"
     echo "✓ ${BASE}.pptx"
     ;;
   all)
     echo "→ HTML"
-    marp "$INPUT" --html -o "${BASE}.html"
+    npx @marp-team/marp-cli@latest "$INPUT" --html -o "${BASE}.html"
     echo "→ PNG"
-    marp "$INPUT" --images png --output "${BASE}-slide"
+    npx @marp-team/marp-cli@latest "$INPUT" --images png --output "${BASE}-slide"
     echo "→ PPTX"
-    marp "$INPUT" --pptx -o "${BASE}.pptx"
+    npx @marp-team/marp-cli@latest "$INPUT" --pptx -o "${BASE}.pptx"
     echo "✓ all done: ${DIR}/"
     ;;
   *)
     echo "→ HTML"
-    marp "$INPUT" --html -o "${BASE}.html"
+    npx @marp-team/marp-cli@latest "$INPUT" --html -o "${BASE}.html"
     echo "→ PNG"
-    marp "$INPUT" --images png --output "${BASE}-slide"
+    npx @marp-team/marp-cli@latest "$INPUT" --images png --output "${BASE}-slide"
     echo "✓ ${BASE}.html + ${BASE}-slide.NNN"
     ;;
 esac
