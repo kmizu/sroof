@@ -114,14 +114,19 @@ defspec plus_zero_right(n: Nat): plus(n, Nat.zero) = n {
 }
 ```
 
-Built-in tactics: `trivial`, `simplify [lemmas]`, `induction x { cases }`, `assumption x`, `apply f`, `cases x { cases }`, `have h : T = proof`, `calc { chain }`, `ring`, `rewrite [h]`, `contradiction`, `sorry`.
+Built-in tactics: `trivial`, `simplify [lemmas]`, `induction x { cases }`, `assumption x`, `apply f`, `cases x { cases }`, `have h : T = proof`, `calc { chain }`, `ring`, `rewrite [h]`, `contradiction`, `tauto`, `decide`, `split`, `left`, `right`, `use e`, `obtain [x y] from h`, `specialize h arg`, `sorry`.
 
 Additional language features:
 - `structure Name { field: Type ... }` — record types (desugared to inductive + field accessor defs)
 - `@[simp] def ...` — marks a def as a default simplification lemma
 - `#check expr` — type-checks an expression inline (results appear in `--json` output under `checks`)
 - `import "stdlib/Nat.sroof"` — imports a stdlib file; stdlib lives in `stdlib/` at repo root (Nat, Bool, List, Vec, Dictionary, Relation, Effect)
-- Operator overloading via `def (+)(...)` syntax, registered in `GlobalEnv.operators`
+- Operator overloading via `operator (x: T1) + (y: T2): T3 = body` syntax, registered in `GlobalEnv.operators`
+
+**Simp rule modifiers** (`tactic/SimpRewriteDb.scala`): lemma names passed to `simplify` support suffixes:
+- `h__rev` — rewrite backwards (RHS → LHS)
+- `h__p10` — set priority 10 (higher = tried first; default 0)
+- `h__rev__p10` — both
 
 ## CI Pipeline
 

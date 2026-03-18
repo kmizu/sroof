@@ -19,3 +19,8 @@ extract-native/target/
 kernel-native/target/
 cli-native/target/
 native-root/target/
+
+# Slide generated outputs
+slides/**/*.html
+slides/**/*.pptx
+slides/**/*-slide.*
