@@ -113,13 +113,11 @@ python3 scripts/benchmark.py --runs 3 --thresholds benchmarks/thresholds.json --
 - compares workload medians against CI thresholds
 - writes a machine-readable report at `benchmarks/results.json`
 
-### v0.9 Release Notes
+### Releases
 
-- changelog: [`CHANGELOG.md`](CHANGELOG.md)
-- release notes: [`RELEASE_NOTES_v0.8.md`](RELEASE_NOTES_v0.8.md)
-- release checklist: [`RELEASE_CHECKLIST_v0.8.md`](RELEASE_CHECKLIST_v0.8.md)
+- changelog: [`CHANGELOG.md`](CHANGELOG.md) — every release, in one place
+- published releases: <https://github.com/kmizu/sroof/releases>
 - publishing setup: [`docs/publishing.md`](docs/publishing.md)
-- previous releases: [`RELEASE_NOTES_v0.7.md`](RELEASE_NOTES_v0.7.md), [`RELEASE_NOTES_v0.6.md`](RELEASE_NOTES_v0.6.md), [`RELEASE_NOTES_v0.5.md`](RELEASE_NOTES_v0.5.md), [`RELEASE_NOTES_v0.4.md`](RELEASE_NOTES_v0.4.md)
 
 ### Migration Notes (v0.7 -> v0.8)
 

@@ -87,13 +87,11 @@ sbt "cli/run check examples/nat.sroof"
 OK: examples/nat.sroof — 1 inductive(s), 1 definition(s), 4 defspec(s)
 ```
 
-### v0.8 リリース情報
+### リリース情報
 
-- 変更履歴: [`CHANGELOG.md`](CHANGELOG.md)
-- リリースノート: [`RELEASE_NOTES_v0.8.md`](RELEASE_NOTES_v0.8.md)
-- リリースチェックリスト: [`RELEASE_CHECKLIST_v0.8.md`](RELEASE_CHECKLIST_v0.8.md)
+- 変更履歴: [`CHANGELOG.md`](CHANGELOG.md) — 全リリースをここに集約
+- 公開済みリリース: <https://github.com/kmizu/sroof/releases>
 - 公開手順: [`docs/publishing.md`](docs/publishing.md)
-- 過去のリリース: [`RELEASE_NOTES_v0.5.md`](RELEASE_NOTES_v0.5.md), [`RELEASE_NOTES_v0.4.md`](RELEASE_NOTES_v0.4.md), [`RELEASE_NOTES_v0.3.md`](RELEASE_NOTES_v0.3.md)
 
 ### 移行メモ（v0.7 → v0.8）
 

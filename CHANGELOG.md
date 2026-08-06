@@ -1,5 +1,10 @@
 # Changelog
 
+All release detail lives here. Earlier releases also had per-version
+`RELEASE_NOTES_v*.md` and `RELEASE_CHECKLIST_v*.md` files; those were removed in
+favour of this one file. The long-form notes for v0.3–v0.9 remain published on
+the [GitHub releases page](https://github.com/kmizu/sroof/releases).
+
 ## [0.9.0] - 2026-08-07
 
 Fixes the first of the two obstacles v0.8 identified under indexed families.

@@ -141,6 +141,7 @@ deliberately unimplemented while the artifacts do not exist — see
 ## What is deliberately not automated
 
 The version bump and the release notes. Both are judgement calls: which digit
-moves, and what the release actually claims. The checklists in
-`RELEASE_CHECKLIST_v*.md` exist because those claims should be verified rather
-than generated.
+moves, and what the release actually claims. Write the entry in
+[`../CHANGELOG.md`](../CHANGELOG.md) by hand, and say what was actually verified
+rather than what was intended — a claim generated from a template is not a claim
+anyone checked.
