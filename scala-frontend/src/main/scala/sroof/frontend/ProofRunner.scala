@@ -2,7 +2,7 @@ package sroof.frontend
 
 import sroof.core.{Context, DefEntry, GlobalEnv, Term}
 import sroof.kernel.Kernel
-import sroof.tactic.{Builtins, TacticM}
+import sroof.tactic.{Builtins, TacticError, TacticM}
 
 /** Runs a resolved proof script and submits the result to the trusted kernel.
  *
@@ -92,12 +92,52 @@ object ProofRunner:
           Builtins.induction(targetName, caseSpecs)
         }
 
+      case ResolvedTactic.InductionGeneralizing(_, targetName, generalizing, cases, _) =>
+        buildSplit(cases, tenv, subject, env) { caseSpecs =>
+          Builtins.induction(targetName, caseSpecs, generalizing.map(_._2))
+        }
+
+      case ResolvedTactic.ExactIh(at, span) =>
+        Right(exactIh(at, tenv, subject))
+
       case ResolvedTactic.Cases(_, targetName, cases, _) =>
         // `cases` never requests a hypothesis, so the binding list is exactly the
         // constructor fields and `Builtins.cases` produces a plain `Mat`.
         buildSplit(cases, tenv, subject, env) { caseSpecs =>
           Builtins.cases(targetName, caseSpecs)
         }
+
+  /** Close the goal with `ih` applied to the named values.
+   *
+   *  The proof context here is the one `Builtins` built for the branch, so its
+   *  binders are addressed by name — the same way `Builtins` addresses them
+   *  internally. The resulting term is a candidate like any other: if the
+   *  hypothesis does not actually instantiate to the goal, the kernel rejects it.
+   */
+  private def exactIh(
+    at:      List[ResolvedExpr],
+    tenv:    CoreTranslator.TranslationEnv,
+    subject: String,
+  ): TacticM[Unit] =
+    for
+      goalPair  <- TacticM.currentGoal
+      (mv, goal) = goalPair
+      ihIdx     <- goal.ctx.entries.indexWhere(_.name == IhBinderName) match
+                     case -1 => TacticM.fail[Int](TacticError.Custom(
+                       "exactIh: no induction hypothesis is in scope here"))
+                     case i  => TacticM.pure(i)
+      args      <- at.foldLeft(TacticM.pure(List.empty[Term])) { (acc, e) =>
+                     acc.flatMap { done =>
+                       CoreTranslator.translateInProofContext(e, goal.ctx, tenv, subject) match
+                         case Right(t)  => TacticM.pure(done :+ t)
+                         case Left(err) => TacticM.fail[List[Term]](TacticError.Custom(err.message))
+                     }
+                   }
+      // The result is a candidate like any other: if the hypothesis does not
+      // instantiate to the goal, the kernel rejects the whole theorem.
+      term       = args.foldLeft(Term.Var(ihIdx): Term)(Term.App.apply)
+      _         <- TacticM.solveGoalWith(mv, term)
+    yield ()
 
   /** Build a constructor-splitting tactic followed by its branch tactics.
    *

@@ -82,3 +82,21 @@ object NatProofs:
     prove(plus(n, Zero) === n)(
       simplify()
     )
+
+  // `alwaysZero` discards its accumulator and recurses with a changed one, so in
+  // the `Succ` branch the goal is about `Succ(acc)` rather than `acc`.  A
+  // hypothesis fixed at the original `acc` would not apply — hence
+  // `inductionGeneralizing`, and `exactIh` to instantiate it.
+  def alwaysZero(n: Nat, acc: Nat): Nat =
+    n match
+      case Zero    => Zero
+      case Succ(k) => alwaysZero(k, Succ(acc))
+
+  @theorem
+  def alwaysZeroIsZero(n: Nat, acc: Nat): Proof =
+    prove(alwaysZero(n, acc) === Zero)(
+      inductionGeneralizing(n, acc) {
+        case Zero    => trivial
+        case Succ(k) => exactIh(k)(Succ(acc))
+      }
+    )

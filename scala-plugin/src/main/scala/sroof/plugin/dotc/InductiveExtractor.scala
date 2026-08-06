@@ -70,7 +70,15 @@ object InductiveExtractor:
         s"field type '${tpe.show}' is not an enum declared in this @proofModule", at))
 
     if cls.typeParams.nonEmpty then
-      Left(FrontendError.enumError(name, "generic enums are not supported in this milestone", span))
+      // Not merely unimplemented here: the tactic engine cannot run induction
+      // over a parameterised inductive (it extends the branch context with raw
+      // constructor argument types that still mention the type parameters).
+      // Accepting the declaration would give generic types with no way to prove
+      // anything inductive about them.  See docs/scala3-frontend.md §11.
+      Left(FrontendError.enumError(name,
+        "generic enums are not supported: induction over parameterised inductive types " +
+        "is not yet available in the tactic engine, so a generic enum could be declared " +
+        "but not reasoned about", span))
     else
       // `children` are the enum's cases.  Sorting by source offset pins the order
       // to what the user wrote, which is exactly what `IndDef.ctors` order means.

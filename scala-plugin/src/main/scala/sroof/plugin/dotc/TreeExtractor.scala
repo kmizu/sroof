@@ -202,6 +202,17 @@ final class TreeExtractor(dsl: DslSymbols)(using Context):
         else Left(FrontendError.defError(subject,
           s"constructor '${ctor.name}' is used without its ${ctor.fields.length} argument(s)", span))
 
+      // A reference to a definition with no parameters reaches us bare, with no
+      // enclosing `Apply` to carry the argument list.
+      case t @ (_: Ident | _: Select) if sigs.contains(t.symbol) && !isTheorem(t.symbol) =>
+        val sig = sigs(t.symbol)
+        if sig.params.isEmpty then
+          Right(ResolvedExpr.Call(idOf(t.symbol), t.symbol.name.toString, Nil, span))
+        else
+          Left(FrontendError.defError(subject,
+            s"'${t.symbol.name}' is used without its ${sig.params.length} argument(s); " +
+            "verified code may not refer to a definition as a value", span))
+
       case Apply(Select(New(tpt), _), args) if index.byCtor.contains(tpt.tpe.typeSymbol) =>
         val (ind, ctor) = index.byCtor(tpt.tpe.typeSymbol)
         constructorCall(ind, ctor, args, binders, index, sigs, subject, span)
@@ -548,6 +559,32 @@ final class TreeExtractor(dsl: DslSymbols)(using Context):
            if stripTypeApply(strip(fn)).symbol == dsl.casesMethod =>
         extractSplit(target, casesTree, binders, index, sigs, subject, span, withHypothesis = false)
 
+      case Apply(Apply(fn, target :: genArgs), List(casesTree))
+           if stripTypeApply(strip(fn)).symbol == dsl.inductionGenMethod =>
+        for
+          generalizing <- extractGeneralizing(genArgs, binders, subject)
+          split        <- extractSplit(target, casesTree, binders, index, sigs, subject, span,
+                            withHypothesis = true)
+        yield split match
+          case ResolvedTactic.Induction(id, name, cs, sp) =>
+            ResolvedTactic.InductionGeneralizing(id, name, generalizing, cs, sp)
+          case other => other
+
+      case Apply(Apply(fn, List(recursive)), atArgs)
+           if stripTypeApply(strip(fn)).symbol == dsl.exactIhMethod =>
+        for
+          // Reuse the `ih` checks so the same rules apply: the branch must have a
+          // hypothesis, and it must be the one for this constructor's last field.
+          _  <- validateIhTarget(strip(recursive).symbol, subject, branch, spanOf(recursive))
+          at <- varargElements(atArgs).foldLeft[Either[FrontendError, List[ResolvedExpr]]](Right(Nil)) {
+                  (acc, e) =>
+                    for
+                      done <- acc
+                      t    <- extractExpr(e, binders, index, sigs, subject)
+                    yield done :+ t
+                }
+        yield ResolvedTactic.ExactIh(at, span)
+
       case Apply(fn, _) if stripTypeApply(strip(fn)).symbol == dsl.ihMethod =>
         Left(FrontendError.theoremError(subject,
           "ih(...) is a lemma, not a tactic; use simplify(ih(...))", span))
@@ -589,28 +626,8 @@ final class TreeExtractor(dsl: DslSymbols)(using Context):
     strip(tree) match
       case Apply(fn, List(arg)) if stripTypeApply(strip(fn)).symbol == dsl.ihMethod =>
         val argSym = strip(arg).symbol
-        branch match
-          case None =>
-            Left(FrontendError.theoremError(subject,
-              "ih(...) is only valid inside an induction branch", span))
-          case Some(b) if !b.withHypothesis =>
-            Left(FrontendError.theoremError(subject,
-              "ih(...) is not available inside cases(...), which generates no induction " +
-              "hypothesis; use induction(...) instead", span))
-          case Some(b) if !b.hasRecursiveField =>
-            Left(FrontendError.theoremError(subject,
-              s"ih(...) is not available in the base case '${b.ctorName}': its last field is not " +
-              "of the type being inducted on", span))
-          case Some(b) if b.recursiveBinder.isEmpty =>
-            Left(FrontendError.theoremError(subject,
-              s"ih(...) needs the recursive field of '${b.ctorName}' bound to a name; " +
-              "replace the `_` in that position with a binder", span))
-          case Some(b) if !b.recursiveBinder.contains(argSym) =>
-            Left(FrontendError.theoremError(subject,
-              s"ih(${argSym.name}) is only valid for the last (recursive) field of the current " +
-              s"induction branch (expected ih(${b.recursiveBinder.get.name}))", span))
-          case Some(_) =>
-            Right(ResolvedLemmaRef.InductionHypothesis(idOf(argSym), argSym.name.toString, span))
+        validateIhTarget(argSym, subject, branch, span)
+          .map(_ => ResolvedLemmaRef.InductionHypothesis(idOf(argSym), argSym.name.toString, span))
 
       case t if isTheoremRef(t) =>
         val sym = referencedTheorem(t)
@@ -619,6 +636,40 @@ final class TreeExtractor(dsl: DslSymbols)(using Context):
       case _ =>
         Left(FrontendError.theoremError(subject,
           "a simplify lemma must be ih(binder) or a reference to a @theorem in this module", span))
+
+  /** The rules for naming an induction hypothesis, shared by `ih` and `exactIh`.
+   *
+   *  A hypothesis exists only inside an `induction` branch whose constructor has
+   *  a recursive last field, and it is about that field — so the target must be
+   *  the binder for it, by symbol identity.
+   */
+  private def validateIhTarget(
+    argSym:  Symbol,
+    subject: String,
+    branch:  Option[BranchContext],
+    span:    SourceSpan,
+  ): Either[FrontendError, Unit] =
+    branch match
+      case None =>
+        Left(FrontendError.theoremError(subject,
+          "the induction hypothesis is only available inside an induction branch", span))
+      case Some(b) if !b.withHypothesis =>
+        Left(FrontendError.theoremError(subject,
+          "the induction hypothesis is not available inside cases(...), which generates none; " +
+          "use induction(...) instead", span))
+      case Some(b) if !b.hasRecursiveField =>
+        Left(FrontendError.theoremError(subject,
+          s"the induction hypothesis is not available in the base case '${b.ctorName}': its last " +
+          "field is not of the type being inducted on", span))
+      case Some(b) if b.recursiveBinder.isEmpty =>
+        Left(FrontendError.theoremError(subject,
+          s"the induction hypothesis needs the recursive field of '${b.ctorName}' bound to a name; " +
+          "replace the `_` in that position with a binder", span))
+      case Some(b) if !b.recursiveBinder.contains(argSym) =>
+        Left(FrontendError.theoremError(subject,
+          s"'${argSym.name}' is not the last (recursive) field of the current induction branch " +
+          s"(expected '${b.recursiveBinder.get.name}')", span))
+      case Some(_) => Right(())
 
   private def isTheoremRef(tree: Tree): Boolean =
     val sym = referencedTheorem(tree)
@@ -669,6 +720,44 @@ final class TreeExtractor(dsl: DslSymbols)(using Context):
       val name    = targetSym.name.toString
       if withHypothesis then ResolvedTactic.Induction(id, name, ordered, span)
       else ResolvedTactic.Cases(id, name, ordered, span)
+
+  /** Resolve the `generalizing` varargs of `inductionGeneralizing`.
+   *
+   *  Each entry must be another parameter of the same theorem: the tactic engine
+   *  looks them up by name in the proof context, so anything else — a call, a
+   *  constructor, a pattern binder — has nothing to quantify over.
+   */
+  /** Unwrap a vararg argument list, which the typer presents as a `SeqLiteral`. */
+  private def varargElements(args: List[Tree]): List[Tree] =
+    args match
+      case List(single) => strip(single) match
+        case SeqLiteral(es, _) => es
+        case other             => List(other)
+      case other => other
+
+  private def extractGeneralizing(
+    args:    List[Tree],
+    binders: Map[Symbol, ResolvedBinder],
+    subject: String,
+  ): Either[FrontendError, List[(SymbolId, String)]] =
+    val elems: Either[FrontendError, List[Tree]] = Right(varargElements(args))
+
+    elems.flatMap { es =>
+      if es.isEmpty then
+        Left(FrontendError.theoremError(subject,
+          "inductionGeneralizing needs at least one parameter to generalize over; " +
+          "use induction(...) when there is none", SourceSpan.synthetic))
+      else
+        es.foldLeft[Either[FrontendError, List[(SymbolId, String)]]](Right(Nil)) { (acc, e) =>
+          val sym = strip(e).symbol
+          for
+            done <- acc
+            _    <- binders.get(sym).toRight(FrontendError.theoremError(subject,
+                      s"'${sym.name}' cannot be generalized over: only another parameter of this " +
+                      "theorem can be", spanOf(e)))
+          yield done :+ (idOf(sym), sym.name.toString)
+        }
+    }
 
   /** Pull the branches out of the `PartialFunction` literal passed to the tactic.
    *
@@ -729,3 +818,8 @@ final class TreeExtractor(dsl: DslSymbols)(using Context):
       case ResolvedTactic.Rewrite(ls, _)         => ls.exists(isIh)
       case ResolvedTactic.Induction(_, _, cs, _) => cs.exists(c => mentionsIh(c.tactic))
       case ResolvedTactic.Cases(_, _, cs, _)     => cs.exists(c => mentionsIh(c.tactic))
+      case ResolvedTactic.InductionGeneralizing(_, _, _, cs, _) =>
+        cs.exists(c => mentionsIh(c.tactic))
+      // `exactIh` *is* a use of the hypothesis: without this, the binding count
+      // would not request one and the branch would get no hypothesis at all.
+      case ResolvedTactic.ExactIh(_, _) => true

@@ -136,9 +136,20 @@ enum ResolvedTactic extends Spanned:
   case Rewrite(equations: List[ResolvedLemmaRef], span: SourceSpan)
   case Induction(target: SymbolId, targetName: String,
                  cases: List[ResolvedTacticCase], span: SourceSpan)
+  /** Induction whose hypothesis is quantified over `generalizing`, in the order
+   *  written; each entry names another parameter of the same theorem. */
+  case InductionGeneralizing(target: SymbolId, targetName: String,
+                             generalizing: List[(SymbolId, String)],
+                             cases: List[ResolvedTacticCase], span: SourceSpan)
   /** Constructor split with no induction hypothesis. */
   case Cases(target: SymbolId, targetName: String,
              cases: List[ResolvedTacticCase], span: SourceSpan)
+  /** Close the goal with the induction hypothesis applied to `at`, in order.
+   *
+   *  The arguments are expressions, not just names: a generalized hypothesis is
+   *  usually instantiated at a *changed* value (`Succ(acc)`, `derive(r, c)`),
+   *  which is the whole reason the quantification was needed. */
+  case ExactIh(at: List[ResolvedExpr], span: SourceSpan)
 
 /** One branch of an `induction`, in the inductive's constructor order.
  *

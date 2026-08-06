@@ -1,5 +1,58 @@
 # Changelog
 
+## [0.5.0] - 2026-08-06
+
+Adds generalized induction — the first release to increase what the Scala path
+can *prove*, rather than only what it can parse — and turns several documented
+claims into tested ones.
+
+### Added
+- **`inductionGeneralizing(x, y, ...)`** — induction whose hypothesis is
+  universally quantified over the other named parameters. Needed whenever those
+  parameters change as the recursion proceeds, since a hypothesis fixed at their
+  original values says nothing about the recursive call.
+- **`exactIh(k)(at...)`** — closes the goal with that hypothesis, instantiated at
+  the given values. Its arguments are expressions, not just names, because the
+  interesting instantiations are at changed values (`Succ(acc)`).
+- **References to parameterless definitions.** `def two: Nat = ...` could be
+  declared but not used: a nullary reference arrives with no enclosing `Apply`,
+  and fell through to "neither a binder nor a constructor".
+
+### Fixed
+- A parameterless definition was `Fix`-wrapped like any other. A nullary `Fix`
+  can never reduce — it only unfolds when applied — so wherever it was inlined it
+  sat unevaluated, and the evaluator failed on it. Parameterless definitions now
+  translate to their body directly, matching the legacy elaborator, and nullary
+  self-recursion is rejected with a diagnostic rather than left dangling.
+- `mentionsIh` did not count `exactIh` as a use of the hypothesis, which would
+  have meant the branch never requested one.
+
+### Changed
+- The `ih` diagnostics are now produced in one place and shared by `ih` and
+  `exactIh`, so the two cannot drift apart. Wording changed slightly.
+- The generic-enum rejection now explains *why*, and
+  `docs/scala3-frontend.md` §11 records the real blocker (see below).
+
+### Documented
+- **Generic enums are blocked below the frontend, not in it.** Earlier drafts
+  implied the work was frontend-side. In fact the core already represents
+  parameterised inductives; what fails is induction over them, because
+  `Builtins.buildFixCase` extends a branch context with raw constructor argument
+  types that still mention the type parameters. `stdlib/PolyList.sroof` records
+  the same limitation on the `.sroof` side. Supporting generics in the frontend
+  alone would give generic declarations with no way to prove anything inductive
+  about them; the fix belongs in `Builtins` and benefits both frontends.
+
+### Tested, not merely claimed
+A new suite pins constructs the subset table asserted but nothing exercised:
+inferred local `val` types, `new Ctor(...)`, enum cases with explicit `extends`,
+matching on a call result, multi-field non-recursive constructors, all-wildcard
+patterns, mutually referring enums, and parameterless definitions — the last of
+which turned out to be broken.
+
+### Unchanged
+- The trusted kernel, and the `.sroof` language path in its entirety.
+
 ## [0.4.0] - 2026-08-06
 
 Widens the Scala subset the compiler plugin accepts, and tightens the parts that

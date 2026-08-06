@@ -171,12 +171,36 @@ object CoreTranslator:
       // Parameters enter the scope reversed: the last parameter is Var(0).
       bodyTerm  <- translateExpr(rd.body, resultTpe, rd.params.reverse.map(_.id),
                                  Some(rd.id), env, rd.name)
-      lams       = rd.params.zip(paramTpes).foldRight(bodyTerm) { case ((p, t), acc) =>
-                     Term.Lam(p.name, t, acc)
-                   }
-      fixTerm    = Term.Fix(rd.name, fullTpe, lams)
-      _         <- checkTermination(rd, fixTerm, env)
-    yield DefEntry(rd.name, fullTpe, fixTerm)
+      entry     <- assemble(rd, fullTpe, paramTpes, bodyTerm, env)
+    yield entry
+
+  /** Wrap a translated body into its `DefEntry`.
+   *
+   *  A definition with no parameters is **not** `Fix`-wrapped, matching the
+   *  legacy elaborator.  A nullary `Fix` could never reduce: it only unfolds when
+   *  applied, and there is nothing to apply it to, so it would sit unevaluated
+   *  wherever it was inlined.  That also removes the binder a self-reference
+   *  would point at, so nullary recursion is rejected rather than left dangling.
+   */
+  private def assemble(
+    rd:        ResolvedDef,
+    fullTpe:   Term,
+    paramTpes: List[Term],
+    bodyTerm:  Term,
+    env:       TranslationEnv,
+  ): Either[FrontendError, DefEntry] =
+    if rd.params.isEmpty then
+      if directCalls(rd.body).contains(rd.id) then
+        Left(FrontendError.defError(rd.name,
+          "a definition with no parameters cannot be recursive: there is no argument " +
+          "for the recursion to decrease on", rd.span))
+      else Right(DefEntry(rd.name, fullTpe, bodyTerm))
+    else
+      val lams = rd.params.zip(paramTpes).foldRight(bodyTerm) { case ((p, t), acc) =>
+        Term.Lam(p.name, t, acc)
+      }
+      val fixTerm = Term.Fix(rd.name, fullTpe, lams)
+      checkTermination(rd, fixTerm, env).map(_ => DefEntry(rd.name, fullTpe, fixTerm))
 
   private def checkTermination(
     rd:  ResolvedDef,
@@ -341,6 +365,59 @@ object CoreTranslator:
       lhs <- translateExpr(prop.lhs, tpe, scope, None, env, subject)
       rhs <- translateExpr(prop.rhs, tpe, scope, None, env, subject)
     yield sroof.tactic.Eq.mkPropType(lhs, rhs)
+
+  /** Translate an expression against a proof context built by the tactic engine.
+   *
+   *  Unlike [[translateExpr]], locals are resolved **by name**, because the
+   *  contexts `Builtins` builds for induction branches are named, not tracked by
+   *  compiler symbol — the engine addresses them the same way. Shadowing
+   *  resolves innermost-first, which is what Scala means too.
+   *
+   *  Deliberately narrow: only variables, constructor applications, and calls to
+   *  verified definitions. A `match` or `let` here would need an expected type to
+   *  thread, and nothing in the supported tactics requires one.
+   */
+  def translateInProofContext(
+    e:       ResolvedExpr,
+    ctx:     Context,
+    env:     TranslationEnv,
+    subject: String,
+  ): Either[FrontendError, Term] =
+    e match
+      case ResolvedExpr.Local(_, name, span) =>
+        ctx.entries.indexWhere(_.name == name) match
+          case -1 => Left(FrontendError.tacticError(subject,
+            s"'$name' is not in scope at this point in the proof", span))
+          case i  => Right(Term.Var(i))
+
+      case ResolvedExpr.Construct(_, ctorId, ctorName, args, span) =>
+        for
+          pair <- env.ctors.get(ctorId).toRight(FrontendError.tacticError(subject,
+                    s"'$ctorName' is not a constructor of this proof module", span))
+          (ind, ctor) = pair
+          terms <- args.foldLeft[Either[FrontendError, List[Term]]](Right(Nil)) { (acc, a) =>
+                     for
+                       done <- acc
+                       t    <- translateInProofContext(a, ctx, env, subject)
+                     yield done :+ t
+                   }
+        yield Term.Con(ctor.name, ind.name, terms)
+
+      case ResolvedExpr.Call(target, name, args, span) =>
+        for
+          entry <- env.defs.get(target).toRight(FrontendError.tacticError(subject,
+                     s"'$name' is not a verified definition of this proof module", span))
+          terms <- args.foldLeft[Either[FrontendError, List[Term]]](Right(Nil)) { (acc, a) =>
+                     for
+                       done <- acc
+                       t    <- translateInProofContext(a, ctx, env, subject)
+                     yield done :+ t
+                   }
+        yield terms.foldLeft(entry.body)(Term.App.apply)
+
+      case other =>
+        Left(FrontendError.tacticError(subject,
+          "only variables, constructor applications, and calls may be used here", other.span))
 
   /** The proof context and full `Pi` proposition for a theorem's parameters.
    *

@@ -111,8 +111,10 @@ compiles, and runs without the plugin — it simply proves nothing in that case.
 | `prove(goal)(tactic)` | States a goal and its proof script. Both arguments are by-name and never evaluated. |
 | `trivial` | Closes a goal whose sides are definitionally equal. |
 | `induction(x) { case ... }` | Structural induction on a theorem parameter. |
+| `inductionGeneralizing(x, y, ...) { case ... }` | Induction whose hypothesis is universally quantified over the other named parameters. |
 | `cases(x) { case ... }` | Constructor split with **no** induction hypothesis; `ih` is unavailable inside. |
 | `ih(k)` | The induction hypothesis for the recursive field binder `k`. |
+| `exactIh(k)(at...)` | Close the goal with that hypothesis, instantiated at the given values. The counterpart to `inductionGeneralizing`. |
 | `simplify(lemmas*)` | Rewrites with the given lemmas, then closes the goal. With no arguments, uses the `@simp` set. |
 | `rewrite(equations*)` | Applies the given equations as directed rewrites. |
 
@@ -145,9 +147,37 @@ Inside a `@proofModule`, this milestone supports:
 
 **Proof DSL**
 - equality goals built with sroof's `===`;
-- `prove`, `trivial`, `induction`, `cases`, `ih`, `simplify`, `rewrite`;
+- `prove`, `trivial`, `induction`, `inductionGeneralizing`, `cases`, `ih`,
+  `exactIh`, `simplify`, `rewrite`;
 - `simplify`/`rewrite` citing a `@theorem` verified **earlier in the same
   module**, and bare `simplify()` drawing on the `@simp` set.
+
+### Generalized induction
+
+When the goal's other parameters change as the recursion proceeds, a hypothesis
+fixed at their original values says nothing about the recursive call.
+`inductionGeneralizing` quantifies the hypothesis over them, and `exactIh`
+instantiates it:
+
+```scala
+@theorem
+def alwaysZeroIsZero(n: Nat, acc: Nat): Proof =
+  prove(alwaysZero(n, acc) === Zero)(
+    inductionGeneralizing(n, acc) {
+      case Zero    => trivial
+      case Succ(k) => exactIh(k)(Succ(acc))
+    })
+```
+
+The two go together. A quantified hypothesis has a `Pi` type, which `simplify`
+cannot consume — it looks for an equation. Inside `inductionGeneralizing`, reach
+for `exactIh`; inside plain `induction`, `simplify(ih(k))` is the usual move.
+
+`exactIh`'s arguments are expressions, not just names, because the interesting
+instantiations are at changed values. They are resolved **by name** against the
+proof context the tactic engine builds, since that is how the engine addresses
+that context itself; only variables, constructor applications, and calls to
+verified definitions are allowed there.
 
 ## 5. Explicitly unsupported
 
@@ -349,13 +379,31 @@ artifacts are published. `build.sbt` shows the shape such a mode would take.
 
 ## 11. Future work
 
-- **Generic enums** — requires parameterised `IndDef`s and type-argument
-  translation; the IR's `ResolvedType` is where that starts. This is the largest
-  remaining gap, and it is deferred deliberately: every piece of it (type
-  parameters in constructor field types, in definition signatures, and in
-  applications) is a new place to get a De Bruijn index wrong, inside the layer
-  §9 identifies as trusted. It should land as its own milestone with golden
-  tests per construct, not folded into a release alongside other work.
+- **Generic enums** — the largest remaining gap, and **blocked below the
+  frontend**, which is worth stating precisely because earlier drafts of this
+  document implied it was frontend work.
+
+  The core does represent parameterised inductives: `IndDef.params` holds the
+  type parameters, and a constructor's `argTpes` refer to them with a progressive
+  De Bruijn convention where `Var(j..j+m-1)` are the parameters
+  (`IndChecker.instantiateArgType` is the authority). What does *not* work is
+  induction over them. `Builtins.buildFixCase` extends the branch context with
+  the **raw** `argTpes`:
+
+  ```scala
+  val ctorCtx = ctorDef.argTpes.zip(argNames).foldLeft(ctxWithRecN)((c, p) => c.extend(p._2, p._1))
+  ```
+
+  Those raw types still mention the type parameters, which are not bound in that
+  context — so the indices are wrong. For a monomorphic type there are no such
+  references and the code is correct by accident. `stdlib/PolyList.sroof` records
+  the same limitation on the `.sroof` side: it offers only base-case proofs.
+
+  So supporting generic enums in the frontend alone would buy generic
+  *declarations* and `trivial` proofs, but not induction — a sharp edge that is
+  worse than an honest omission. The fix belongs in `Builtins` (instantiating
+  `argTpes` against the scrutinee's type arguments before extending the context),
+  benefits both frontends, and should land first.
 - **Indexed families / GADTs** — `Vec`-style indexed types, as the `.sroof` path
   already supports.
 - **Richer tactic DSL** — `calc`, `apply`, `have`, and the rest of the built-ins

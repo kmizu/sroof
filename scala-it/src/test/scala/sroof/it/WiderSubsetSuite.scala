@@ -188,7 +188,7 @@ class WiderSubsetSuite extends FunSuite:
         |        case Zero    => trivial
         |        case Succ(k) => simplify(ih(k))
         |      })
-        |""".stripMargin))("generates no induction")
+        |""".stripMargin))("not available inside cases(...)")
   }
 
   test("cases must still cover every constructor") {

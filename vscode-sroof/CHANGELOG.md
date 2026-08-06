@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.5.0] — 2026-08-06
+
+### Changed
+- Version bump for the v0.5 release. The extension is unchanged; v0.5 adds
+  generalized induction to the Scala 3 frontend, which the Scala compiler
+  reports on directly.
+
 ## [0.4.0] — 2026-08-06
 
 ### Changed

@@ -33,7 +33,7 @@ worth reading before relying on either.
 
 - [`../README.md`](../README.md) / [`../README-ja.md`](../README-ja.md) — language guide, tactic reference, quick start
 - [`../CHANGELOG.md`](../CHANGELOG.md) — what changed, per release
-- [`../RELEASE_NOTES_v0.4.md`](../RELEASE_NOTES_v0.4.md) — the current release in detail
+- [`../RELEASE_NOTES_v0.5.md`](../RELEASE_NOTES_v0.5.md) — the current release in detail
 - [`../INCREMENTAL_CHECKING.md`](../INCREMENTAL_CHECKING.md) — the caching strategy behind repeated checks
 - [`../AGENTS.md`](../AGENTS.md) / [`../CLAUDE.md`](../CLAUDE.md) — contributor and agent guidance
 - [`../examples/`](../examples) — `.sroof` proof examples

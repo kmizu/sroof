@@ -47,6 +47,18 @@ def trivial: Tactic = ()
  */
 def induction[A](value: A)(cases: PartialFunction[A, Tactic]): Tactic = ()
 
+/** Structural induction on `value`, with the hypothesis universally quantified
+ *  over the additional parameters in `generalizing`.
+ *
+ *  Needed when the goal changes those parameters as the recursion proceeds — a
+ *  hypothesis fixed at the original values would not apply. The classic case is
+ *  commutativity, where the second operand differs at each step.
+ *
+ *  Every entry in `generalizing` must be another parameter of the same theorem.
+ */
+def inductionGeneralizing[A](value: A, generalizing: Any*)(
+  cases: PartialFunction[A, Tactic]): Tactic = ()
+
 /** Case analysis on `value`, **without** an induction hypothesis.
  *
  *  Same shape as [[induction]], and subject to the same branch rules, but no
@@ -61,6 +73,23 @@ def cases[A](value: A)(branches: PartialFunction[A, Tactic]): Tactic = ()
  *  to that branch's recursive field binder.
  */
 def ih[A](value: A): Proof = ()
+
+/** Close the goal with the induction hypothesis for `recursive`, instantiated at
+ *  the given values.
+ *
+ *  The counterpart to [[inductionGeneralizing]]: that combinator makes the
+ *  hypothesis universally quantified, and this one applies it. Each entry in
+ *  `at` must be a parameter or pattern binder visible in the branch, given in
+ *  the same order as the `generalizing` list.
+ *
+ *  {{{
+ *  inductionGeneralizing(n, m) {
+ *    case Zero    => trivial
+ *    case Succ(k) => exactIh(k)(m)
+ *  }
+ *  }}}
+ */
+def exactIh(recursive: Any)(at: Any*): Tactic = ()
 
 /** Rewrite the goal with the given lemmas, then close it. */
 def simplify(lemmas: Proof*): Tactic = ()

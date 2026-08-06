@@ -113,12 +113,18 @@ python3 scripts/benchmark.py --runs 3 --thresholds benchmarks/thresholds.json --
 - compares workload medians against CI thresholds
 - writes a machine-readable report at `benchmarks/results.json`
 
-### v0.4 Release Notes
+### v0.5 Release Notes
 
 - changelog: [`CHANGELOG.md`](CHANGELOG.md)
-- release notes: [`RELEASE_NOTES_v0.4.md`](RELEASE_NOTES_v0.4.md)
-- release checklist: [`RELEASE_CHECKLIST_v0.4.md`](RELEASE_CHECKLIST_v0.4.md)
-- previous releases: [`RELEASE_NOTES_v0.3.md`](RELEASE_NOTES_v0.3.md), [`RELEASE_NOTES_v0.2.md`](RELEASE_NOTES_v0.2.md)
+- release notes: [`RELEASE_NOTES_v0.5.md`](RELEASE_NOTES_v0.5.md)
+- release checklist: [`RELEASE_CHECKLIST_v0.5.md`](RELEASE_CHECKLIST_v0.5.md)
+- previous releases: [`RELEASE_NOTES_v0.4.md`](RELEASE_NOTES_v0.4.md), [`RELEASE_NOTES_v0.3.md`](RELEASE_NOTES_v0.3.md), [`RELEASE_NOTES_v0.2.md`](RELEASE_NOTES_v0.2.md)
+
+### Migration Notes (v0.4 -> v0.5)
+
+- **Nothing breaks.** Every v0.4 program still compiles and verifies.
+- The induction-hypothesis diagnostics are now shared between `ih` and `exactIh`,
+  so their wording changed slightly. Check tooling that matches plugin output.
 
 ### Migration Notes (v0.3 -> v0.4)
 
@@ -366,10 +372,11 @@ path uses. If the theorem stopped holding, the file would stop compiling.
 **This is an initial subset, not general Scala verification.** Today it covers:
 non-generic enums, pure `def`s over those enums (curried parameter lists
 included), self-recursion accepted by the termination checker, exhaustive
-matches, runs of immutable local `val`s, equality goals, and the tactics
-`trivial`, `induction`, `cases`, `ih`, `simplify`, and `rewrite`. Everything
-else — `var`, effects, exceptions, casts, closures, generics, mutual recursion,
-external calls — is **rejected with a diagnostic**, not approximated.
+matches, runs of immutable local `val`s, parameterless definitions, equality
+goals, and the tactics `trivial`, `induction`, `inductionGeneralizing`, `cases`,
+`ih`, `exactIh`, `simplify`, and `rewrite`. Everything else — `var`, effects,
+exceptions, casts, closures, generics, mutual recursion, external calls — is
+**rejected with a diagnostic**, not approximated.
 
 Verification only happens when the plugin is enabled by the build. The
 annotations alone do nothing:
