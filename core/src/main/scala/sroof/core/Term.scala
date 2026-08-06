@@ -37,7 +37,12 @@ object Term:
       s"(let $x:${show(tp, ctx)} = ${show(df, ctx)} in ${show(b, x :: ctx)})"
     case Uni(l)            => if l == 0 then "Type" else s"Type$l"
     case Ind(n, _, _)      => n
-    case Con(n, _, _)      => n
+    // Constructor arguments are shown because they can be the *only* difference
+    // between two types.  With indexed families a mismatch reads
+    // `expected: Vec Nat (succ zero) / actual: Vec Nat zero`; printing the bare
+    // head made both sides render identically and the message useless.
+    case Con(n, _, Nil)    => n
+    case Con(n, _, as)     => s"($n ${as.map(show(_, ctx)).mkString(" ")})"
     case Mat(s, _, _)      => s"(match ${show(s, ctx)} { ... })"
     case Fix(n, _, _)      => s"(fix $n)"
     case Meta(i)           => s"?$i"

@@ -1,13 +1,69 @@
-# Indexed families and GADTs — groundwork
+# Indexed families and GADTs
 
-Status: **not implemented.** This document records what is actually in the code
-today, what is only declared, and the order the work has to happen in.
+Status as of v0.10.0: **constructors are indexed; elimination is not.** You can
+declare `Vec(A)(n)`, and the checker will reject `Vec.vnil` where a length-one
+vector was required. You cannot yet prove anything by induction over such a
+family. Steps 1–3 below are done; 4–6 are not.
 
-It exists because the obvious reading of the source is wrong in a way that would
-cost someone a day: `IndDef.indices` and `CtorDef.retIndices` look like support
-for indexed families, and one of them is a field nothing ever writes.
+Everything under "What was actually there" describes the pre-v0.10 state and is
+kept because the field comments and the surrounding code still carry its
+assumptions in places.
 
-## What is actually there
+## What v0.10.0 changed
+
+`IndChecker.inferConWithParams` used to end with:
+
+```scala
+paramVals.foldLeft(Term.Ind(indRef, Nil, Nil): Term)(Term.App.apply)
+```
+
+where `paramVals` came from `extractParamsFromExpected` — the *expected* type's
+own argument spine. The constructor's inferred type was therefore the expected
+type, and the caller's conversion check compared it with itself. This checked
+successfully on every release up to and including v0.9:
+
+```scala
+defspec vnil_is_not_length_one: Vec(Nat)(Nat.succ(Nat.zero)) { Vec.vnil }
+```
+
+A length-zero vector passed as a length-one vector. It is now rejected:
+
+```
+expected: ((Vec Nat) (succ zero))
+actual:   ((Vec Nat) zero)
+```
+
+The parameter half of the spine is still read off the expected type, exactly as
+it is for `List` and `Sigma`. The index half is **derived** from the
+constructor's declared `retIndices`. `cli/.../IndexedFamilySuite.scala` holds the
+negative tests; each was verified to *fail* against the v0.9 tree, which is the
+only way to know they exercise the change rather than restating it.
+
+Two smaller things came with it:
+
+- A constructor whose return index mentions one of the family's own index
+  variables — `case anylen: Bad(A)(n)` — is rejected. Such a declaration would
+  reintroduce exactly the vacuity above, since the derived index would be
+  whatever the caller asked for.
+- `Term.show` now prints a constructor's arguments. Without that, an index
+  mismatch rendered as `expected: Vec Nat succ / actual: Vec Nat succ` and read
+  like a checker bug.
+
+### What is deliberately still missing
+
+`checkMat` does not refine the expected type per branch. This is a source of
+false negatives, not of unsoundness: `checkCoverage` still forces a branch for
+every constructor, and an unrefined return type is strictly harder to satisfy.
+It belongs with step 4, because the same index abstraction is what
+`Builtins.buildFixCase` needs.
+
+`stdlib/Vec.sroof` was **not** rewritten to use real indices. Without step 4 it
+could declare a length and then prove nothing inductive about it, which is a
+worse state to ship than a phantom index that is honest about being one.
+`examples/vec_indexed.sroof` demonstrates the feature on concrete vectors
+instead.
+
+## What was actually there (pre-v0.10)
 
 ### `IndDef.indices` — populated, but behaves like extra parameters
 
@@ -122,30 +178,35 @@ Each step is useful on its own and testable before the next begins.
    of arguments, yields `Nil` — which is exactly the previous behaviour, so every
    declaration written before this still means what it meant.
 
-3. **Checker.** ⚠️ **Attempted in v0.8 and reverted.** `IndChecker.inferCon` must
-   produce the *applied* type `Vec A <retIndices>` rather than the bare head, and
-   `checkMat` must refine the expected type per branch. Until this lands, indices
-   still carry no information: steps 1 and 2 record them, and nothing reads them.
+3. **Checker.** ✅ **Done in v0.10.0**, for constructors. `IndChecker` derives a
+   constructor's index values from `retIndices` instead of echoing the expected
+   type's spine — see "What v0.10.0 changed" above. `checkMat` still does not
+   refine per branch; that moved to step 4, where it shares machinery with the
+   tactic engine.
 
-   The v0.8 attempt substituted the constructor's arguments and parameters into
-   `retIndices` and applied the result. It passed all 590 existing tests — the
-   change is inert when `retIndices` is empty, which it is everywhere today — but
-   `#check Vec.vcons(...)` failed with `Unbound De Bruijn index 2 (env size 0)`.
-   Two things to know before the next attempt:
+   What the v0.8 attempt got wrong, and what fixed it:
 
-   - **Parameter inference is a heuristic.** `extractParamValsFromArgs` is
-     documented as working "for m=0 and simple m=1 cases", and it has no
-     arguments to work from for a nullary constructor like `vnil`. An index-aware
-     `inferCon` cannot assume `paramVals` has the right length.
+   - **Parameter inference is a heuristic**, and its window was the wrong width.
+     `extractParamValsFromArgs` scanned `params.length` De Bruijn slots, but in
+     an indexed family the indices sit *between* the constructor's arguments and
+     the parameters. With a `p`-wide window the parameter vars fell past the end,
+     hit the `else t` fallthrough, and reached `Eval` as free variables —
+     `Unbound De Bruijn index 2 (env size 0)`. It now takes the width as a
+     parameter: `p` for an ordinary inductive, `p + q` for an indexed one.
+   - **No new traversal was needed.** `instantiateArgType` already decodes the
+     elaborator's `(params ++ indices).reverse` layout, and `retIndices` is
+     elaborated in the scope the last argument type sees. Instantiating it is the
+     same call with `j = args.length` and the full `p + q` spine.
    - ~~**`instantiateArgType`'s ordering doc and its call site disagree.**~~
      ✅ **Fixed in v0.9.** The code read `prevArgs(abs)` while the call site
      passes declaration order, so `Var(0)` resolved to the first argument rather
      than the last. Reachable as of v0.8, which made
      `case vcons(m: Nat, head: A, tail: Vec(A)(m))` writable.
 
-   This step is inside the TCB for logical validity. It wants negative soundness
-   tests of its own, and it should not be attempted as part of a release that is
-   also doing other things.
+   This step is inside the TCB for logical validity, which is why every new path
+   is gated on a family both declaring indices *and* stating them on every
+   constructor. Anything else — including every declaration in the repository at
+   the time — takes the pre-v0.10 branch unchanged.
 
 4. **Tactic engine.** `Builtins.buildFixCase` gains index abstraction and
    per-branch specialisation, mirroring `inductionWithIHGeneralized`.
@@ -173,13 +234,19 @@ trusted Scala-to-core bridge.** As in v0.5–v0.7, the shared work goes first: a
 frontend that extracts indices the core cannot check would produce declarations
 nothing can be proved about, which is worse than a clean rejection.
 
-## Estimate
+## What is left
 
-Larger than v0.7. That release fixed three coordinate bugs in existing
-machinery; this one adds a concept the parser, elaborator, checker, and tactic
-engine have never carried. Steps 1–2 are small; step 3 touches the checker, which
-is inside the TCB for logical validity and therefore wants negative soundness
-tests of its own; step 4 is the delicate De Bruijn work.
+Steps 4–6. Step 4 is the delicate one and the one everything else waits on:
+`Builtins.buildFixCase` has to abstract the motive over the index and specialise
+it per branch, and the same abstraction is what lets `checkMat` refine the
+expected type. Until it lands, an indexed family can be *stated* precisely but
+only reasoned about at concrete indices — which is why `stdlib/Vec.sroof` stays
+on the phantom form and step 5 has not started.
 
-It should be its own milestone, and it should not be attempted alongside other
-features.
+Steps 1–5 are shared code both frontends gain; step 6 is inside the trusted
+Scala-to-core bridge and should not start before step 5 demonstrates that the
+core supports what would be extracted *to*.
+
+Each of these has been its own release. That pacing is deliberate: step 3 is
+inside the TCB for logical validity, and the negative tests that justify it are
+only meaningful if you can check them against the tree immediately before.

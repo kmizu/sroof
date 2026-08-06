@@ -5,6 +5,86 @@ All release detail lives here. Earlier releases also had per-version
 favour of this one file. The long-form notes for v0.3–v0.9 remain published on
 the [GitHub releases page](https://github.com/kmizu/sroof/releases).
 
+## [0.10.0] - 2026-08-07
+
+Indexed families stop being decorative. `Vec(A)(n)` now has a length the checker
+enforces — and closing that gap meant fixing an unsoundness, not just adding a
+feature.
+
+### Fixed
+- **A constructor's index was taken from the expected type instead of from its
+  declaration.** `IndChecker.inferConWithParams` ended by applying the inductive
+  to `paramVals` — which `extractParamsFromExpected` had peeled off the *expected*
+  type. For a parameterised type like `List(A)` that is harmless, since a
+  parameter has the same value in every constructor. For an indexed type it means
+  the constructor's inferred type *is* the expected type, so the caller's
+  conversion check compared the expected type with itself and accepted anything.
+
+  This checked successfully on every release through v0.9:
+
+  ```scala
+  defspec vnil_is_not_length_one: Vec(Nat)(Nat.succ(Nat.zero)) { Vec.vnil }
+  ```
+
+  A length-zero vector passed as a length-one vector. It is now rejected with
+  `expected: ((Vec Nat) (succ zero)) / actual: ((Vec Nat) zero)`.
+
+  The parameter half of the spine is still read off the expected type, exactly as
+  before. The index half is derived from the constructor's declared `retIndices`,
+  populated since v0.8 and until now read by nothing.
+
+- **`extractParamValsFromArgs` scanned a window of the wrong width.** In an
+  indexed family the indices occupy De Bruijn slots *between* the constructor's
+  arguments and the type's parameters, so a `params.length`-wide window reads a
+  parameter out of an index's slot — and leaves the parameter variables past the
+  end, where they fall through to `Eval` as free variables. This is what produced
+  v0.8's `Unbound De Bruijn index 2 (env size 0)` and caused that attempt to be
+  reverted. The width is now a parameter: `p` for an ordinary inductive, `p + q`
+  for an indexed one.
+
+- **`Term.show` dropped a constructor's arguments.** Harmless until indices could
+  differ, at which point a mismatch rendered as
+  `expected: Vec Nat succ / actual: Vec Nat succ` and read like a checker bug.
+
+### Added
+- A constructor whose return index mentions one of the family's *own* index
+  variables — `case anylen: Bad(A)(n)` — is rejected, naming the declaration
+  rather than the use site. Such a declaration would reintroduce exactly the
+  vacuity above.
+- `examples/vec_indexed.sroof`: a `Vec` with real indices, and the rejected
+  variants recorded as comments.
+- `cli/.../IndexedFamilySuite.scala` and four cases in `IndCheckerSuite`.
+  603 tests pass, up from 590.
+
+### Verification
+Each negative test was run against the v0.9 tree and **fails** there — four of
+the five were accepted as valid proofs. A soundness test that passes both before
+and after a change is not testing the change, and the only way to know which you
+have is to check.
+
+The unit tests cover a case `.sroof` syntax cannot express: a family with indices
+but no parameters. `Bidirectional`'s check-mode route for constructors is guarded
+on `params.nonEmpty`, so such a family goes through `inferCon` — a different
+branch from the one the `.sroof` tests reach.
+
+### Compatibility
+Every new path is gated on a family both declaring indices *and* stating them on
+every constructor. Every declaration that existed before this release — including
+`stdlib/Vec.sroof` and `examples/vec.sroof`, which declare `(n: Nat)` but return a
+bare `Vec` — fails that gate and takes the previous branch unchanged. The 590
+pre-existing tests pass without modification, which here is a statement about the
+gate rather than a coincidence.
+
+### Not in this release
+- **`checkMat` does not refine the expected type per branch.** This causes false
+  negatives, not unsoundness: `checkCoverage` still requires a branch per
+  constructor, and an unrefined return type is strictly harder to satisfy. It
+  needs the same index abstraction as the tactic engine, so it moves to step 4.
+- **Induction over an indexed family**, for the same reason. Proofs about
+  concrete vectors work; proofs about all `Vec(A)(n)` do not.
+- **`stdlib/Vec.sroof` still uses a phantom index.** Rewriting it now would give
+  it a length it could state and not prove. See `docs/indexed-families.md`.
+
 ## [0.9.0] - 2026-08-07
 
 Fixes the first of the two obstacles v0.8 identified under indexed families.

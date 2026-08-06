@@ -159,12 +159,28 @@ python3 scripts/benchmark.py --runs 3 --thresholds benchmarks/thresholds.json --
 - published releases: <https://github.com/kmizu/sroof/releases>
 - publishing setup: [`docs/publishing.md`](docs/publishing.md)
 
+### Migration Notes (v0.9 -> v0.10)
+
+- **Nothing breaks.** All 590 pre-existing tests pass unchanged; 604 in total.
+- **A soundness fix, so some files that checked before will now be rejected —
+  correctly.** If a constructor declares its return index, as in
+  `case vnil: Vec(A)(Nat.zero)`, that index is now enforced. Until v0.9 the
+  checker took the index from the *expected* type, so `Vec.vnil` was accepted
+  wherever a length-one vector was required.
+- **Only families that state an index on every constructor are affected.** A
+  declaration returning a bare `Vec` — which is every declaration written before
+  v0.8, `stdlib/Vec.sroof` included — keeps its phantom index and its previous
+  behaviour.
+- Induction over an indexed family is still not supported; proofs about concrete
+  vectors work. See [`docs/indexed-families.md`](docs/indexed-families.md) and
+  [`examples/vec_indexed.sroof`](examples/vec_indexed.sroof).
+
 ### Migration Notes (v0.7 -> v0.8)
 
 - **Nothing breaks.** All 590 tests pass unchanged.
 - The parser accepts strictly more: a constructor's return type may carry index
-  arguments, as in `case vnil: Vec(A)(Nat.zero)`. Indices are recorded but not
-  yet read by the checker — see [`docs/indexed-families.md`](docs/indexed-families.md).
+  arguments, as in `case vnil: Vec(A)(Nat.zero)`. As of v0.8 those indices were
+  recorded but not read by the checker; v0.10 made the checker enforce them.
 
 ### Migration Notes (v0.6 -> v0.7)
 

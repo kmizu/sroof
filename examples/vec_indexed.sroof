@@ -1,0 +1,60 @@
+// Indexed families: a length that the type checker enforces.
+//
+// `Vec(A)(n)` is a list of `A` whose length is `n`.  The `n` is not a comment
+// and not a phantom: each constructor *declares* the index of the value it
+// builds, and the checker derives that index rather than taking the caller's
+// word for it.
+//
+// Compare `stdlib/Vec.sroof`, whose constructors return a bare `Vec`.  That is
+// the older form, still supported, in which the index carries no information —
+// see docs/indexed-families.md for why both exist.
+
+inductive Nat {
+  case zero: Nat
+  case succ(n: Nat): Nat
+}
+
+// The two return types are the whole point:
+//   vnil  builds a vector of length zero
+//   vcons builds one of length succ(m) out of a tail of length m
+inductive Vec(A: Type)(n: Nat) {
+  case vnil: Vec(A)(Nat.zero)
+  case vcons(m: Nat, head: A, tail: Vec(A)(m)): Vec(A)(Nat.succ(m))
+}
+
+// The empty vector has length zero, and nothing else.
+defspec vnil_has_length_zero: Vec(Nat)(Nat.zero) {
+  Vec.vnil
+}
+
+// Consing onto the empty vector gives length one.
+defspec vcons_has_length_one: Vec(Nat)(Nat.succ(Nat.zero)) {
+  Vec.vcons(Nat.zero, Nat.zero, Vec.vnil)
+}
+
+// Lengths compose: the tail's index has to line up with the `m` given to
+// `vcons`, so a nested vector is checked all the way down.
+defspec two_elements_have_length_two: Vec(Nat)(Nat.succ(Nat.succ(Nat.zero))) {
+  Vec.vcons(Nat.succ(Nat.zero), Nat.zero,
+    Vec.vcons(Nat.zero, Nat.zero, Vec.vnil))
+}
+
+// Each of the following is a type error.  They are kept here as comments
+// because an example file has to keep checking; `cli/.../IndexedFamilySuite.scala`
+// asserts that every one of them is rejected.
+//
+//   defspec wrong: Vec(Nat)(Nat.succ(Nat.zero)) { Vec.vnil }
+//     expected: ((Vec Nat) (succ zero))
+//     actual:   ((Vec Nat) zero)
+//
+//   defspec wrong_tail: Vec(Nat)(Nat.succ(Nat.succ(Nat.zero))) {
+//     Vec.vcons(Nat.succ(Nat.zero), Nat.zero, Vec.vnil)
+//   }
+//     the tail is length zero where length one was required
+//
+// Before v0.10.0 both of them checked successfully.
+
+// What is NOT yet supported: induction over an indexed family.  A proof about
+// every `Vec(A)(n)` needs the motive to abstract over `n` and each branch to
+// specialise it, which the tactic engine does not do yet.  So this file states
+// facts about concrete vectors only.  See step 4 in docs/indexed-families.md.

@@ -7,8 +7,20 @@ package sroof.core
  *  second-to-last = Var(1), etc. (standard De Bruijn convention).
  *
  *  `retIndices`: the concrete index values in the constructor's return type.
- *  For example, Vec.nil has retIndices = [Nat.zero], Vec.cons has [Nat.succ(m)].
+ *  For example, Vec.vnil has retIndices = [Nat.zero], Vec.vcons has [Nat.succ(m)].
  *  Empty for non-indexed types like Nat.
+ *
+ *  Written by `Elaborator.elabInductive` (since v0.8) and read by
+ *  `IndChecker.ctorIndexValues` (since v0.10) to derive a constructor's type
+ *  instead of echoing back the expected one.  It uses the same progressive
+ *  De Bruijn convention as the *last* entry of `argTpes`, so it may mention the
+ *  constructor's own arguments: Var(0..n-1) are those arguments in reverse,
+ *  then the type's indices, then its parameters.
+ *
+ *  Empty is not "index zero" but "this constructor states no index" — the shape
+ *  of every declaration written before indexed return types were expressible.
+ *  `IndChecker` treats such a family as un-indexed, which is what keeps
+ *  `stdlib/Vec.sroof` meaning what it always meant.
  */
 case class CtorDef(
   name:       String,

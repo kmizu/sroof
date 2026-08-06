@@ -37,9 +37,25 @@ object IndChecker:
                 s"Constructor '$name' expects ${ctorDef.argTpes.length} argument(s), " +
                 s"got ${args.length}"
               ))
+            else if isIndexed(indDef) then
+              val p = indDef.params.length
+              val q = indDef.indices.length
+              // The heuristic below can only recover a value that appears *directly* as
+              // some argument's type, so it learns nothing from a nullary constructor
+              // like `vnil`.  Widening its window to p+q is still necessary: in an
+              // indexed family the indices sit between the ctor args and the params, so
+              // a p-wide window mislabels every parameter slot.  The index half is then
+              // overwritten by values derived from the declaration rather than guessed.
+              val spine = extractParamValsFromArgs(indDef, ctorDef, args, ctx, p + q)
+              for
+                _       <- checkArgsDependent(ctx, args, ctorDef.argTpes, spine)
+                idxVals <- ctorIndexValues(indDef, ctorDef, args, spine)
+              yield
+                (spine.take(p) ++ idxVals)
+                  .foldLeft(Term.Ind(indRef, Nil, Nil): Term)(Term.App.apply)
             else
               // Infer param values from arg types (heuristic: works for m=0 and simple m=1 cases)
-              val paramVals = extractParamValsFromArgs(indDef, ctorDef, args, ctx)
+              val paramVals = extractParamValsFromArgs(indDef, ctorDef, args, ctx, indDef.params.length)
               checkArgsDependent(ctx, args, ctorDef.argTpes, paramVals).map { _ =>
                 // Return type: Ind applied to inferred param values
                 paramVals.foldLeft(Term.Ind(indRef, Nil, Nil): Term)(Term.App.apply)
@@ -117,11 +133,82 @@ object IndChecker:
                 s"Constructor '$name' expects ${ctorDef.argTpes.length} argument(s), " +
                 s"got ${args.length}"
               ))
+            else if isIndexed(indDef) then
+              val p = indDef.params.length
+              val q = indDef.indices.length
+              if paramVals.length != p + q then
+                Left(TypeError.Custom(
+                  s"'$indRef' takes $p parameter(s) and $q index(es), but the expected " +
+                  s"type supplies ${paramVals.length} argument(s)"
+                ))
+              else
+                for
+                  _       <- checkArgsDependent(ctx, args, ctorDef.argTpes, paramVals)
+                  idxVals <- ctorIndexValues(indDef, ctorDef, args, paramVals)
+                yield
+                  // Parameters are read off the expected type, as for any parameterised
+                  // inductive.  The indices are *derived* from the constructor's own
+                  // declaration and deliberately NOT taken from the expected type — that
+                  // is the whole point.  Echoing them back would make the caller's
+                  // `convCheck` compare the expected type with itself, which is what
+                  // let a length-0 `vnil` pass as a length-1 `Vec` before v0.10.
+                  (paramVals.take(p) ++ idxVals)
+                    .foldLeft(Term.Ind(indRef, Nil, Nil): Term)(Term.App.apply)
             else
               checkArgsDependent(ctx, args, ctorDef.argTpes, paramVals).map { _ =>
                 // Return type: Ind applied to param values
                 paramVals.foldLeft(Term.Ind(indRef, Nil, Nil): Term)(Term.App.apply)
               }
+
+  // ---- indexed families ----
+
+  /** True when this inductive both declares indices *and* states them on every
+   *  constructor.
+   *
+   *  Both halves matter.  A declaration written before indexed return types were
+   *  expressible has `indices` populated but `retIndices = Nil` everywhere — that is
+   *  the state of `stdlib/Vec.sroof` — and there is nothing to derive an index from,
+   *  so it must keep behaving exactly as it did.  Requiring *all* constructors to
+   *  state their indices also means a half-annotated declaration is treated as
+   *  un-indexed rather than silently deriving `Nil` for the annotated ones.
+   */
+  private def isIndexed(indDef: IndDef): Boolean =
+    indDef.indices.nonEmpty &&
+    indDef.ctors.forall(_.retIndices.length == indDef.indices.length)
+
+  /** The index values of `ctorDef`'s return type, instantiated at this application's
+   *  arguments and the family's parameter values.
+   *
+   *  `retIndices` is elaborated in the scope the *last* argument type sees, so it uses
+   *  the same progressive De Bruijn convention `instantiateArgType` already decodes,
+   *  with `j = args.length`.  `spine` must therefore be the full parameter-then-index
+   *  list (length p+q) in declaration order — which is exactly what
+   *  `extractParamsFromExpected` peels off an applied indexed type.
+   *
+   *  A return index that mentions one of the family's *own* index variables is
+   *  rejected.  `case vnil: Vec(A)(n)` would make the derived index equal whatever
+   *  the caller expected, so `convCheck` would compare the expected type with itself
+   *  and accept anything — the same vacuity this release exists to remove.
+   */
+  private def ctorIndexValues(
+    indDef:  IndDef,
+    ctorDef: CtorDef,
+    args:    List[Term],
+    spine:   List[Term],
+  ): Either[TypeError, List[Term]] =
+    val n = args.length
+    val q = indDef.indices.length
+    ctorDef.retIndices.zipWithIndex.find { case (t, _) =>
+      (n until n + q).exists(i => Term.freeIn(i, t))
+    } match
+      case Some((t, k)) =>
+        Left(TypeError.Custom(
+          s"Constructor '${ctorDef.name}' of '${indDef.name}': return index #${k + 1} " +
+          s"(${t.show}) mentions one of '${indDef.name}'s own index variables. " +
+          s"A constructor's index must be built from its arguments and the type's parameters."
+        ))
+      case None =>
+        Right(ctorDef.retIndices.map(t => instantiateArgType(t, args, spine)))
 
   // ---- private helpers ----
 
@@ -250,24 +337,30 @@ object IndChecker:
 
   /** Infer param values from constructor arg types (heuristic for infer mode).
    *
-   *  For each param position k, finds the first argTpe(j) that is exactly Var(j+m-1-k)
-   *  (i.e., directly the k-th param), and uses the inferred type of the corresponding arg.
-   *  Returns Uni(0) for params that cannot be extracted (fallback).
+   *  For each slot k, finds the first argTpe(j) that is exactly Var(j+window-1-k)
+   *  (i.e., directly the k-th entry), and uses the inferred type of the corresponding arg.
+   *  Returns Uni(0) for slots that cannot be extracted (fallback).
+   *
+   *  `window` is the number of De Bruijn slots the declaration's binders occupy beyond
+   *  the constructor's own arguments: `params.length` for an ordinary inductive, and
+   *  `params.length + indices.length` for an indexed family, where the indices sit
+   *  between the arguments and the parameters.  Passing the wrong width does not just
+   *  lose information — it reads a parameter out of an index's slot.
    */
   private def extractParamValsFromArgs(
     indDef:  IndDef,
     ctorDef: CtorDef,
     args:    List[Term],
     ctx:     Context,
+    window:  Int,
   )(using env: GlobalEnv): List[Term] =
-    val m = indDef.params.length
-    if m == 0 then Nil
+    if window == 0 then Nil
     else
-      val paramVals = Array.fill[Term](m)(Term.Uni(0))
+      val paramVals = Array.fill[Term](window)(Term.Uni(0))
       ctorDef.argTpes.zipWithIndex.foreach { (rawTpe, j) =>
         rawTpe match
-          case Term.Var(i) if i >= j && i < j + m =>
-            val paramIdx = m - 1 - (i - j)
+          case Term.Var(i) if i >= j && i < j + window =>
+            val paramIdx = window - 1 - (i - j)
             args.lift(j).foreach { arg =>
               Bidirectional.infer(ctx, arg) match
                 case Right(argType) => paramVals(paramIdx) = argType

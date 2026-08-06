@@ -1,6 +1,6 @@
 package sroof.checker
 
-import sroof.core.{Term, Context, GlobalEnv, MatchCase}
+import sroof.core.{Term, Context, GlobalEnv, MatchCase, IndDef, CtorDef, Param}
 import munit.FunSuite
 
 /** TDD tests for inductive type checking (Con + Mat).
@@ -113,3 +113,79 @@ class IndCheckerSuite extends FunSuite:
     )
     val mat = Term.Mat(Term.Var(0), cases, natTpe)
     assert(Bidirectional.infer(ctxWithN, mat).isLeft)
+
+  // ======== Indexed families ========
+  //
+  // These build the `IndDef` directly rather than going through the parser,
+  // because the case that matters most here cannot be written in `.sroof` syntax:
+  // a family with indices but *no* parameters. `Bidirectional`'s check-mode route
+  // for constructors is guarded on `params.nonEmpty`, so such a family is typed by
+  // `inferCon` — a different branch from the one `cli/IndexedFamilySuite` covers.
+
+  /** `Flag()(n: Nat)`: `off` is index 0, `on` is index 1. No parameters. */
+  private val flagDef = IndDef(
+    name    = "Flag",
+    params  = Nil,
+    ctors   = List(
+      CtorDef("off", Nil, List(Term.Con("zero", "Nat", Nil))),
+      CtorDef("on",  Nil, List(Term.Con("succ", "Nat", List(Term.Con("zero", "Nat", Nil))))),
+    ),
+    universe = 0,
+    indices  = List(Param("n", natTpe)),
+  )
+  private val flagEnv                = GlobalEnv.withNat.addInd(flagDef)
+  private def flag(idx: Term): Term  = Term.App(Term.Ind("Flag", Nil, Nil), idx)
+  private val zero                   = Term.Con("zero", "Nat", Nil)
+  private val one                    = Term.Con("succ", "Nat", List(zero))
+
+  test("indexed, parameterless: each constructor infers its own index"):
+    given GlobalEnv = flagEnv
+    assertEquals(Bidirectional.infer(ctx, Term.Con("off", "Flag", Nil)), Right(flag(zero)))
+    assertEquals(Bidirectional.infer(ctx, Term.Con("on",  "Flag", Nil)), Right(flag(one)))
+
+  test("SOUNDNESS: indexed, parameterless: a constructor cannot borrow another's index"):
+    given GlobalEnv = flagEnv
+    // The accepting half is asserted first and deliberately: before v0.10 this
+    // family's constructors inferred the bare head `Ind("Flag")`, so *nothing*
+    // checked against an applied type and the rejection below would have held for
+    // the wrong reason.
+    assert(
+      Bidirectional.check(ctx, Term.Con("off", "Flag", Nil), flag(zero)).isRight,
+      "`off` must check against its own index",
+    )
+    assert(
+      Bidirectional.check(ctx, Term.Con("off", "Flag", Nil), flag(one)).isLeft,
+      "`off` has index 0 and must not check against index 1",
+    )
+
+  test("backward compatibility: indices without declared return indices are phantom"):
+    // Exactly the shape of every declaration written before v0.10: `indices` is
+    // populated, `retIndices` is empty everywhere. There is nothing to derive, so
+    // the inferred type must stay the bare head it has always been — not
+    // `Ind(...)` applied to a guess.
+    val phantomDef = flagDef.copy(
+      name  = "Phantom",
+      ctors = List(CtorDef("only", Nil, Nil)),
+    )
+    given GlobalEnv = GlobalEnv.withNat.addInd(phantomDef)
+    assertEquals(
+      Bidirectional.infer(ctx, Term.Con("only", "Phantom", Nil)),
+      Right(Term.Ind("Phantom", Nil, Nil)),
+    )
+
+  test("a half-annotated family is treated as un-indexed, not partly indexed"):
+    // If only some constructors state their index, deriving indices for those and
+    // nothing for the rest would give the family two different arities. Fall back
+    // to the pre-v0.10 reading instead.
+    val halfDef = flagDef.copy(
+      name  = "Half",
+      ctors = List(
+        CtorDef("stated", Nil, List(zero)),
+        CtorDef("silent", Nil, Nil),
+      ),
+    )
+    given GlobalEnv = GlobalEnv.withNat.addInd(halfDef)
+    assertEquals(
+      Bidirectional.infer(ctx, Term.Con("stated", "Half", Nil)),
+      Right(Term.Ind("Half", Nil, Nil)),
+    )
