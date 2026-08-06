@@ -124,12 +124,16 @@ class NegativeCodeSuite extends FunSuite:
     }
   }
 
-  test("a generic enum is rejected") {
+  test("a type parameter used outside its own definition is rejected") {
+    // Generic enums are supported as of v0.7; what is still rejected is a type
+    // that is neither an enum of this module nor a parameter in scope.
     rejects(Fixtures.bareModule(
       """  enum Box[A]:
         |    case Full(a: A)
+        |
+        |  def unwrap(b: Box[Int]): Box[Int] = b
         |""".stripMargin)) { r =>
-      assert(r.mentions("generic enums are not supported"), r.report)
+      assert(r.mentions("is not supported"), r.report)
     }
   }
 

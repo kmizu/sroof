@@ -6,7 +6,7 @@ import dotty.tools.dotc.core.Flags
 import dotty.tools.dotc.core.NameOps.stripModuleClassSuffix
 import dotty.tools.dotc.core.StdNames.nme
 import dotty.tools.dotc.core.Symbols.Symbol
-import dotty.tools.dotc.core.Types.Type
+import dotty.tools.dotc.core.Types.{NoType, Type}
 
 import sroof.frontend.*
 
@@ -100,6 +100,9 @@ final class TreeExtractor(dsl: DslSymbols)(using Context):
     params:      List[ResolvedBinder],
     result:      ResolvedType,
     binderScope: Map[Symbol, ResolvedBinder],
+    typeParams:  List[ResolvedBinder] = Nil,
+    /** Type-parameter symbols of this definition, for resolving its own types. */
+    tparamIds:   Map[Symbol, SymbolId] = Map.empty,
   )
 
   private def isVerifiedDef(sym: Symbol): Boolean =
@@ -133,37 +136,65 @@ final class TreeExtractor(dsl: DslSymbols)(using Context):
   ): Either[FrontendError, DefSignature] =
     val name = dd.symbol.name.toString
     val span = spanOf(dd)
-    if dd.leadingTypeParams.nonEmpty then
-      Left(FrontendError.defError(name, "type parameters are not supported", span))
-    else
-      // Curried parameter lists are flattened: core types are curried anyway, so
-      // `f(a: A)(b: B)` and `f(a: A, b: B)` produce the same `Pi(a, A, Pi(b, B, _))`.
-      // Call sites are matched against the flattened arity, and a partial
-      // application is rejected there rather than silently accepted here.
-      val params = dd.termParamss.flatten
-      for
-        binders <- params.foldLeft[Either[FrontendError, List[ResolvedBinder]]](Right(Nil)) { (acc, vd) =>
-                     for
-                       done <- acc
-                       t    <- resolveDeclaredType(vd.tpt.tpe, index, name, spanOf(vd))
-                     yield done :+ ResolvedBinder(idOf(vd.symbol), vd.name.toString, t)
-                   }
-        // A theorem's result type is the DSL marker, checked separately.
-        result  <- if theoremDef then Right(ResolvedType.Inductive(SymbolId("<proof>"), "Proof"))
-                   else resolveDeclaredType(dd.tpt.tpe, index, name, span)
-      yield DefSignature(binders, result, params.map(_.symbol).zip(binders).toMap)
+    // Type parameters become leading `Type`-valued parameters in core, so they
+    // are collected here and quantified ahead of the value parameters.
+    val tparamDefs = dd.leadingTypeParams
+    val tparamIds: Map[Symbol, SymbolId] = tparamDefs.map(td => td.symbol -> idOf(td.symbol)).toMap
+    val tparams = tparamDefs.map(td =>
+      ResolvedBinder(idOf(td.symbol), td.name.toString,
+        ResolvedType.TypeVar(idOf(td.symbol), td.name.toString)))
+    // Curried parameter lists are flattened: core types are curried anyway, so
+    // `f(a: A)(b: B)` and `f(a: A, b: B)` produce the same `Pi(a, A, Pi(b, B, _))`.
+    // Call sites are matched against the flattened arity, and a partial
+    // application is rejected there rather than silently accepted here.
+    val params = dd.termParamss.flatten
+    for
+      binders <- params.foldLeft[Either[FrontendError, List[ResolvedBinder]]](Right(Nil)) { (acc, vd) =>
+                   for
+                     done <- acc
+                     t    <- resolveDeclaredType(vd.tpt.tpe, index, name, spanOf(vd), tparamIds)
+                   yield done :+ ResolvedBinder(idOf(vd.symbol), vd.name.toString, t)
+                 }
+      // A theorem's result type is the DSL marker, checked separately.
+      result  <- if theoremDef then Right(ResolvedType.Inductive(SymbolId("<proof>"), "Proof"))
+                 else resolveDeclaredType(dd.tpt.tpe, index, name, span, tparamIds)
+    yield DefSignature(binders, result, params.map(_.symbol).zip(binders).toMap, tparams, tparamIds)
 
+  /** Resolve a source type against the module's enums and the type parameters in
+   *  scope.
+   *
+   *  `tparams` maps a type-parameter symbol to its IR identity.  It is threaded
+   *  rather than looked up globally because the same name may be a parameter of
+   *  the enum, of the definition, or of neither.
+   */
   private def resolveDeclaredType(
     tpe:     Type,
     index:   InductiveIndex,
     subject: String,
     span:    SourceSpan,
+    tparams: Map[Symbol, SymbolId] = Map.empty,
   ): Either[FrontendError, ResolvedType] =
-    index.byClass.get(tpe.typeSymbol) match
-      case Some(ind) => Right(ResolvedType.Inductive(ind.id, ind.name))
-      case None      => Left(FrontendError.defError(subject,
-        s"type '${tpe.show}' is not supported; verified code may only use enums " +
-        "declared in the same @proofModule", span))
+    val sym = tpe.typeSymbol
+    if tparams.contains(sym) then
+      Right(ResolvedType.TypeVar(tparams(sym), sym.name.toString))
+    else
+      index.byClass.get(sym) match
+        case Some(ind) =>
+          tpe.argInfos.foldLeft[Either[FrontendError, List[ResolvedType]]](Right(Nil)) { (acc, a) =>
+            for
+              done <- acc
+              t    <- resolveDeclaredType(a, index, subject, span, tparams)
+            yield done :+ t
+          }.flatMap { args =>
+            if args.length == ind.typeParams.length then
+              Right(ResolvedType.Inductive(ind.id, ind.name, args))
+            else Left(FrontendError.defError(subject,
+              s"type '${tpe.show}' expects ${ind.typeParams.length} type argument(s) but got " +
+              s"${args.length}", span))
+          }
+        case None => Left(FrontendError.defError(subject,
+          s"type '${tpe.show}' is not supported; verified code may only use enums " +
+          "declared in the same @proofModule, or a type parameter in scope", span))
 
   private def extractDefinitions(
     body:  List[Tree],
@@ -176,8 +207,9 @@ final class TreeExtractor(dsl: DslSymbols)(using Context):
       val name = dd.symbol.name.toString
       for
         done <- acc
-        rhs  <- extractExpr(dd.rhs, sig.binderScope, index, sigs, name)
-      yield done :+ ResolvedDef(idOf(dd.symbol), name, sig.params, sig.result, rhs, spanOf(dd))
+        rhs  <- extractExpr(dd.rhs, sig.binderScope, index, sigs, name, sig.tparamIds)
+      yield done :+ ResolvedDef(idOf(dd.symbol), name, sig.params, sig.result, rhs, spanOf(dd),
+                                sig.typeParams)
     }
 
   // ================================================================
@@ -190,6 +222,7 @@ final class TreeExtractor(dsl: DslSymbols)(using Context):
     index:   InductiveIndex,
     sigs:    Map[Symbol, DefSignature],
     subject: String,
+    tparams: Map[Symbol, SymbolId] = Map.empty,
   ): Either[FrontendError, ResolvedExpr] =
     val span = spanOf(tree)
     strip(tree) match
@@ -198,16 +231,20 @@ final class TreeExtractor(dsl: DslSymbols)(using Context):
 
       case t @ (_: Ident | _: Select) if index.byCtor.contains(t.symbol) =>
         val (ind, ctor) = index.byCtor(t.symbol)
-        if ctor.fields.isEmpty then Right(ResolvedExpr.Construct(ind.id, ctor.id, ctor.name, Nil, span))
-        else Left(FrontendError.defError(subject,
-          s"constructor '${ctor.name}' is used without its ${ctor.fields.length} argument(s)", span))
+        if ctor.fields.nonEmpty then
+          Left(FrontendError.defError(subject,
+            s"constructor '${ctor.name}' is used without its ${ctor.fields.length} argument(s)", span))
+        else
+          resolveTypeArgs(Nil, t.tpe.widen, ind.typeParams.length, index, subject, span, tparams)
+            .map(targs => ResolvedExpr.Construct(ind.id, ctor.id, ctor.name, Nil, span, targs))
 
       // A reference to a definition with no parameters reaches us bare, with no
       // enclosing `Apply` to carry the argument list.
       case t @ (_: Ident | _: Select) if sigs.contains(t.symbol) && !isTheorem(t.symbol) =>
         val sig = sigs(t.symbol)
         if sig.params.isEmpty then
-          Right(ResolvedExpr.Call(idOf(t.symbol), t.symbol.name.toString, Nil, span))
+          resolveTypeArgs(typeArgsOf(t), NoType, sig.typeParams.length, index, subject, span, tparams)
+            .map(targs => ResolvedExpr.Call(idOf(t.symbol), t.symbol.name.toString, Nil, span, targs))
         else
           Left(FrontendError.defError(subject,
             s"'${t.symbol.name}' is used without its ${sig.params.length} argument(s); " +
@@ -215,16 +252,27 @@ final class TreeExtractor(dsl: DslSymbols)(using Context):
 
       case Apply(Select(New(tpt), _), args) if index.byCtor.contains(tpt.tpe.typeSymbol) =>
         val (ind, ctor) = index.byCtor(tpt.tpe.typeSymbol)
-        constructorCall(ind, ctor, args, binders, index, sigs, subject, span)
+        for
+          targs <- resolveTypeArgs(Nil, tpt.tpe.widen, ind.typeParams.length,
+                                   index, subject, span, tparams)
+          built <- constructorCall(ind, ctor, args, binders, index, sigs, subject, span, targs, tparams)
+        yield built
 
       case app: Apply =>
         // Curried calls arrive as nested Applies; flatten them so `f(a)(b)` and
         // `f(a, b)` reach the same arity check.
         val (callee, args) = flattenApply(app)
         val sym = stripTypeApply(callee).symbol
+        // Scala infers type arguments; core needs them written down, and the
+        // typed tree still carries them at this phase.
+        val treeTypeArgs = typeArgsOf(callee)
         if index.byCtor.contains(sym) then
           val (ind, ctor) = index.byCtor(sym)
-          constructorCall(ind, ctor, args, binders, index, sigs, subject, span)
+          for
+            targs <- resolveTypeArgs(treeTypeArgs, app.tpe.widen, ind.typeParams.length,
+                                     index, subject, span, tparams)
+            built <- constructorCall(ind, ctor, args, binders, index, sigs, subject, span, targs, tparams)
+          yield built
         else if sigs.contains(sym) && !isTheorem(sym) then
           val sig = sigs(sym)
           if sig.params.length != args.length then
@@ -232,8 +280,11 @@ final class TreeExtractor(dsl: DslSymbols)(using Context):
               s"call to '${sym.name}' expects ${sig.params.length} argument(s) but got ${args.length}; " +
               "partial application is not supported in verified code", span))
           else
-            extractArgs(args, binders, index, sigs, subject)
-              .map(as => ResolvedExpr.Call(idOf(sym), sym.name.toString, as, span))
+            for
+              targs <- resolveTypeArgs(treeTypeArgs, NoType, sig.typeParams.length,
+                                       index, subject, span, tparams)
+              as    <- extractArgs(args, binders, index, sigs, subject, tparams)
+            yield ResolvedExpr.Call(idOf(sym), sym.name.toString, as, span, targs)
         else if dsl.dslTermSymbols.contains(sym) then
           Left(FrontendError.defError(subject,
             s"the proof DSL operation '${sym.name}' cannot appear in verified computation", span))
@@ -244,26 +295,27 @@ final class TreeExtractor(dsl: DslSymbols)(using Context):
       case Match(scrutinee, cases) =>
         for
           ind      <- inductiveOfScrutinee(scrutinee, index, subject, span)
-          scrut    <- extractExpr(scrutinee, binders, index, sigs, subject)
+          scrutTpe <- resolveDeclaredType(scrutinee.tpe.widen, index, subject, span, tparams)
+          scrut    <- extractExpr(scrutinee, binders, index, sigs, subject, tparams)
           resolved <- cases.foldLeft[Either[FrontendError, List[ResolvedCase]]](Right(Nil)) { (acc, cd) =>
                         for
                           done <- acc
-                          c    <- extractCase(cd, binders, index, sigs, subject)
+                          c    <- extractCase(cd, binders, index, sigs, subject, tparams)
                         yield done :+ c
                       }
           _        <- checkBranchCoverage(ind, resolved.map(_.ctor), resolved.map(_.ctorName), subject, span)
-        yield ResolvedExpr.Match(scrut, CoreTranslator.normaliseCaseOrder(ind, resolved), span)
+        yield ResolvedExpr.Match(scrut, CoreTranslator.normaliseCaseOrder(ind, resolved), span, scrutTpe)
 
       case Block((vd: ValDef) :: restStats, result) if isImmutableVal(vd) =>
         // Peel one binding at a time; the remaining statements stay a Block, so a
         // run of `val`s nests into nested `Let`s.  Any non-`val` statement lands
         // in the recursive call and is rejected there.
         for
-          tpe   <- resolveDeclaredType(vd.tpt.tpe, index, subject, spanOf(vd))
-          value <- extractExpr(vd.rhs, binders, index, sigs, subject)
+          tpe   <- resolveDeclaredType(vd.tpt.tpe, index, subject, spanOf(vd), tparams)
+          value <- extractExpr(vd.rhs, binders, index, sigs, subject, tparams)
           binder = ResolvedBinder(idOf(vd.symbol), vd.name.toString, tpe)
           rest   = if restStats.isEmpty then result else Block(restStats, result)
-          body  <- extractExpr(rest, binders + (vd.symbol -> binder), index, sigs, subject)
+          body  <- extractExpr(rest, binders + (vd.symbol -> binder), index, sigs, subject, tparams)
         yield ResolvedExpr.Let(binder, value, body, span)
 
       case other =>
@@ -281,21 +333,61 @@ final class TreeExtractor(dsl: DslSymbols)(using Context):
       case other => (other, Nil)
 
   private def constructorCall(
-    ind:     ResolvedInductive,
-    ctor:    ResolvedConstructor,
-    args:    List[Tree],
-    binders: Map[Symbol, ResolvedBinder],
-    index:   InductiveIndex,
-    sigs:    Map[Symbol, DefSignature],
-    subject: String,
-    span:    SourceSpan,
+    ind:      ResolvedInductive,
+    ctor:     ResolvedConstructor,
+    args:     List[Tree],
+    binders:  Map[Symbol, ResolvedBinder],
+    index:    InductiveIndex,
+    sigs:     Map[Symbol, DefSignature],
+    subject:  String,
+    span:     SourceSpan,
+    typeArgs: List[ResolvedType],
+    tparams:  Map[Symbol, SymbolId],
   ): Either[FrontendError, ResolvedExpr] =
     if ctor.fields.length != args.length then
       Left(FrontendError.defError(subject,
         s"constructor '${ctor.name}' expects ${ctor.fields.length} field(s) but got ${args.length}", span))
     else
-      extractArgs(args, binders, index, sigs, subject)
-        .map(as => ResolvedExpr.Construct(ind.id, ctor.id, ctor.name, as, span))
+      extractArgs(args, binders, index, sigs, subject, tparams)
+        .map(as => ResolvedExpr.Construct(ind.id, ctor.id, ctor.name, as, span, typeArgs))
+
+  /** Type arguments of an applied callee, if the tree carries any. */
+  private def typeArgsOf(tree: Tree): List[Tree] = tree match
+    case TypeApply(_, targs) => targs
+    case _                   => Nil
+
+  /** Resolve a use site's type arguments.
+   *
+   *  Preference order: the arguments the typer attached to the call, then the
+   *  arguments of the expression's own type.  A nullary enum value such as
+   *  `Empty` carries no `TypeApply`, but its type does say `Box[Nat]`.
+   */
+  private def resolveTypeArgs(
+    fromTree: List[Tree],
+    fromType: Type,
+    expected: Int,
+    index:    InductiveIndex,
+    subject:  String,
+    span:     SourceSpan,
+    tparams:  Map[Symbol, SymbolId],
+  ): Either[FrontendError, List[ResolvedType]] =
+    if expected == 0 then Right(Nil)
+    else
+      val candidates: List[Type] =
+        if fromTree.length == expected then fromTree.map(_.tpe)
+        else if fromType.exists && fromType.argInfos.length == expected then fromType.argInfos
+        else Nil
+      if candidates.length != expected then
+        Left(FrontendError.defError(subject,
+          s"could not determine $expected type argument(s) here; verified code needs them " +
+          "explicit, so annotate the call", span))
+      else
+        candidates.foldLeft[Either[FrontendError, List[ResolvedType]]](Right(Nil)) { (acc, t) =>
+          for
+            done <- acc
+            r    <- resolveDeclaredType(t, index, subject, span, tparams)
+          yield done :+ r
+        }
 
   private def extractArgs(
     args:    List[Tree],
@@ -303,11 +395,12 @@ final class TreeExtractor(dsl: DslSymbols)(using Context):
     index:   InductiveIndex,
     sigs:    Map[Symbol, DefSignature],
     subject: String,
+    tparams: Map[Symbol, SymbolId] = Map.empty,
   ): Either[FrontendError, List[ResolvedExpr]] =
     args.foldLeft[Either[FrontendError, List[ResolvedExpr]]](Right(Nil)) { (acc, a) =>
       for
         done <- acc
-        e    <- extractExpr(a, binders, index, sigs, subject)
+        e    <- extractExpr(a, binders, index, sigs, subject, tparams)
       yield done :+ e
     }
 
@@ -352,6 +445,7 @@ final class TreeExtractor(dsl: DslSymbols)(using Context):
     index:   InductiveIndex,
     sigs:    Map[Symbol, DefSignature],
     subject: String,
+    tparams: Map[Symbol, SymbolId] = Map.empty,
   ): Either[FrontendError, ResolvedCase] =
     for
       _   <- if cd.guard.isEmpty then Right(())
@@ -359,7 +453,7 @@ final class TreeExtractor(dsl: DslSymbols)(using Context):
                "pattern guards are not supported in verified code", spanOf(cd.guard)))
       pat <- extractPattern(cd.pat, index, subject)
       (_, ctor, fieldBinders, symbolScope) = pat
-      body <- extractExpr(cd.body, binders ++ symbolScope, index, sigs, subject)
+      body <- extractExpr(cd.body, binders ++ symbolScope, index, sigs, subject, tparams)
     yield ResolvedCase(ctor.id, ctor.name, fieldBinders, body, spanOf(cd))
 
   /** A pattern's constructor, its field binders in field order, and the mapping
@@ -488,11 +582,11 @@ final class TreeExtractor(dsl: DslSymbols)(using Context):
         case Apply(Apply(prove, List(goalTree)), List(tacticTree))
              if stripTypeApply(strip(prove)).symbol == dsl.proveMethod =>
           for
-            goal   <- extractProp(goalTree, sig.binderScope, index, sigs, name)
+            goal   <- extractProp(goalTree, sig.binderScope, index, sigs, name, sig.tparamIds)
             tactic <- extractTactic(tacticTree, sig.binderScope, index, sigs, name, None, Map.empty)
           yield ResolvedTheorem(
             idOf(dd.symbol), name, sig.params, goal, tactic,
-            isSimp = annotationsOf(dd.symbol).contains(dsl.simpAnnot), span)
+            isSimp = annotationsOf(dd.symbol).contains(dsl.simpAnnot), span, sig.typeParams)
         case _ =>
           Left(FrontendError.theoremError(name, "body must be prove(goal)(tactic)", spanOf(dd.rhs)))
 
@@ -502,19 +596,19 @@ final class TreeExtractor(dsl: DslSymbols)(using Context):
     index:   InductiveIndex,
     sigs:    Map[Symbol, DefSignature],
     subject: String,
+    tparams: Map[Symbol, SymbolId] = Map.empty,
   ): Either[FrontendError, ResolvedProp] =
     val span = spanOf(tree)
     strip(tree) match
       case Apply(Apply(eq, List(lhsTree)), List(rhsTree))
            if stripTypeApply(strip(eq)).symbol == dsl.eqMethod =>
         for
-          tpe <- index.byClass.get(lhsTree.tpe.widen.typeSymbol)
-                   .map(i => ResolvedType.Inductive(i.id, i.name))
-                   .toRight(FrontendError.theoremError(subject,
+          tpe <- resolveDeclaredType(lhsTree.tpe.widen, index, subject, span, tparams).left.map(e =>
+                   FrontendError.theoremError(subject,
                      s"equality at '${lhsTree.tpe.widen.show}' is not supported; both sides must " +
                      "have an enum type declared in this @proofModule", span))
-          lhs <- extractExpr(lhsTree, binders, index, sigs, subject)
-          rhs <- extractExpr(rhsTree, binders, index, sigs, subject)
+          lhs <- extractExpr(lhsTree, binders, index, sigs, subject, tparams)
+          rhs <- extractExpr(rhsTree, binders, index, sigs, subject, tparams)
         yield ResolvedProp(tpe, lhs, rhs, span)
       case _ =>
         Left(FrontendError.theoremError(subject,

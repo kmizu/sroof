@@ -6,7 +6,7 @@ import dotty.tools.dotc.core.Flags
 import dotty.tools.dotc.core.NameOps.stripModuleClassSuffix
 import dotty.tools.dotc.core.StdNames.nme
 import dotty.tools.dotc.core.Symbols.Symbol
-import dotty.tools.dotc.core.Types.{MethodType, Type}
+import dotty.tools.dotc.core.Types.{MethodType, PolyType, Type}
 
 import sroof.frontend.*
 
@@ -63,23 +63,36 @@ object InductiveExtractor:
     val name = cls.name.toString
     val span = spanOf(td)
 
-    def fieldType(tpe: Type, at: SourceSpan): Either[FrontendError, ResolvedType] =
-      val sym = tpe.typeSymbol
-      if enumClasses.contains(sym) then Right(ResolvedType.Inductive(idOf(sym), sym.name.toString))
-      else Left(FrontendError.enumError(name,
-        s"field type '${tpe.show}' is not an enum declared in this @proofModule", at))
+    val typeParams = cls.typeParams.map(tp =>
+      ResolvedBinder(idOf(tp), tp.name.toString, ResolvedType.TypeVar(idOf(tp), tp.name.toString)))
+    val typeParamIds: Map[Symbol, SymbolId] =
+      cls.typeParams.map(tp => (tp: Symbol) -> idOf(tp)).toMap
 
-    if cls.typeParams.nonEmpty then
-      // Not merely unimplemented here: the tactic engine cannot run induction
-      // over a parameterised inductive (it extends the branch context with raw
-      // constructor argument types that still mention the type parameters).
-      // Accepting the declaration would give generic types with no way to prove
-      // anything inductive about them.  See docs/scala3-frontend.md §11.
-      Left(FrontendError.enumError(name,
-        "generic enums are not supported: induction over parameterised inductive types " +
-        "is not yet available in the tactic engine, so a generic enum could be declared " +
-        "but not reasoned about", span))
-    else
+    // `own` maps a *constructor's* own type parameters onto the enum's, by
+    // position: dotc gives `case Cons[A](...)` its own `A`, distinct from the
+    // `A` of `enum Lst[A]`, and a field's type mentions the former.
+    def fieldType(
+      tpe: Type,
+      at:  SourceSpan,
+      own: Map[Symbol, SymbolId],
+    ): Either[FrontendError, ResolvedType] =
+      val sym = tpe.typeSymbol
+      if own.contains(sym) then
+        Right(ResolvedType.TypeVar(own(sym), sym.name.toString))
+      else if typeParamIds.contains(sym) then
+        Right(ResolvedType.TypeVar(typeParamIds(sym), sym.name.toString))
+      else if enumClasses.contains(sym) then
+        // A field of an enum type carries that enum's own type arguments.
+        tpe.argInfos.foldLeft[Either[FrontendError, List[ResolvedType]]](Right(Nil)) { (acc, a) =>
+          for
+            done <- acc
+            t    <- fieldType(a, at, own)
+          yield done :+ t
+        }.map(args => ResolvedType.Inductive(idOf(sym), sym.name.toString, args))
+      else Left(FrontendError.enumError(name,
+        s"field type '${tpe.show}' is not an enum or type parameter of this @proofModule", at))
+
+    locally:
       // `children` are the enum's cases.  Sorting by source offset pins the order
       // to what the user wrote, which is exactly what `IndDef.ctors` order means.
       val children = cls.children.sortBy(_.span.start)
@@ -92,21 +105,22 @@ object InductiveExtractor:
           for
             state <- acc
             (ctors, aliases, recursive) = state
-            built <- buildConstructor(child, cls, name, fieldType)
+            built <- buildConstructor(child, cls, name, typeParams.map(_.id), fieldType)
           yield
             val (ctor, childAliases, isRecursive) = built
             (ctors :+ ctor,
              aliases ++ childAliases.map(_ -> ctor),
              if isRecursive then recursive + ctor.id else recursive)
         }.map { case (ctors, aliases, recursive) =>
-          (ResolvedInductive(idOf(cls), name, ctors, span), aliases, recursive)
+          (ResolvedInductive(idOf(cls), name, ctors, span, typeParams), aliases, recursive)
         }
 
   private def buildConstructor(
-    child:     Symbol,
-    enumClass: Symbol,
-    enumName:  String,
-    fieldType: (Type, SourceSpan) => Either[FrontendError, ResolvedType],
+    child:       Symbol,
+    enumClass:   Symbol,
+    enumName:    String,
+    enumParamIds: List[SymbolId],
+    fieldType:   (Type, SourceSpan, Map[Symbol, SymbolId]) => Either[FrontendError, ResolvedType],
   )(using Context): Either[FrontendError, (ResolvedConstructor, List[Symbol], Boolean)] =
     val span = spanOfSym(child)
     val name = child.name.stripModuleClassSuffix.toString
@@ -117,14 +131,28 @@ object InductiveExtractor:
     else
       val cls    = child.asClass
       val module = cls.companionModule
-      cls.primaryConstructor.info match
-        case mt: MethodType =>
+      // A generic case class has a `PolyType` constructor wrapping the value
+      // parameters.  Peeling it naively leaves the field types referring to the
+      // PolyType's own binders, which have no symbol to look up — so instantiate
+      // it at the *enum's* type parameters first.  That also makes each case's
+      // parameters line up with the enum's positionally, which is what the IR
+      // and the core `IndDef` both assume.
+      def valueParams(t: Type): Option[MethodType] = t match
+        case pt: PolyType   => valueParams(pt.instantiate(enumClass.typeParams.map(_.typeRef)))
+        case mt: MethodType => Some(mt)
+        case _              => None
+
+      val ownParams: Map[Symbol, SymbolId] =
+        cls.typeParams.zip(enumParamIds).map { case (tp, id) => (tp: Symbol) -> id }.toMap
+
+      valueParams(cls.primaryConstructor.info) match
+        case Some(mt) =>
           mt.paramNames.zip(mt.paramInfos).zipWithIndex
             .foldLeft[Either[FrontendError, List[ResolvedBinder]]](Right(Nil)) {
               case (acc, ((pname, ptpe), i)) =>
                 for
                   done <- acc
-                  t    <- fieldType(ptpe, span)
+                  t    <- fieldType(ptpe, span, ownParams)
                 yield done :+ ResolvedBinder(
                   SymbolId(s"${cls.fullName}#${cls.id}.field$i"), pname.toString, t)
             }
@@ -142,11 +170,14 @@ object InductiveExtractor:
               // may be anything, including other recursive occurrences — but an
               // `ih` about one of those is rejected during tactic extraction,
               // since the engine can only build the hypothesis for Var(0).
-              val isRecursive =
-                fields.nonEmpty &&
-                fields.last.tpe == ResolvedType.Inductive(idOf(enumClass), enumName)
+              val isRecursive = fields.lastOption.exists {
+                _.tpe match
+                  case ResolvedType.Inductive(id, _, _) => id == idOf(enumClass)
+                  case _                                => false
+              }
               (ResolvedConstructor(idOf(cls), name, fields, span), aliases, isRecursive)
             }
-        case other =>
+        case None =>
           Left(FrontendError.enumError(enumName,
-            s"case '$name' has an unsupported constructor shape (${other.show})", span))
+            s"case '$name' has an unsupported constructor shape " +
+            s"(${cls.primaryConstructor.info.show})", span))

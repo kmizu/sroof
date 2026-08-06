@@ -87,12 +87,20 @@ sbt "cli/run check examples/nat.sroof"
 OK: examples/nat.sroof — 1 inductive(s), 1 definition(s), 4 defspec(s)
 ```
 
-### v0.6 リリース情報
+### v0.7 リリース情報
 
 - 変更履歴: [`CHANGELOG.md`](CHANGELOG.md)
-- リリースノート: [`RELEASE_NOTES_v0.6.md`](RELEASE_NOTES_v0.6.md)
-- リリースチェックリスト: [`RELEASE_CHECKLIST_v0.6.md`](RELEASE_CHECKLIST_v0.6.md)
+- リリースノート: [`RELEASE_NOTES_v0.7.md`](RELEASE_NOTES_v0.7.md)
+- リリースチェックリスト: [`RELEASE_CHECKLIST_v0.7.md`](RELEASE_CHECKLIST_v0.7.md)
 - 過去のリリース: [`RELEASE_NOTES_v0.5.md`](RELEASE_NOTES_v0.5.md), [`RELEASE_NOTES_v0.4.md`](RELEASE_NOTES_v0.4.md), [`RELEASE_NOTES_v0.3.md`](RELEASE_NOTES_v0.3.md)
+
+### 移行メモ（v0.6 → v0.7）
+
+- **壊れるものはありません。** v0.6 の584件のテストはすべて通ります。
+- ジェネリック enum が受理されるようになりました。
+- `.sroof` 経路でもパラメータ付き帰納型の帰納法が使えます。型パラメータを
+  **先頭に**宣言してください（コンストラクタのフィールド型と定義の引数型が
+  どちらも適用形になり、一致します）。
 
 ### 移行メモ（v0.5 → v0.6）
 
@@ -342,14 +350,21 @@ object NatProofs:
 カーネルで再検査されるという一点だけです。定理が成り立たなくなれば、そのファイルは
 コンパイルできなくなります。
 
-**これは初期サブセットであり、Scala 全般の検証ではありません。** 現時点で対応して
-いるのは、ジェネリックでない enum、それらの上の純粋な `def`（カリー化された
-パラメータリストを含む）、停止性検査を通る自己再帰、網羅的な match、不変なローカル
-`val` の連続、引数なし定義、等式ゴール、そして `trivial` / `induction` /
-`inductionGeneralizing` / `cases` / `ih` / `exactIh` / `have` / `simplify` / `rewrite` の
-タクティクです。それ以外（`var`、副作用、例外、キャスト、クロージャ、部分適用、
-ジェネリクス、相互再帰、モジュール外呼び出しなど）は
+**これはサブセットであり、Scala 全般の検証ではありません。** 現時点で対応して
+いるのは、enum（**ジェネリックなものも含む**）、その上の純粋な `def` と定理
+（カリー化・型パラメータ付きを含む）、停止性検査を通る自己再帰、網羅的な match、
+不変なローカル `val` の連続、引数なし定義、等式ゴール、そして `trivial` /
+`induction` / `inductionGeneralizing` / `cases` / `ih` / `exactIh` / `have` /
+`simplify` / `rewrite` のタクティクです。それ以外（`var`、副作用、例外、キャスト、
+クロージャ、部分適用、GADT、相互再帰、モジュール外呼び出しなど）は
 **近似せずに診断メッセージ付きで拒否**します。
+
+初等数学の証明例が `examples-scala3/` にあります。
+[`Arithmetic.scala`](examples-scala3/src/main/scala/sroof/examples/scala3/Arithmetic.scala)
+はペアノ流の加法・乗法の法則を、
+[`Lists.scala`](examples-scala3/src/main/scala/sroof/examples/scala3/Lists.scala)
+はジェネリックなリストに対する法則を証明します。どちらもプラグインを有効にして
+コンパイルされるので、ビルドのたびに検査されます（飾りではありません）。
 
 検証はビルドがプラグインを有効にしたときにだけ行われます。アノテーション単体では
 何も起こりません。

@@ -1,9 +1,9 @@
 // stdlib v2: PolyList (polymorphic, element type A: Type)
 //
-// NOTE: Structural-induction proofs over polymorphic inductives are not yet
-// supported due to how type parameters are represented in constructor arg types.
-// Only base-case (trivial) defspecs are provided here.
-// For inductive proofs, use the monomorphic List.sroof (Nat-valued).
+// Structural induction over polymorphic inductives is supported as of v0.7.
+// The type parameter is declared *first* in every signature so that a
+// constructor field's type and a definition's parameter type agree: both are the
+// applied `PolyList(A)` rather than a bare `PolyList`.
 
 inductive Nat {
   case zero: Nat
@@ -62,4 +62,46 @@ defspec poly_append_nil_left(A: Type, ys: PolyList): poly_append(PolyList.nil, y
 
 defspec poly_reverse_nil(A: Type): poly_reverse(PolyList.nil, A) = PolyList.nil {
   by trivial
+}
+
+// ---- Inductive defspecs over the polymorphic list ----
+//
+// These are the proofs the header used to say were impossible.  They need the
+// induction hypothesis under a constructor, which is exactly what parameterised
+// induction unlocked: the branch context now instantiates a constructor field's
+// type against the scrutinee's type argument instead of leaving the type
+// parameter dangling.
+
+inductive PList(A: Type) {
+  case pnil: PList(A)
+  case pcons(head: A, tail: PList(A)): PList(A)
+}
+
+def plist_append(A: Type, xs: PList(A), ys: PList(A)): PList(A) {
+  match xs {
+    case PList.pnil        => ys
+    case PList.pcons(h, t) => PList.pcons(h, plist_append(A, t, ys))
+  }
+}
+
+def plist_copy(A: Type, xs: PList(A)): PList(A) {
+  match xs {
+    case PList.pnil        => PList.pnil
+    case PList.pcons(h, t) => PList.pcons(h, plist_copy(A, t))
+  }
+}
+
+defspec plist_append_nil_right(A: Type, xs: PList(A)):
+    plist_append(A, xs, PList.pnil) = xs {
+  by induction xs {
+    case pnil         => trivial
+    case pcons h t ih => simplify [ih]
+  }
+}
+
+defspec plist_copy_id(A: Type, xs: PList(A)): plist_copy(A, xs) = xs {
+  by induction xs {
+    case pnil         => trivial
+    case pcons h t ih => simplify [ih]
+  }
 }

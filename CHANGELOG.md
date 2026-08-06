@@ -1,5 +1,59 @@
 # Changelog
 
+## [0.7.0] - 2026-08-06
+
+Lifts the limitation that had been recorded in `stdlib/PolyList.sroof` since the
+polymorphic list was written: **induction over parameterised inductive types**.
+That fix lives in the shared tactic engine, so it lands on both frontends at
+once, and it is what made generic enums possible in the Scala path.
+
+### Fixed (tactic engine, benefits both frontends)
+- **Induction over a parameterised inductive.** `Builtins.buildFixCase` extended
+  a branch's context with the constructor's **raw** argument types, which still
+  mention the inductive's type parameters — indices that are bound nowhere in a
+  branch context and silently pointed at `_rec` and `_n` instead. The scrutinee's
+  type arguments are now substituted in first.
+- **The branch context was based on the wrong context.** It dropped the induction
+  variable while the proof term is placed in the goal's context. Those agree only
+  when every entry a branch mentions is *newer* than the induction variable —
+  true for the common shapes, which is why it went unnoticed, and false as soon
+  as a type parameter is declared before the value being inducted on. Both are
+  now stated in the goal's context.
+- `Fix`'s body embeds the scrutinee's type inside its own binder, so that type
+  needs shifting. It is the identity for a monomorphic (closed) type, which hid
+  the problem.
+
+### Added
+- **Generic enums in the Scala frontend.** `enum Lst[A]`, definitions and
+  theorems with type parameters, and induction over them:
+  ```scala
+  @theorem
+  def appendAssoc[A](xs: Lst[A], ys: Lst[A], zs: Lst[A]): Proof =
+    prove(append(append(xs, ys), zs) === append(xs, append(ys, zs)))(
+      induction(xs) {
+        case Nil()      => trivial
+        case Cons(h, t) => simplify(ih(t))
+      })
+  ```
+- **Worked examples of elementary mathematics.** `examples-scala3/Arithmetic.scala`
+  proves the Peano addition and multiplication laws — the defining equations,
+  their mirrors, and associativity — in the order a textbook would build them.
+  `examples-scala3/Lists.scala` proves the list laws over a generic list,
+  including that `length` distributes over `append`. Both are compiled with the
+  plugin, so they are checked, not illustrative.
+- `stdlib/PolyList.sroof` gains the inductive proofs its header used to say were
+  impossible, and the header now explains the convention that makes them work.
+
+### Changed
+- `IndChecker.instantiateCtorArgTpe` and `extractIndParams` are public, so the
+  tactic engine can reuse the checker's definition of the constructor-argument
+  convention instead of restating it.
+
+### Unchanged
+- The trusted kernel. Every proof, generic or not, still goes through
+  `Kernel.verify`.
+
+
 ## [0.6.0] - 2026-08-06
 
 Adds `have`, so a proof can be written in steps, and converts another batch of

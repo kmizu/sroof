@@ -196,7 +196,7 @@ object IndChecker:
    *  the param values from the outer ctx need to be shifted by j.
    *  This replaces param vars Var(j..j+m-1) in rawTpe with shift(j, paramVals[k]).
    */
-  private def instantiateCtorArgTpe(rawTpe: Term, j: Int, paramVals: List[Term]): Term =
+  def instantiateCtorArgTpe(rawTpe: Term, j: Int, paramVals: List[Term]): Term =
     val m = paramVals.length
     if m == 0 then rawTpe  // non-parameterized: argTpe is already correct in ext ctx
     else
@@ -239,7 +239,7 @@ object IndChecker:
 
   /** Extract type parameter values from `App(App(Ind(name), p0), p1, ...)`.
    *  Returns Nil for non-parameterized types. */
-  private def extractIndParams(t: Term): List[Term] =
+  def extractIndParams(t: Term): List[Term] =
     def peel(t: Term, acc: List[Term]): List[Term] = t match
       case Term.App(fn, arg) => peel(fn, arg :: acc)
       case _                 => acc

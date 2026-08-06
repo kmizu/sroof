@@ -1,7 +1,7 @@
 package sroof.tactic
 
 import sroof.core.{Term, Context, Subst, GlobalEnv, IndDef, CtorDef, MatchCase, Param, Ctor, DefEntry}
-import sroof.checker.Bidirectional
+import sroof.checker.{Bidirectional, IndChecker}
 import sroof.eval.{Quote, Eval, Env, Semantic, Neutral, EnvBuilder}
 import sroof.tactic.SimpRewriteDb.RewriteDirection
 
@@ -207,24 +207,32 @@ object Builtins:
     indDef:    IndDef,
     caseSpecs: List[(String, List[String])],
   )(using env: GlobalEnv): TacticM[Unit] =
-    // propWithVar0 = the motive body: goal.target with the induction variable (Var(varIdx))
-    // replaced by Var(0) (_n), and variables below varIdx shifted +1 for the _n binder.
-    // For varIdx=0 (single-variable context): propWithVar0 = goal.target unchanged.
-    val propWithVar0 = computeMotiveBody(goal.target, varIdx)
-    // propForMat = propWithVar0 shifted for the _rec binder inside Fix+Lam body.
-    // Inside Lam("_n", ...) body (Fix body): _n=Var(0), _rec=Var(1), ctx_minus at Var(2+).
-    // propWithVar0 has _n=Var(0), ctx_minus at Var(1+) — shift Var(1+) by 1 for _rec.
-    val propForMat   = Subst.shiftFrom(1, 1, propWithVar0)
-    val ctx_minus    = removeFromContext(goal.ctx, varIdx)
+    // The motive lives in `goal.ctx + [_n]`, not in a context with the induction
+    // variable removed.  The proof term below is placed in `goal.ctx`, so keeping
+    // both in the same coordinates is what makes the two line up.
+    //
+    // Removing the variable instead — as this did previously — only agrees with
+    // `goal.ctx` when every context entry the branches mention is *newer* than
+    // the induction variable.  That holds for the common shapes and hid the
+    // discrepancy; it fails as soon as a branch refers to something older, such
+    // as a type parameter declared before the value being inducted on.
+    val motive       = motiveOver(goal.target, varIdx)
+    // Inside Fix > Lam: _n=Var(0), _rec=Var(1), goal.ctx at Var(2+).
+    val motiveForMat = Subst.shiftFrom(1, 1, motive)
     for
-      fixCasesData <- buildFixCases(ctx_minus, varIdx, varTpe, goal.target, propWithVar0, indDef, caseSpecs)
+      fixCasesData <- buildFixCases(goal.ctx, varIdx, varTpe, goal.target, motive, indDef, caseSpecs)
       fixCases      = fixCasesData.map(_._1)
       // Fix("_rec", Pi("_n", T, P), Lam("_n", T, Mat(Var(0), cases, propForMat)))
       // propForMat (not propWithVar0) for Mat return type: ctx_minus vars are at Var(2+) in Lam body.
+      // The Fix's *type* is stated outside its own binder, so `varTpe` is used as
+      // it stands.  Its *body* is inside that binder, so every free variable of
+      // `varTpe` moves up by one there.  For a monomorphic inductive `varTpe` is
+      // closed and the shift is the identity, which is why this went unnoticed:
+      // it only bites when the scrutinee's type mentions a type argument.
       fixTerm       = Term.Fix("_rec",
-                        Term.Pi("_n", varTpe, propWithVar0),
-                        Term.Lam("_n", varTpe,
-                          Term.Mat(Term.Var(0), fixCases, propForMat)))
+                        Term.Pi("_n", varTpe, motive),
+                        Term.Lam("_n", Subst.shift(1, varTpe),
+                          Term.Mat(Term.Var(0), fixCases, motiveForMat)))
       proofTerm     = Term.App(fixTerm, Term.Var(varIdx))
       _            <- TacticM.solveGoalWith(mv, proofTerm)
     yield ()
@@ -466,7 +474,7 @@ object Builtins:
    *  Returns list of (MatchCase, subCtx, subGoal).
    */
   private def buildFixCases(
-    ctx_minus:   Context,
+    ctxBase:     Context,
     varIdx:      Int,
     varTpe:      Term,
     goal:        Term,
@@ -480,7 +488,7 @@ object Builtins:
           .collectFirst { case (name, bindings) if name == ctorDef.name => bindings }
           .getOrElse(Nil)
         val hasIH = extraBindings.length > ctorDef.argTpes.length
-        buildFixCase(ctx_minus, varIdx, varTpe, goal, propWithVar0, indDef, ctorDef, hasIH, extraBindings).map { triple =>
+        buildFixCase(ctxBase, varIdx, varTpe, goal, propWithVar0, indDef, ctorDef, hasIH, extraBindings).map { triple =>
           cases :+ triple
         }
       }
@@ -504,7 +512,7 @@ object Builtins:
    *    where Var(n+1) = _rec and Var(0) = the last (recursive) ctor arg in Match body.
    */
   private def buildFixCase(
-    ctx_minus:    Context,
+    ctxBase:      Context,
     varIdx:       Int,
     varTpe:       Term,
     goal:         Term,
@@ -517,32 +525,30 @@ object Builtins:
     val n            = ctorDef.argTpes.length
     val ctorArgVars  = (0 until n).toList.map(i => Term.Var(n - 1 - i))
     val ctorTerm     = Term.Con(ctorDef.name, indDef.name, ctorArgVars)
-    // specialGoalBase: goal in (ctx_minus + n_ctor_args) context.
-    val specialGoalBase = specializeGoal(goal, varIdx, ctorTerm, n)
-    // The sub-goal context has _rec and _n between ctx_minus and ctor_args.
-    // Shift ctx_minus vars in specialGoalBase by 2 to account for _rec and _n.
-    val specialGoalAdjusted = Subst.shiftFrom(n, 2, specialGoalBase)
+    // The branch context is `goal.ctx + [_rec, _n, ctor args]`, so the goal for
+    // this branch is the original goal moved up past those n+2 binders, with the
+    // induction variable replaced by this constructor's application.
+    val specialGoalAdjusted = specializeGoalOver(goal, varIdx, ctorTerm, n)
     // Use user-supplied binding names for ctor args; fall back to "_" if not provided
     val argNames     = extraBindings.take(n).padTo(n, "_")
-    // Build sub-goal context including _rec and _n so proof term indices match Fix+Lam+Mat body.
     val recType      = Term.Pi("_n", varTpe, propWithVar0)
-    val ctxWithRec   = ctx_minus.extend("_rec", recType)
-    val ctxWithRecN  = ctxWithRec.extend("_n", varTpe)
-    val ctorCtx      = ctorDef.argTpes.zip(argNames).foldLeft(ctxWithRecN)((c, pair) => c.extend(pair._2, pair._1))
+    val ctxWithRec   = ctxBase.extend("_rec", recType)
+    val ctxWithRecN  = ctxWithRec.extend("_n", Subst.shift(1, varTpe))
+    val ctorCtx      = extendWithCtorArgs(ctxWithRecN, ctorDef, argNames, Subst.shift(2, varTpe))
     if !hasIH then
       for mv <- TacticM.addGoal(ctorCtx, specialGoalAdjusted)
       yield (MatchCase(ctorDef.name, n, Term.Meta(mv.id)), ctorCtx, specialGoalAdjusted)
     else
       // IH type P(k) in ctorCtx (and in the Match case body):
-      // propWithVar0 has _n=Var(0), ctx_minus at Var(1+).
-      // In ctorCtx: k=Var(0..n-1), _n=Var(n), _rec=Var(n+1), ctx_minus at Var(n+2+).
-      // P(k) = propWithVar0 with Var(0)=_n→k=Var(0), ctx_minus shifted Var(1+)→Var(n+2+).
+      // the motive has _n=Var(0) and goal.ctx at Var(1+).
+      // In ctorCtx: k=Var(0..n-1), _n=Var(n), _rec=Var(n+1), goal.ctx at Var(n+2+).
+      // P(k) = motive with Var(0)=_n→k=Var(0), goal.ctx shifted Var(1+)→Var(n+2+).
       val ihType       = Subst.shiftFrom(1, n + 1, propWithVar0)
       // _rec is at Var(n+1) in the Match case body (n ctor arg binders, then _n, then _rec).
       val recFuncRef   = Term.Var(n + 1)
       val recArgRef    = Term.Var(0)           // k: the (last) recursive ctor arg
       val ihDef        = Term.App(recFuncRef, recArgRef)
-      // Sub-goal context: [ih: shift(1,ihType), ctor_args, _n, _rec, ctx_minus...]
+      // Sub-goal context: [ih: shift(1,ihType), ctor_args, _n, _rec, goal.ctx...]
       val ihTypeInSub  = Subst.shift(1, ihType)
       val subCtx       = ctorCtx.extend("ih", ihTypeInSub)
       val specialGoalInSub = Subst.shift(1, specialGoalAdjusted)
@@ -550,6 +556,59 @@ object Builtins:
       yield
         val letBody = Term.Let("ih", ihType, ihDef, Term.Meta(mv.id))
         (MatchCase(ctorDef.name, n, letBody), subCtx, specialGoalInSub)
+
+  /** Extend a branch context with one binder per constructor argument.
+   *
+   *  For a **parameterised** inductive this cannot use the stored `argTpes`
+   *  verbatim.  Those follow the progressive convention of
+   *  `IndChecker.instantiateArgType`: within `argTpes(j)`, `Var(0..j-1)` are the
+   *  preceding constructor arguments — which happens to line up with the context
+   *  being built — but `Var(j..j+m-1)` are the inductive's **type parameters**,
+   *  which are not bound anywhere in a branch context.  Left raw, those indices
+   *  silently point at `_n` and `_rec` instead.
+   *
+   *  So the type arguments are read off the scrutinee's type and substituted in.
+   *  Their coordinates move twice: `varTpe` is stated in the goal's context,
+   *  while the branch context drops the induction variable and inserts `_rec`
+   *  and `_n`.  Hence the shift down past the removed variable, then up by two.
+   *  `instantiateCtorArgTpe` applies the remaining `+j` for the preceding
+   *  argument binders itself.
+   *
+   *  For a monomorphic inductive `m == 0`, the substitution is the identity and
+   *  this reduces to the previous behaviour exactly.
+   */
+  private def extendWithCtorArgs(
+    base:        Context,
+    ctorDef:     CtorDef,
+    argNames:    List[String],
+    varTpeInCtx: Term,
+  ): Context =
+    val paramVals = IndChecker.extractIndParams(varTpeInCtx)
+    ctorDef.argTpes.zip(argNames).zipWithIndex.foldLeft(base) {
+      case (ctx, ((rawTpe, name), j)) =>
+        ctx.extend(name, IndChecker.instantiateCtorArgTpe(rawTpe, j, paramVals))
+    }
+
+  /** The induction motive, in `goal.ctx + [_n]`.
+   *
+   *  Everything moves up one for the `_n` binder, and the induction variable is
+   *  then pointed at `_n` — so the motive says "the goal, about `_n` instead of
+   *  the variable being inducted on".
+   */
+  private def motiveOver(target: Term, varIdx: Int): Term =
+    Term.mapVar { (depth, i) =>
+      if i - depth == varIdx + 1 then Term.Var(depth) else Term.Var(i)
+    }(Subst.shift(1, target))
+
+  /** The goal for one branch, in `goal.ctx + [_rec, _n, ctor args]`.
+   *
+   *  The original goal moves up past those `n + 2` binders, and the induction
+   *  variable is replaced by this constructor applied to its fresh binders.
+   */
+  private def specializeGoalOver(target: Term, varIdx: Int, ctorTerm: Term, n: Int): Term =
+    Term.mapVar { (depth, i) =>
+      if i - depth == n + 2 + varIdx then Subst.shift(depth, ctorTerm) else Term.Var(i)
+    }(Subst.shift(n + 2, target))
 
   /** Generate subgoals and MatchCase placeholders for induction on a variable.
    *

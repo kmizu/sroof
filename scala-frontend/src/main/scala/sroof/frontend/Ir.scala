@@ -55,7 +55,12 @@ sealed trait Named:
  *  compilation rather than degrade into a catch-all node.
  */
 enum ResolvedType extends Named:
-  case Inductive(id: SymbolId, name: String)
+  /** A reference to an inductive declared in the same module, with its type
+   *  arguments in declaration order (empty for a non-generic enum). */
+  case Inductive(id: SymbolId, name: String, args: List[ResolvedType] = Nil)
+  /** A reference to a type parameter of the enclosing enum, definition, or
+   *  theorem. */
+  case TypeVar(id: SymbolId, name: String)
 
 /** A binder: a method parameter, a pattern binder, or a local val. */
 final case class ResolvedBinder(id: SymbolId, name: String, tpe: ResolvedType)
@@ -70,10 +75,12 @@ final case class ResolvedConstructor(
 
 /** An inductive type, with its constructors in declaration order. */
 final case class ResolvedInductive(
-  id:    SymbolId,
-  name:  String,
-  ctors: List[ResolvedConstructor],
-  span:  SourceSpan,
+  id:         SymbolId,
+  name:       String,
+  ctors:      List[ResolvedConstructor],
+  span:       SourceSpan,
+  /** Type parameters in declaration order; empty for a non-generic enum. */
+  typeParams: List[ResolvedBinder] = Nil,
 )
 
 /** A verified expression. */
@@ -81,15 +88,23 @@ enum ResolvedExpr extends Spanned:
   /** A parameter, pattern binder, or local val in scope. */
   case Local(id: SymbolId, name: String, span: SourceSpan)
 
-  /** A call to a verified definition — possibly the enclosing one (recursion). */
-  case Call(target: SymbolId, name: String, args: List[ResolvedExpr], span: SourceSpan)
+  /** A call to a verified definition — possibly the enclosing one (recursion).
+   *  `typeArgs` are explicit: core passes type parameters as ordinary arguments,
+   *  so what Scala inferred has to be written down. */
+  case Call(target: SymbolId, name: String, args: List[ResolvedExpr],
+            span: SourceSpan, typeArgs: List[ResolvedType] = Nil)
 
   /** A constructor application; `args.length` always equals the field count. */
   case Construct(inductive: SymbolId, ctor: SymbolId, ctorName: String,
-                 args: List[ResolvedExpr], span: SourceSpan)
+                 args: List[ResolvedExpr], span: SourceSpan,
+                 typeArgs: List[ResolvedType] = Nil)
 
-  /** An exhaustive match with exactly one branch per constructor. */
-  case Match(scrutinee: ResolvedExpr, cases: List[ResolvedCase], span: SourceSpan)
+  /** An exhaustive match with exactly one branch per constructor.
+   *  `scrutineeType` is recorded because a branch's field types are stated in
+   *  terms of the inductive's type parameters and must be instantiated at the
+   *  scrutinee's actual type arguments. */
+  case Match(scrutinee: ResolvedExpr, cases: List[ResolvedCase], span: SourceSpan,
+             scrutineeType: ResolvedType)
 
   /** An immutable local binding. */
   case Let(binder: ResolvedBinder, value: ResolvedExpr, body: ResolvedExpr, span: SourceSpan)
@@ -111,6 +126,9 @@ final case class ResolvedDef(
   result: ResolvedType,
   body:   ResolvedExpr,
   span:   SourceSpan,
+  /** Type parameters, which become leading `Type`-valued value parameters in
+   *  core; empty for a non-generic definition. */
+  typeParams: List[ResolvedBinder] = Nil,
 )
 
 /** An equality goal `lhs === rhs`, at a supported type. */
@@ -183,6 +201,8 @@ final case class ResolvedTheorem(
   tactic: ResolvedTactic,
   isSimp: Boolean,
   span:   SourceSpan,
+  /** Type parameters, quantified ahead of the value parameters. */
+  typeParams: List[ResolvedBinder] = Nil,
 )
 
 /** Everything extracted from one `@proofModule`. */

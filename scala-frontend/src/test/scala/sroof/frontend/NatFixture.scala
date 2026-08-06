@@ -54,7 +54,7 @@ object NatFixture:
         ResolvedCase(succId, "Succ", List(pk),
           succ(plus(local("plus.k", "k"), local("plus.m", "m"))), sp),
       ),
-      sp),
+      sp, natTpe),
     span   = sp,
   )
 

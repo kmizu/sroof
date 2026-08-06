@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.7.0] — 2026-08-06
+
+### Changed
+- Version bump for the v0.7 release. The extension is unchanged; v0.7 adds
+  generic enums and induction over parameterised inductive types.
+
 ## [0.6.0] — 2026-08-06
 
 ### Changed

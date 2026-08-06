@@ -197,7 +197,14 @@ Five parallel GitHub Actions jobs (`.github/workflows/ci.yml`):
 - **Parser changes**: `syntax/Parser.scala` uses Parsley combinators. Changes there may require updating `Elaborator.scala` in tandem.
 - **Kernel trust boundary**: Tactics (`Builtins.scala`, `TacticM`) are NOT trusted. Every proof term must pass `Kernel.verify`; any shortcut that skips this check breaks soundness. This applies identically to both frontends.
 
-**Generic enums are blocked in `Builtins`, not in the frontend.** The core already represents parameterised inductives (`IndDef.params`; `IndChecker.instantiateArgType` defines the progressive De Bruijn convention). What fails is induction: `Builtins.buildFixCase` extends the branch context with raw `argTpes` that still mention type parameters unbound in that context. Monomorphic types have no such references, so it works by accident. `stdlib/PolyList.sroof` records the same limit on the `.sroof` side. Fix `Builtins` first; frontend support alone would give generic declarations that nothing inductive can be proved about.
+**Parameterised inductives: three coordinate rules (fixed in v0.7).** Each was invisible because it is the *identity* on a monomorphic type — so a passing monomorphic suite proves nothing about them.
+1. `Builtins.buildFixCase` must instantiate a constructor's `argTpes` at the scrutinee's type arguments before extending the branch context. Raw `argTpes` refer to type parameters via `Var(j..j+m-1)` (the progressive convention `IndChecker.instantiateArgType` defines), which are bound nowhere in a branch context.
+2. Branch contexts and the motive are stated in **`goal.ctx`**, not in a context with the induction variable removed. The removed-variable form only agrees with `goal.ctx` when every entry a branch mentions is newer than the induction variable.
+3. `Fix`'s body embeds the scrutinee's type *inside* its own binder, so that copy needs `shift(1, ·)`.
+
+**Generic enums in the frontend.** Type parameters become leading `Type`-valued value parameters in core; call sites must carry explicit type arguments (core does no inference). `CoreTranslator.translateInductive` builds constructor field types by hand because it is the one place not using ordinary innermost-first scoping. dotc gives each enum case its own type parameters and a `PolyType` constructor — instantiate it at the enum's type parameters (`InductiveExtractor.valueParams`).
+
+**`.sroof` polymorphic types: declare the type parameter first.** `def f(A: Type, xs: PolyList(A), ...)` keeps a constructor field's type and the signature both in the *applied* form. Writing the type parameter last forces a bare `PolyList` in the signature, which will not match.
 
 **Parameterless defs are NOT `Fix`-wrapped.** A nullary `Fix` never reduces (it only unfolds when applied), so it would sit unevaluated wherever it was inlined. `CoreTranslator.assemble` emits the body directly and rejects nullary self-recursion, matching the legacy elaborator.
 
@@ -205,7 +212,7 @@ Five parallel GitHub Actions jobs (`.github/workflows/ci.yml`):
 
 **Scala frontend: the semantic bridge is trusted.** `frontend/CoreTranslator.scala` and `plugin/dotc/TreeExtractor.scala` decide *what core proposition a Scala theorem is about*. The kernel cannot check that correspondence, so a bug there yields a valid proof of the wrong statement. Keep the accepted subset small, give every accepted construct exactly one core reading, and pin it with a golden test. Never add a catch-all that turns an unrecognised tree into an IR node.
 
-**Scala frontend: no `Meta` in accepted translations.** All supported types are closed `Ind(name, Nil, Nil)`, so the expected type is threaded top-down and used verbatim as a `Mat` return type. `CoreTranslatorSuite` asserts no `Meta` survives. Widening the type language means revisiting that threading (the expected type would then need shifting under binders).
+**Scala frontend: no `Meta` in accepted translations.** The expected type is threaded top-down and used verbatim as a `Mat` return type; `CoreTranslatorSuite` asserts no `Meta` survives. Since v0.7 a type may mention type parameters, so it is **no longer closed** — the expected type is now shifted when passed under match-branch and `let` binders. Any further widening of the type language means auditing that threading again.
 
 **Equality goals use the 2-arg `Eq` form** (`Eq.mkPropType`). The 3-arg form cannot be typed by the existing checker: `Ind("Eq", ...)` is a built-in absent from `GlobalEnv`, so `inferUniverse` only special-cases the 1- and 2-arg shapes.
 

@@ -41,12 +41,14 @@ object ProofRunner:
   ): Either[FrontendError, VerifiedTheorem] =
     given GlobalEnv = env
     for
-      ctxAndTpes <- CoreTranslator.theoremContext(theorem.params, tenv, theorem.name, theorem.span)
+      ctxAndTpes <- CoreTranslator.theoremContext(
+                      theorem.params, tenv, theorem.name, theorem.span, theorem.typeParams)
       (ctx, paramTpes) = ctxAndTpes
+      allParams   = theorem.typeParams ++ theorem.params
       // The goal is stated in the reversed parameter scope: the last parameter
       // is Var(0), matching the context built above.
       goal       <- CoreTranslator.translateProp(
-                      theorem.goal, theorem.params.reverse.map(_.id), tenv, theorem.name)
+                      theorem.goal, allParams.reverse.map(_.id), tenv, theorem.name)
       script     <- buildTactic(theorem.tactic, tenv, theorem.name, env)
       candidate  <- TacticM.prove(ctx, goal)(script).left.map { err =>
                       FrontendError.tacticError(theorem.name,
@@ -54,10 +56,10 @@ object ProofRunner:
                     }
       // Close over the parameters: the kernel is asked about the *closed*
       // proposition, so nothing is assumed about a free context.
-      fullProof   = theorem.params.zip(paramTpes).foldRight(candidate) { case ((p, t), body) =>
+      fullProof   = allParams.zip(paramTpes).foldRight(candidate) { case ((p, t), body) =>
                       Term.Lam(p.name, t, body)
                     }
-      fullProp    = theorem.params.zip(paramTpes).foldRight(goal) { case ((p, t), cod) =>
+      fullProp    = allParams.zip(paramTpes).foldRight(goal) { case ((p, t), cod) =>
                       Term.Pi(p.name, t, cod)
                     }
       _          <- Kernel.verify(Context.empty, fullProof, fullProp).left.map { err =>

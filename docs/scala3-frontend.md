@@ -128,14 +128,19 @@ involved, and there is no runtime proof checking.
 Inside a `@proofModule`, this milestone supports:
 
 **Declarations**
-- non-generic `enum`s whose case fields all have supported enum types;
+- `enum`s, **generic or not**, whose case fields have supported types;
 - `def`s with explicitly typed parameters and result, in one or more
-  (curried) parameter lists;
-- `@theorem def`s returning exactly `sroof.lang.Proof`, likewise curried or not;
+  (curried) parameter lists, optionally with type parameters;
+- `@theorem def`s returning exactly `sroof.lang.Proof`, likewise curried or
+  generic;
 - `@simp` on a theorem.
 
 **Types**
-- enums declared in the same `@proofModule`, and nothing else.
+- enums declared in the same `@proofModule`, applied to their type arguments;
+- type parameters of the enclosing enum, definition, or theorem.
+
+Nothing else: a primitive such as `Int`, or a type parameter that is not in
+scope, is still an error.
 
 **Expressions**
 - parameter and pattern-binder references;
@@ -180,6 +185,47 @@ proof context the tactic engine builds, since that is how the engine addresses
 that context itself; only variables, constructor applications, and calls to
 verified definitions are allowed there.
 
+### Generic enums
+
+An `enum` may take type parameters, and definitions and theorems over it may too:
+
+```scala
+enum Lst[A]:
+  case Nil()
+  case Cons(head: A, tail: Lst[A])
+
+def append[A](xs: Lst[A], ys: Lst[A]): Lst[A] = ...
+
+@theorem
+def appendAssoc[A](xs: Lst[A], ys: Lst[A], zs: Lst[A]): Proof =
+  prove(append(append(xs, ys), zs) === append(xs, append(ys, zs)))(
+    induction(xs) {
+      case Nil()      => trivial
+      case Cons(h, t) => simplify(ih(t))
+    })
+```
+
+Three things make this work, and each is a place where the coordinates matter:
+
+- **Type parameters become value parameters.** Core has no separate namespace for
+  types, so `def f[A](x: Lst[A])` becomes `Pi(A, Type, Pi(x, Lst A, ...))`. They
+  are quantified ahead of the value parameters, and a call site must pass them —
+  which is why `ResolvedExpr.Call` carries explicit `typeArgs` recovered from the
+  typed tree, rather than relying on Scala's inference having happened.
+- **Constructor field types use a different De Bruijn convention.** In
+  `IndDef.ctors`, `argTpes(j)` refers to the preceding fields as `Var(0..j-1)`
+  and to the *type parameters* as `Var(j..j+m-1)`, with `Var(j)` the **last**
+  parameter. This is the one place in the frontend that is not ordinary
+  innermost-first scoping, and `CoreTranslator.translateInductive` builds it by
+  hand for that reason.
+- **dotc gives each case its own type parameters.** `case Cons[A](...)` has an
+  `A` distinct from `enum Lst[A]`'s, and a generic case's constructor is a
+  `PolyType`. The extractor instantiates that `PolyType` at the enum's own type
+  parameters, which both resolves the field types and lines the case's parameters
+  up with the enum's positionally.
+
+`examples-scala3/Lists.scala` proves the usual list laws this way.
+
 ## 5. Explicitly unsupported
 
 Rejected with a targeted diagnostic rather than approximated:
@@ -187,12 +233,12 @@ Rejected with a targeted diagnostic rather than approximated:
 `var`, assignment, mutable fields · exceptions, `throw`/`try` · I/O, `println`,
 any call outside the module · `Future`, threads · casts, `asInstanceOf` ·
 implicit/given search in verified computation · closures, higher-order values,
-and partial application · general, non-structural, or mutual recursion · generic
-enums, GADTs, indexed families · classes, traits, case classes, opaque types as
-verified data · numeric and string primitives · macros, inline, quotes, splices ·
-pattern guards, pattern alternatives, nested patterns, `x @ pattern` · theorem
-bodies not shaped as `prove(goal)(tactic)` · tactics other than the ones listed
-above.
+and partial application · general, non-structural, or mutual recursion · GADTs
+and indexed families · variance annotations and bounded type parameters ·
+classes, traits, case classes, opaque types as verified data · numeric and string
+primitives · macros, inline, quotes, splices · pattern guards, pattern
+alternatives, nested patterns, `x @ pattern` · theorem bodies not shaped as
+`prove(goal)(tactic)` · tactics other than the ones listed above.
 
 Two restrictions are worth calling out because they are sroof-specific rather
 than obviously unsupported:
@@ -380,45 +426,6 @@ artifacts are published. `build.sbt` shows the shape such a mode would take.
 
 ## 11. Future work
 
-- **Generic enums** — the largest remaining gap, and **blocked below the
-  frontend**, which is worth stating precisely because earlier drafts of this
-  document implied it was frontend work.
-
-  The core does represent parameterised inductives: `IndDef.params` holds the
-  type parameters, and a constructor's `argTpes` refer to them with a progressive
-  De Bruijn convention where `Var(j..j+m-1)` are the parameters
-  (`IndChecker.instantiateArgType` is the authority). What does *not* work is
-  induction over them. `Builtins.buildFixCase` extends the branch context with
-  the **raw** `argTpes`:
-
-  ```scala
-  val ctorCtx = ctorDef.argTpes.zip(argNames).foldLeft(ctxWithRecN)((c, p) => c.extend(p._2, p._1))
-  ```
-
-  Those raw types still mention the type parameters, which are not bound in that
-  context — so the indices are wrong. For a monomorphic type there are no such
-  references and the code is correct by accident. `stdlib/PolyList.sroof` records
-  the same limitation on the `.sroof` side: it offers only base-case proofs.
-
-  So supporting generic enums in the frontend alone would buy generic
-  *declarations* and `trivial` proofs, but not induction — a sharp edge that is
-  worse than an honest omission. The fix belongs in `Builtins` (instantiating
-  `argTpes` against the scrutinee's type arguments before extending the context),
-  benefits both frontends, and should land first.
-
-  **v0.6 finding: there is a second blocker underneath.** Attempting the
-  `Builtins` fix and running an inductive proof over `PolyList` produces
-  `expected: PolyList, actual: (PolyList #2)` — a mismatch between the *bare*
-  `Ind("PolyList")` that `stdlib/PolyList.sroof` writes in its definition
-  signatures and the *applied* `App(Ind("PolyList"), A)` that a constructor field
-  carries. Instantiating the argument types correctly does not resolve that; the
-  two spellings of the same type have to be reconciled first, which is a change
-  to how polymorphic types are modelled rather than a De Bruijn correction.
-
-  The order of work is therefore: (1) settle the bare-vs-applied convention for
-  parameterised inductives, (2) instantiate `argTpes` in `Builtins.buildFixCase`,
-  (3) add generic enums to the Scala frontend. Steps 1 and 2 are shared-code
-  changes with 580+ passing tests behind them and deserve their own milestone.
 - **Indexed families / GADTs** — `Vec`-style indexed types, as the `.sroof` path
   already supports.
 - **Richer tactic DSL** — `calc`, `apply`, `have`, and the rest of the built-ins

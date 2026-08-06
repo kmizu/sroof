@@ -113,12 +113,20 @@ python3 scripts/benchmark.py --runs 3 --thresholds benchmarks/thresholds.json --
 - compares workload medians against CI thresholds
 - writes a machine-readable report at `benchmarks/results.json`
 
-### v0.6 Release Notes
+### v0.7 Release Notes
 
 - changelog: [`CHANGELOG.md`](CHANGELOG.md)
-- release notes: [`RELEASE_NOTES_v0.6.md`](RELEASE_NOTES_v0.6.md)
-- release checklist: [`RELEASE_CHECKLIST_v0.6.md`](RELEASE_CHECKLIST_v0.6.md)
-- previous releases: [`RELEASE_NOTES_v0.5.md`](RELEASE_NOTES_v0.5.md), [`RELEASE_NOTES_v0.4.md`](RELEASE_NOTES_v0.4.md), [`RELEASE_NOTES_v0.3.md`](RELEASE_NOTES_v0.3.md), [`RELEASE_NOTES_v0.2.md`](RELEASE_NOTES_v0.2.md)
+- release notes: [`RELEASE_NOTES_v0.7.md`](RELEASE_NOTES_v0.7.md)
+- release checklist: [`RELEASE_CHECKLIST_v0.7.md`](RELEASE_CHECKLIST_v0.7.md)
+- previous releases: [`RELEASE_NOTES_v0.6.md`](RELEASE_NOTES_v0.6.md), [`RELEASE_NOTES_v0.5.md`](RELEASE_NOTES_v0.5.md), [`RELEASE_NOTES_v0.4.md`](RELEASE_NOTES_v0.4.md), [`RELEASE_NOTES_v0.3.md`](RELEASE_NOTES_v0.3.md)
+
+### Migration Notes (v0.6 -> v0.7)
+
+- **Nothing breaks.** All 584 tests from v0.6 still pass.
+- Generic enums are newly accepted, so the diagnostic that rejected them is gone.
+- Induction over parameterised inductives works on the `.sroof` path too;
+  declare the type parameter **first** so a constructor field's type and a
+  definition's parameter type are both the applied form.
 
 ### Migration Notes (v0.5 -> v0.6)
 
@@ -373,14 +381,21 @@ program and are not regenerated. What the plugin adds is that `plusZeroRight` is
 proved at compile time and re-checked by the same trusted kernel the `.sroof`
 path uses. If the theorem stopped holding, the file would stop compiling.
 
-**This is an initial subset, not general Scala verification.** Today it covers:
-non-generic enums, pure `def`s over those enums (curried parameter lists
-included), self-recursion accepted by the termination checker, exhaustive
-matches, runs of immutable local `val`s, parameterless definitions, equality
-goals, and the tactics `trivial`, `induction`, `inductionGeneralizing`, `cases`,
-`ih`, `exactIh`, `have`, `simplify`, and `rewrite`. Everything else — `var`, effects,
-exceptions, casts, closures, generics, mutual recursion, external calls — is
-**rejected with a diagnostic**, not approximated.
+**This is a subset, not general Scala verification.** Today it covers: enums —
+**generic or not** — pure `def`s and theorems over them (curried and generic
+parameter lists included), self-recursion accepted by the termination checker,
+exhaustive matches, runs of immutable local `val`s, parameterless definitions,
+equality goals, and the tactics `trivial`, `induction`, `inductionGeneralizing`,
+`cases`, `ih`, `exactIh`, `have`, `simplify`, and `rewrite`. Everything else —
+`var`, effects, exceptions, casts, closures, GADTs, mutual recursion, external
+calls — is **rejected with a diagnostic**, not approximated.
+
+Worked examples of elementary mathematics live in `examples-scala3/`:
+[`Arithmetic.scala`](examples-scala3/src/main/scala/sroof/examples/scala3/Arithmetic.scala)
+proves the Peano addition and multiplication laws, and
+[`Lists.scala`](examples-scala3/src/main/scala/sroof/examples/scala3/Lists.scala)
+proves the list laws over a generic list. Both are compiled with the plugin, so
+they are checked on every build rather than merely illustrative.
 
 Verification only happens when the plugin is enabled by the build. The
 annotations alone do nothing:

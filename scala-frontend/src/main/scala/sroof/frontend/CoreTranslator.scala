@@ -79,31 +79,92 @@ object CoreTranslator:
    *  still be logically unsound as an inductive definition.
    */
   def translateInductive(ind: ResolvedInductive): Either[FrontendError, IndDef] =
-    val ctors = ind.ctors.map { ctor =>
-      val fields = ctor.fields.map { f =>
-        f.tpe match
-          case ResolvedType.Inductive(_, name) => Term.Ind(name, Nil, Nil)
-      }
-      CtorDef(ctor.name, fields)
+    val m = ind.typeParams.length
+
+    // Constructor field types follow the *progressive* De Bruijn convention that
+    // `IndChecker.instantiateArgType` defines: inside `argTpes(j)`, `Var(0..j-1)`
+    // are the preceding fields and `Var(j..j+m-1)` are the type parameters, with
+    // `Var(j)` the **last** parameter.  This is the one place in the frontend
+    // that does not use ordinary innermost-first scoping, so it is built by hand
+    // rather than routed through `translateType`.
+    def fieldType(tpe: ResolvedType, j: Int): Either[FrontendError, Term] =
+      tpe match
+        case ResolvedType.TypeVar(id, name) =>
+          ind.typeParams.indexWhere(_.id == id) match
+            case -1 => Left(FrontendError.enumError(ind.name,
+              s"field type '$name' is not a type parameter of this enum", ind.span))
+            case p  => Right(Term.Var(j + (m - 1 - p)))
+        case ResolvedType.Inductive(_, name, args) =>
+          args.foldLeft[Either[FrontendError, List[Term]]](Right(Nil)) { (acc, a) =>
+            for
+              done <- acc
+              t    <- fieldType(a, j)
+            yield done :+ t
+          }.map(as => as.foldLeft(Term.Ind(name, Nil, Nil): Term)(Term.App.apply))
+
+    val ctorsE = ind.ctors.foldLeft[Either[FrontendError, List[CtorDef]]](Right(Nil)) { (acc, ctor) =>
+      for
+        done   <- acc
+        fields <- ctor.fields.zipWithIndex
+                    .foldLeft[Either[FrontendError, List[Term]]](Right(Nil)) {
+                      case (facc, (f, j)) =>
+                        for
+                          fs <- facc
+                          t  <- fieldType(f.tpe, j)
+                        yield fs :+ t
+                    }
+      yield done :+ CtorDef(ctor.name, fields)
     }
-    PositivityChecker
-      .check(ind.name, ctors)
-      .left.map(msg => FrontendError.enumError(ind.name, s"is not strictly positive: $msg", ind.span))
-      .map(_ => IndDef(name = ind.name, params = Nil, ctors = ctors, universe = 0))
+
+    for
+      ctors <- ctorsE
+      _     <- PositivityChecker.check(ind.name, ctors).left.map(msg =>
+                 FrontendError.enumError(ind.name, s"is not strictly positive: $msg", ind.span))
+    yield IndDef(
+      name     = ind.name,
+      params   = ind.typeParams.map(p => Param(p.name, Term.Uni(0))),
+      ctors    = ctors,
+      universe = 0,
+    )
 
   // ---- Types ----
 
+  /** Translate a type in a scope where type parameters are ordinary binders.
+   *
+   *  Core has no separate namespace for types: a type parameter is a value
+   *  binder of type `Type`, so it is found in the same `scope` as everything
+   *  else and referred to by the same De Bruijn index.
+   */
   def translateType(
     tpe:     ResolvedType,
     env:     TranslationEnv,
     subject: String,
     span:    SourceSpan,
+    scope:   Scope = Nil,
   ): Either[FrontendError, Term] =
     tpe match
-      case ResolvedType.Inductive(id, name) =>
-        if env.inductives.contains(id) then Right(Term.Ind(name, Nil, Nil))
-        else Left(FrontendError.defError(subject,
-          s"type '$name' is not an inductive type declared in this proof module", span))
+      case ResolvedType.TypeVar(id, name) =>
+        scope.indexOf(id) match
+          case -1 => Left(FrontendError.defError(subject,
+            s"type parameter '$name' is not in scope here", span))
+          case i  => Right(Term.Var(i))
+
+      case ResolvedType.Inductive(id, name, args) =>
+        if !env.inductives.contains(id) then
+          Left(FrontendError.defError(subject,
+            s"type '$name' is not an inductive type declared in this proof module", span))
+        else
+          val expected = env.inductives(id).typeParams.length
+          if args.length != expected then
+            Left(FrontendError.defError(subject,
+              s"type '$name' expects $expected type argument(s) but got ${args.length}", span))
+          else
+            args.foldLeft[Either[FrontendError, List[Term]]](Right(Nil)) { (acc, a) =>
+              for
+                done <- acc
+                t    <- translateType(a, env, subject, span, scope)
+              yield done :+ t
+            }.map(as => as.foldLeft(Term.Ind(name, Nil, Nil): Term)(Term.App.apply))
 
   // ---- Definitions ----
 
@@ -142,9 +203,9 @@ object CoreTranslator:
 
   private def directCalls(e: ResolvedExpr): Set[SymbolId] = e match
     case ResolvedExpr.Local(_, _, _)                => Set.empty
-    case ResolvedExpr.Call(target, _, args, _)      => args.flatMap(directCalls).toSet + target
-    case ResolvedExpr.Construct(_, _, _, args, _)   => args.flatMap(directCalls).toSet
-    case ResolvedExpr.Match(scrut, cases, _)        =>
+    case ResolvedExpr.Call(target, _, args, _, _)   => args.flatMap(directCalls).toSet + target
+    case ResolvedExpr.Construct(_, _, _, args, _, _) => args.flatMap(directCalls).toSet
+    case ResolvedExpr.Match(scrut, cases, _, _)    =>
       directCalls(scrut) ++ cases.flatMap(c => directCalls(c.body))
     case ResolvedExpr.Let(_, value, body, _)        => directCalls(value) ++ directCalls(body)
 
@@ -157,21 +218,29 @@ object CoreTranslator:
     rd:  ResolvedDef,
     env: TranslationEnv,
   ): Either[FrontendError, DefEntry] =
+    // Type parameters become leading `Type`-valued value parameters, so the whole
+    // signature is one curried chain and the body's scope is `(tparams ++ params)`
+    // reversed, exactly as for an ordinary definition.
+    val allParams = rd.typeParams ++ rd.params
+    val scopeAt   = (i: Int) => allParams.take(i).reverse.map(_.id)
     for
-      paramTpes <- rd.params.foldLeft[Either[FrontendError, List[Term]]](Right(Nil)) { (acc, p) =>
-                     for
-                       ts <- acc
-                       t  <- translateType(p.tpe, env, rd.name, rd.span)
-                     yield ts :+ t
-                   }
-      resultTpe <- translateType(rd.result, env, rd.name, rd.span)
-      fullTpe    = rd.params.zip(paramTpes).foldRight(resultTpe) { case ((p, t), cod) =>
+      paramTpes <- allParams.zipWithIndex
+                     .foldLeft[Either[FrontendError, List[Term]]](Right(Nil)) {
+                       case (acc, (p, i)) =>
+                         for
+                           ts <- acc
+                           t  <- if rd.typeParams.contains(p) then Right(Term.Uni(0))
+                                 else translateType(p.tpe, env, rd.name, rd.span, scopeAt(i))
+                         yield ts :+ t
+                     }
+      fullScope  = allParams.reverse.map(_.id)
+      resultTpe <- translateType(rd.result, env, rd.name, rd.span, fullScope)
+      fullTpe    = allParams.zip(paramTpes).foldRight(resultTpe) { case ((p, t), cod) =>
                      Term.Pi(p.name, t, cod)
                    }
       // Parameters enter the scope reversed: the last parameter is Var(0).
-      bodyTerm  <- translateExpr(rd.body, resultTpe, rd.params.reverse.map(_.id),
-                                 Some(rd.id), env, rd.name)
-      entry     <- assemble(rd, fullTpe, paramTpes, bodyTerm, env)
+      bodyTerm  <- translateExpr(rd.body, resultTpe, fullScope, Some(rd.id), env, rd.name)
+      entry     <- assemble(rd, fullTpe, paramTpes, bodyTerm, env, allParams)
     yield entry
 
   /** Wrap a translated body into its `DefEntry`.
@@ -188,15 +257,16 @@ object CoreTranslator:
     paramTpes: List[Term],
     bodyTerm:  Term,
     env:       TranslationEnv,
+    allParams: List[ResolvedBinder],
   ): Either[FrontendError, DefEntry] =
-    if rd.params.isEmpty then
+    if allParams.isEmpty then
       if directCalls(rd.body).contains(rd.id) then
         Left(FrontendError.defError(rd.name,
           "a definition with no parameters cannot be recursive: there is no argument " +
           "for the recursion to decrease on", rd.span))
       else Right(DefEntry(rd.name, fullTpe, bodyTerm))
     else
-      val lams = rd.params.zip(paramTpes).foldRight(bodyTerm) { case ((p, t), acc) =>
+      val lams = allParams.zip(paramTpes).foldRight(bodyTerm) { case ((p, t), acc) =>
         Term.Lam(p.name, t, acc)
       }
       val fixTerm = Term.Fix(rd.name, fullTpe, lams)
@@ -237,23 +307,38 @@ object CoreTranslator:
             s"'$name' is not a parameter or pattern binder of this definition", span))
           case i  => Right(Term.Var(i))
 
-      case ResolvedExpr.Call(target, name, args, span) =>
+      case ResolvedExpr.Call(target, name, args, span, typeArgs) =>
         for
           sig <- env.defSigs.get(target).toRight(FrontendError.defError(subject,
                    s"call to '$name', which is not a verified definition in this proof module", span))
           _   <- if sig.params.length == args.length then Right(())
                  else Left(FrontendError.defError(subject,
                    s"call to '$name' expects ${sig.params.length} argument(s) but got ${args.length}", span))
+          _   <- if sig.typeParams.length == typeArgs.length then Right(())
+                 else Left(FrontendError.defError(subject,
+                   s"call to '$name' expects ${sig.typeParams.length} type argument(s) but got " +
+                   s"${typeArgs.length}", span))
           // Self-recursion points at the Fix binder, one past the innermost scope.
           // Any other call is inlined: core `Term` has no global-reference node,
           // and a translated def body is closed, so it needs no shifting.
           fn  <- if self.contains(target) then Right(Term.Var(scope.length))
                  else env.defs.get(target).map(_.body).toRight(FrontendError.defError(subject,
                    s"'$name' is called before it has been translated (internal ordering error)", span))
-          argTerms <- translateArgs(args, sig.params.map(_.tpe), scope, self, env, subject, span)
-        yield argTerms.foldLeft(fn)(Term.App.apply)
+          // The callee's parameter types are stated in its own type parameters;
+          // instantiate them at this call's type arguments before checking the
+          // value arguments against them.
+          subst     = sig.typeParams.map(_.id).zip(typeArgs).toMap
+          typeTerms <- typeArgs.foldLeft[Either[FrontendError, List[Term]]](Right(Nil)) { (acc, t) =>
+                         for
+                           done <- acc
+                           term <- translateType(t, env, subject, span, scope)
+                         yield done :+ term
+                       }
+          argTerms  <- translateArgs(args, sig.params.map(p => substTypes(p.tpe, subst)),
+                                     scope, self, env, subject, span)
+        yield (typeTerms ++ argTerms).foldLeft(fn)(Term.App.apply)
 
-      case ResolvedExpr.Construct(_, ctorId, ctorName, args, span) =>
+      case ResolvedExpr.Construct(_, ctorId, ctorName, args, span, typeArgs) =>
         for
           pair <- env.ctors.get(ctorId).toRight(FrontendError.defError(subject,
                     s"'$ctorName' is not a constructor of an inductive type in this proof module", span))
@@ -261,10 +346,15 @@ object CoreTranslator:
           _    <- if ctor.fields.length == args.length then Right(())
                   else Left(FrontendError.defError(subject,
                     s"constructor '$ctorName' expects ${ctor.fields.length} field(s) but got ${args.length}", span))
-          argTerms <- translateArgs(args, ctor.fields.map(_.tpe), scope, self, env, subject, span)
+          // `Term.Con` carries only value arguments; the checker recovers the
+          // type arguments from the expected type.  They are still needed here to
+          // instantiate the field types the arguments are checked against.
+          subst     = ind.typeParams.map(_.id).zip(typeArgs).toMap
+          argTerms <- translateArgs(args, ctor.fields.map(f => substTypes(f.tpe, subst)),
+                                    scope, self, env, subject, span)
         yield Term.Con(ctor.name, ind.name, argTerms)
 
-      case ResolvedExpr.Match(scrut, cases, span) =>
+      case ResolvedExpr.Match(scrut, cases, span, scrutTpe) =>
         for
           _        <- if cases.nonEmpty then Right(())
                       else Left(FrontendError.defError(subject, "match has no branches", span))
@@ -272,12 +362,17 @@ object CoreTranslator:
                         s"'${cases.head.ctorName}' is not a constructor of an inductive type", span))
           ind       = indPair._1
           _        <- checkExhaustive(ind, cases, subject, span)
-          scrutT   <- translateExpr(scrut, Term.Ind(ind.name, Nil, Nil), scope, self, env, subject)
+          scrutCore <- translateType(scrutTpe, env, subject, span, scope)
+          scrutT   <- translateExpr(scrut, scrutCore, scope, self, env, subject)
           caseTerms <- cases.foldLeft[Either[FrontendError, List[MatchCase]]](Right(Nil)) { (acc, c) =>
                         for
                           done <- acc
                           // Field binders enter the scope reversed: last field is Var(0).
-                          body <- translateExpr(c.body, expected, c.binders.reverse.map(_.id) ++ scope,
+                          // `expected` is a *type*, so it must move up past the
+                          // binders this branch introduces.
+                          body <- translateExpr(c.body,
+                                                sroof.core.Subst.shift(c.binders.length, expected),
+                                                c.binders.reverse.map(_.id) ++ scope,
                                                 self, env, subject)
                         yield done :+ MatchCase(c.ctorName, c.binders.length, body)
                       }
@@ -285,10 +380,18 @@ object CoreTranslator:
 
       case ResolvedExpr.Let(binder, value, body, span) =>
         for
-          binderTpe <- translateType(binder.tpe, env, subject, span)
+          binderTpe <- translateType(binder.tpe, env, subject, span, scope)
           valueT    <- translateExpr(value, binderTpe, scope, self, env, subject)
-          bodyT     <- translateExpr(body, expected, binder.id :: scope, self, env, subject)
+          bodyT     <- translateExpr(body, sroof.core.Subst.shift(1, expected),
+                                     binder.id :: scope, self, env, subject)
         yield Term.Let(binder.name, binderTpe, valueT, bodyT)
+
+  /** Instantiate type parameters at their actual arguments. */
+  private def substTypes(tpe: ResolvedType, subst: Map[SymbolId, ResolvedType]): ResolvedType =
+    tpe match
+      case ResolvedType.TypeVar(id, _)            => subst.getOrElse(id, tpe)
+      case ResolvedType.Inductive(id, name, args) =>
+        ResolvedType.Inductive(id, name, args.map(substTypes(_, subst)))
 
   private def translateArgs(
     args:     List[ResolvedExpr],
@@ -302,7 +405,7 @@ object CoreTranslator:
     args.zip(tpes).foldLeft[Either[FrontendError, List[Term]]](Right(Nil)) { case (acc, (arg, tpe)) =>
       for
         done     <- acc
-        expected <- translateType(tpe, env, subject, span)
+        expected <- translateType(tpe, env, subject, span, scope)
         term     <- translateExpr(arg, expected, scope, self, env, subject)
       yield done :+ term
     }
@@ -361,7 +464,7 @@ object CoreTranslator:
     subject: String,
   ): Either[FrontendError, Term] =
     for
-      tpe <- translateType(prop.tpe, env, subject, prop.span)
+      tpe <- translateType(prop.tpe, env, subject, prop.span, scope)
       lhs <- translateExpr(prop.lhs, tpe, scope, None, env, subject)
       rhs <- translateExpr(prop.rhs, tpe, scope, None, env, subject)
     yield sroof.tactic.Eq.mkPropType(lhs, rhs)
@@ -390,7 +493,7 @@ object CoreTranslator:
             s"'$name' is not in scope at this point in the proof", span))
           case i  => Right(Term.Var(i))
 
-      case ResolvedExpr.Construct(_, ctorId, ctorName, args, span) =>
+      case ResolvedExpr.Construct(_, ctorId, ctorName, args, span, _) =>
         for
           pair <- env.ctors.get(ctorId).toRight(FrontendError.tacticError(subject,
                     s"'$ctorName' is not a constructor of this proof module", span))
@@ -403,7 +506,7 @@ object CoreTranslator:
                    }
         yield Term.Con(ctor.name, ind.name, terms)
 
-      case ResolvedExpr.Call(target, name, args, span) =>
+      case ResolvedExpr.Call(target, name, args, span, typeArgs) =>
         for
           entry <- env.defs.get(target).toRight(FrontendError.tacticError(subject,
                      s"'$name' is not a verified definition of this proof module", span))
@@ -430,12 +533,20 @@ object CoreTranslator:
     env:     TranslationEnv,
     subject: String,
     span:    SourceSpan,
+    typeParams: List[ResolvedBinder] = Nil,
   ): Either[FrontendError, (Context, List[Term])] =
-    params.foldLeft[Either[FrontendError, (Context, List[Term])]](Right((Context.empty, Nil))) {
-      case (acc, p) =>
+    // Type parameters are quantified ahead of the value parameters and become
+    // ordinary `Type`-valued binders, so they enter the context first.
+    val all = typeParams ++ params
+    all.zipWithIndex.foldLeft[Either[FrontendError, (Context, List[Term])]](
+      Right((Context.empty, Nil))
+    ) {
+      case (acc, (p, i)) =>
         for
           state <- acc
           (ctx, tpes) = state
-          t <- translateType(p.tpe, env, subject, span)
+          scope = all.take(i).reverse.map(_.id)
+          t <- if typeParams.contains(p) then Right(Term.Uni(0))
+               else translateType(p.tpe, env, subject, span, scope)
         yield (ctx.extend(p.name, t), tpes :+ t)
     }

@@ -113,7 +113,7 @@ class CoreTranslatorSuite extends FunSuite:
         NatFixture.local("plus.n", "n"),
         List(ResolvedCase(NatFixture.zeroId, "Zero", Nil,
           NatFixture.local("plus.m", "m"), SourceSpan.synthetic)),
-        SourceSpan.synthetic))
+        SourceSpan.synthetic, NatFixture.natTpe))
     CoreTranslator.translateDef(partial, tenv) match
       case Right(_)  => fail("non-exhaustive match was accepted")
       case Left(err) => assert(err.message.contains("missing branch"), err.message)
