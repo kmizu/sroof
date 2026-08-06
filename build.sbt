@@ -9,7 +9,7 @@ val munitVersion   = "1.0.2"
 
 val commonSettings = Seq(
   scalaVersion := scala3Version,
-  version := "0.2.0",
+  version := "0.3.0",
   organization := "io.sroof",
   libraryDependencies ++= Seq(
     "org.typelevel" %% "cats-core" % catsVersion,
@@ -19,11 +19,32 @@ val commonSettings = Seq(
   scalacOptions ++= Seq("-deprecation", "-feature", "-unchecked"),
 )
 
+// Settings for `scalaApi`: the developer-facing DSL must stay (near-)dependency-free
+// so that user projects pick up nothing but the marker types.  No cats.
+val apiSettings = Seq(
+  scalaVersion := scala3Version,
+  version := "0.3.0",
+  organization := "io.sroof",
+  libraryDependencies += "org.scalameta" %% "munit" % munitVersion % Test,
+  testFrameworks += new TestFramework("munit.Framework"),
+  scalacOptions ++= Seq("-deprecation", "-feature", "-unchecked"),
+)
+
+/** Colon-separated `-Xplugin:` classpath for the sroof compiler plugin.
+ *
+ *  The head entry must be the packaged plugin JAR: dotc's `Plugin.loadAllFrom`
+ *  scans the entries in order for `plugin.properties` and uses the whole list as
+ *  the plugin's URLClassLoader URLs.  Compiler jars are excluded on purpose —
+ *  they are supplied by the parent (compiler) classloader, and duplicating them
+ *  in the child loader risks two incompatible copies of `dotty.tools.*`.
+ */
+lazy val sroofPluginClasspath = taskKey[String]("-Xplugin: classpath for the sroof compiler plugin")
+
 // Scala Native settings for native sub-projects.
 // Uses %%% so cats-core and munit resolve as native artifacts.
 val nativeCommonSettings = Seq(
   scalaVersion := scala3Version,
-  version := "0.2.0",
+  version := "0.3.0",
   organization := "io.sroof",
   libraryDependencies ++= Seq(
     "org.typelevel" %%% "cats-core" % catsVersion,
@@ -53,7 +74,8 @@ def shareSourcesWith(jvmProject: Project): Seq[Setting[?]] = Seq(
 
 // ---- Root aggregate (JVM only by default) ----
 lazy val root = project.in(file("."))
-  .aggregate(core, nbe, checker, tactic, syntax, extract, kernel, cli)
+  .aggregate(core, nbe, checker, tactic, syntax, extract, kernel, cli,
+             scalaApi, scalaFrontend, scalaPlugin, scalaExamples, scalaIt)
   .settings(
     name := "sroof",
     publish / skip := true,
@@ -121,6 +143,74 @@ lazy val cli = project.in(file("cli"))
   )
 
 // ============================================================
+// Scala 3 frontend (the new primary verification path)
+//
+// scalaApi       — annotations + DSL, compiled into user code
+// scalaFrontend  — dotc-independent IR, core translation, proof runner, kernel gate
+// scalaPlugin    — the standard Scala 3 compiler plugin (compiler-version-specific)
+// scalaExamples  — real .scala sources compiled WITH the plugin enabled
+// scalaIt        — integration tests driving a genuine compiler invocation
+//
+// None of these are mirrored into `nativeRoot`: the plugin links against the
+// JVM-only Scala 3 compiler.
+// ============================================================
+
+lazy val scalaApi = project.in(file("scala-api"))
+  .settings(apiSettings)
+  .settings(name := "sroof-scala-api")
+
+lazy val scalaFrontend = project.in(file("scala-frontend"))
+  .dependsOn(kernel)
+  .settings(commonSettings)
+  .settings(name := "sroof-scala-frontend")
+
+lazy val scalaPlugin = project.in(file("scala-plugin"))
+  .dependsOn(scalaFrontend)
+  .settings(commonSettings)
+  .settings(
+    name := "sroof-scala-plugin",
+    // The plugin is compiled against — and only works with — this exact compiler.
+    libraryDependencies += "org.scala-lang" %% "scala3-compiler" % scala3Version % "provided",
+    sroofPluginClasspath := {
+      val pluginJar = (Compile / packageBin).value
+      val deps      = (Compile / dependencyClasspath).value.map(_.data)
+      val compilerArtifacts =
+        Set("scala3-compiler", "scala3-interfaces", "tasty-core", "scala-asm",
+            "compiler-interface", "util-interface")
+      val runtimeDeps = deps.filterNot(f => compilerArtifacts.exists(f.getName.startsWith))
+      (pluginJar +: runtimeDeps).map(_.getAbsolutePath).mkString(java.io.File.pathSeparator)
+    },
+  )
+
+lazy val scalaExamples = project.in(file("examples-scala3"))
+  .dependsOn(scalaApi)
+  .settings(apiSettings)
+  .settings(
+    name := "sroof-scala-examples",
+    // Verification happens here: if a @theorem fails, this project fails to compile.
+    Compile / scalacOptions += "-Xplugin:" + (scalaPlugin / sroofPluginClasspath).value,
+  )
+
+lazy val scalaIt = project.in(file("scala-it"))
+  .dependsOn(scalaFrontend % Test)
+  .settings(commonSettings)
+  .settings(
+    name := "sroof-scala-it",
+    publish / skip := true,
+    // Integration tests invoke dotc in-process, so the compiler is a test dependency.
+    libraryDependencies += "org.scala-lang" %% "scala3-compiler" % scala3Version % Test,
+    // Hand the test harness the exact classpaths sbt built, rather than guessing paths.
+    Test / resourceGenerators += Def.task {
+      val out       = (Test / resourceManaged).value / "sroof-it.properties"
+      val pluginCp  = (scalaPlugin / sroofPluginClasspath).value
+      val compileCp = (scalaApi / Compile / fullClasspath).value
+                        .map(_.data.getAbsolutePath).mkString(java.io.File.pathSeparator)
+      IO.write(out, s"pluginClasspath=$pluginCp\ncompileClasspath=$compileCp\n")
+      Seq(out)
+    }.taskValue,
+  )
+
+// ============================================================
 // Scala Native projects
 //
 // Each native project:
@@ -133,7 +223,7 @@ lazy val cli = project.in(file("cli"))
 //
 // Build native CLI binary:
 //   sbt cliNative/nativeLink
-//   ./cli-native/target/scala-3.3.6/sroof-cli-native-out
+//   ./cli-native/target/scala-3.3.6/sroof-cli-native
 // ============================================================
 
 lazy val coreNative = project.in(file("core-native"))

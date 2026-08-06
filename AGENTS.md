@@ -4,11 +4,16 @@
 This repository is a multi-module Scala/SBT project.
 
 - Core JVM modules: `core`, `eval`, `checker`, `tactic`, `syntax`, `extract`, `kernel`, `cli`
+- Scala 3 frontend modules: `scala-api`, `scala-frontend`, `scala-plugin`, `examples-scala3`, `scala-it`
 - Standard layout per module: `src/main/scala` and `src/test/scala`
-- Native mirror modules: `*-native/` (sources are shared from JVM modules via `build.sbt`; do not add separate logic there)
-- Proof examples: `examples/*.sroof`
+- Native mirror modules: `*-native/` (sources are shared from JVM modules via `build.sbt`; do not add separate logic there). The Scala 3 frontend is **not** mirrored — the compiler plugin is JVM-only.
+- Proof examples: `examples/*.sroof` (legacy path), `examples-scala3/` (Scala path)
 - VS Code extension: `vscode-sroof/`
-- sbt plugin: `sbt-sroof/`
+- sbt plugin: `sbt-sroof/` (legacy `.sroof` integration)
+
+There are two frontends over one core and kernel: the Scala 3 compiler-plugin
+path (new primary) and the `.sroof` language (mature legacy, still supported).
+See `docs/scala3-frontend.md` before changing either.
 
 ## Build, Test, and Development Commands
 Use SBT from the repository root unless noted.
@@ -22,6 +27,15 @@ sbt "cli/run extract examples/nat.sroof --output Nat.scala"
 sbt cliNative/compile
 sbt cliNative/nativeLink
 cd vscode-sroof && npm ci && npm run compile
+```
+
+Scala 3 frontend:
+
+```bash
+sbt scalaFrontend/test    # translation + proof-runner tests, no compiler involved
+sbt scalaExamples/compile # compiles real .scala with the plugin; fails if a proof fails
+sbt scalaExamples/test    # the verified module still runs as an ordinary program
+sbt scalaIt/test          # real dotc invocations: positive, negative, symbol identity
 ```
 
 - `sbt test` runs all MUnit suites across modules.
@@ -39,6 +53,8 @@ cd vscode-sroof && npm ci && npm run compile
 - Prefer targeted runs while iterating (`sbt cli/test`, `sbt syntax/test`) and finish with `sbt test`.
 - Add or update tests for behavior changes, especially parser/elaboration, tactics, and checker logic.
 - When CLI proof flows change, verify end-to-end with `sbt "cli/run check examples/nat.sroof"` and `sbt "cli/run check examples/int.sroof"`.
+- When the Scala frontend's accepted subset changes, add both a positive test (it compiles) and a negative test (the near-miss is rejected with a useful message). A construct that is silently ignored is worse than one that is rejected.
+- Changes to `frontend/CoreTranslator.scala` or `plugin/dotc/TreeExtractor.scala` need a golden test pinning the resulting core term: these decide what a theorem is *about*, and the kernel cannot catch a mistake there.
 
 ## Commit & Pull Request Guidelines
 - Match the existing commit style seen in history: `feat: ...`, `fix: ...`, `chore: ...`.

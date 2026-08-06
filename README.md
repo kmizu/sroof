@@ -44,12 +44,18 @@ defspec plus_zero_right(n: Nat): plus(n, Nat.zero) = n {
 }
 ```
 
+> **Where sroof is heading.** The `.sroof` language above is the mature path and
+> is fully supported. Alongside it there is now a **Scala 3 frontend**: you write
+> ordinary `.scala` files, and a compiler plugin proves annotated theorems during
+> compilation. It currently supports a deliberately narrow subset — see
+> [Verifying ordinary Scala 3](#verifying-ordinary-scala-3-initial-subset).
+
 sroof's design principle: **keep only the essential complexity**.
 
 - **Learning cost = type theory concepts only** — syntax adds no extra burden
 - **Uniform brace `{ }` syntax** — familiar to anyone who knows Java, Rust, or Scala
 - **Full English tactic names** — `trivial`, `induction`, `simplify` (no cryptic abbreviations)
-- **Short aliases available** — `triv`, `induct`, `simp` (only self-evident abbreviations)
+- **Short aliases available** — `triv`, `simp`, `rw` (only self-evident abbreviations)
 - **Helpful error messages** — point to the next step, not internal jargon
 
 ---
@@ -107,11 +113,24 @@ python3 scripts/benchmark.py --runs 3 --thresholds benchmarks/thresholds.json --
 - compares workload medians against CI thresholds
 - writes a machine-readable report at `benchmarks/results.json`
 
-### v0.2 Release Notes
+### v0.3 Release Notes
 
 - changelog: [`CHANGELOG.md`](CHANGELOG.md)
-- release notes: [`RELEASE_NOTES_v0.2.md`](RELEASE_NOTES_v0.2.md)
-- release checklist: [`RELEASE_CHECKLIST_v0.2.md`](RELEASE_CHECKLIST_v0.2.md)
+- release notes: [`RELEASE_NOTES_v0.3.md`](RELEASE_NOTES_v0.3.md)
+- release checklist: [`RELEASE_CHECKLIST_v0.3.md`](RELEASE_CHECKLIST_v0.3.md)
+- previous release: [`RELEASE_NOTES_v0.2.md`](RELEASE_NOTES_v0.2.md), [`RELEASE_CHECKLIST_v0.2.md`](RELEASE_CHECKLIST_v0.2.md)
+
+### Migration Notes (v0.2 -> v0.3)
+
+- **Nothing breaks.** The `.sroof` language, CLI, stdlib, examples, VS Code
+  extension, sbt plugin, and native binary all behave exactly as in v0.2.
+- The Scala 3 frontend is additive: if you do not enable the compiler plugin,
+  your build is unaffected.
+- The trust model gained a second, explicitly stated claim for the Scala path —
+  see [`docs/trust-model.md`](docs/trust-model.md) before relying on it.
+- Documentation corrections: the tactic reference previously listed `ring` and
+  the alias `induct` (neither exists) and conflated `assumption` with `assume`;
+  the native binary is `sroof-cli-native`, not `sroof-cli-native-out`.
 
 ### Migration Notes (v0.1 -> v0.2)
 
@@ -207,18 +226,57 @@ defspec refl_intro(n: Nat): n = n {
 
 ## Tactic Reference
 
-| Tactic                   | Alias      | Effect                                                        |
-|--------------------------|------------|---------------------------------------------------------------|
-| `trivial`                | `triv`     | Close goal when both sides are definitionally equal           |
-| `simplify [f, g, ...]`   | `simp`     | Rewrite using listed lemmas, then check trivially             |
-| `induction x { ... }`   | `induct x` | Split on constructors of `x`; adds IH for recursive cases    |
-| `assumption x`           | `assume x` | Introduce `x : A` into context, shifting goal to `B`         |
-| `apply f`                | —          | Unify goal with return type of `f`; generate subgoals        |
-| `cases x { ... }`        | —          | Case-split without induction hypothesis                       |
-| `have h : T = proof`     | —          | Introduce a local lemma                                       |
-| `calc { ... }`           | —          | Chain equational reasoning steps                              |
-| `ring`                   | —          | Discharge ring-equation goals automatically                   |
-| `sorry`                  | —          | Placeholder for incomplete proofs (emits a warning)           |
+### Closing a goal
+
+| Tactic          | Aliases        | Effect                                                     |
+|-----------------|----------------|------------------------------------------------------------|
+| `trivial`       | `triv`, `rfl`  | Close a goal whose two sides are definitionally equal      |
+| `decide`        | —              | Close a decidable goal (currently the same as `trivial`)   |
+| `assumption`    | —              | Close the goal using a hypothesis already in context       |
+| `contradiction` | —              | Close any goal from a contradictory hypothesis             |
+| `tauto`         | —              | Discharge a propositional tautology                        |
+| `exact e`       | —              | Close the goal with the explicit proof term `e`            |
+| `sorry`         | —              | Unsound placeholder for an incomplete proof (warns)        |
+| `skip`          | —              | Do nothing                                                 |
+
+### Rewriting and case analysis
+
+| Tactic                              | Aliases           | Effect                                                       |
+|-------------------------------------|-------------------|--------------------------------------------------------------|
+| `simplify [f, g, ...]`              | `simp`            | Rewrite with the listed lemmas, then close. With no list, uses the `@[simp]` set |
+| `rewrite [h]`                       | `rw [h]`          | Rewrite the goal with the given equations                    |
+| `induction x { ... }`               | —                 | Split on constructors of `x`; recursive cases get an IH      |
+| `induction x generalizing y z {...}`| —                 | As above, with the IH universally quantified over `y`, `z`   |
+| `cases x { ... }`                   | —                 | Split on constructors without an induction hypothesis        |
+
+### Structure and logic
+
+| Tactic                        | Aliases            | Effect                                                  |
+|-------------------------------|--------------------|---------------------------------------------------------|
+| `assume x ...`                | `intro`, `intros`  | Introduce `∀`-bound variables into the context          |
+| `apply f`                     | —                  | Reduce the goal via `f`'s codomain, leaving its domain  |
+| `have h : T = { p }; rest`    | —                  | Introduce a local lemma, then continue with `rest`      |
+| `calc { ... }`                | —                  | Chain equational reasoning steps                        |
+| `split` / `constructor`       | —                  | Split a conjunction / apply the sole constructor        |
+| `left` / `right`              | —                  | Choose the first / second constructor of a disjunction  |
+| `use e`                       | `exists e`         | Provide a witness for an existential                    |
+| `obtain [x y] from h`         | —                  | Destructure a hypothesis                                |
+| `specialize h arg`            | —                  | Instantiate a universally quantified hypothesis         |
+| `by_contra h`                 | —                  | Proof by contradiction: assume the negation as `h`      |
+
+### Combinators
+
+| Form                        | Effect                                             |
+|-----------------------------|----------------------------------------------------|
+| `{ t1; t2; t3 }`            | Run tactics in sequence                            |
+| `try t`                     | Run `t`; succeed regardless                        |
+| `first \| t1 \| t2`         | Run the first alternative that succeeds            |
+| `repeat t`                  | Run `t` until it stops making progress             |
+| `all_goals t`               | Run `t` against every remaining goal               |
+
+**Simp rule modifiers**: a lemma name passed to `simplify` accepts suffixes —
+`h__rev` rewrites backwards, `h__p10` raises its priority (higher goes first),
+`h__rev__p10` does both.
 
 **Tip for beginners**: Write full names first (`trivial`, `induction`, `simplify`). Switch to aliases only once you understand what they mean.
 
@@ -260,18 +318,82 @@ def plus_zero_right(n: Nat): Unit = ()   // proof erased
 
 ---
 
+## Verifying ordinary Scala 3 (initial subset)
+
+Instead of writing a `.sroof` file, you can write ordinary Scala and have the
+sroof compiler plugin prove theorems about it during compilation:
+
+```scala
+import sroof.annotation.*
+import sroof.lang.*
+
+@proofModule
+object NatProofs:
+
+  enum Nat:
+    case Zero
+    case Succ(n: Nat)
+
+  import Nat.*
+
+  def plus(n: Nat, m: Nat): Nat =
+    n match
+      case Zero    => m
+      case Succ(k) => Succ(plus(k, m))
+
+  @theorem
+  def plusZeroRight(n: Nat): Proof =
+    prove(plus(n, Zero) === n)(
+      induction(n) {
+        case Zero    => trivial
+        case Succ(k) => simplify(ih(k))
+      }
+    )
+```
+
+Scala's own parser and typer process this file; `Nat` and `plus` stay the real
+program and are not regenerated. What the plugin adds is that `plusZeroRight` is
+proved at compile time and re-checked by the same trusted kernel the `.sroof`
+path uses. If the theorem stopped holding, the file would stop compiling.
+
+**This is an initial subset, not general Scala verification.** Today it covers:
+non-generic enums, single-parameter-list pure `def`s over those enums,
+self-recursion accepted by the termination checker, exhaustive matches, immutable
+local `val`s, equality goals, and the tactics `trivial`, `induction`, `ih`, and
+`simplify`. Everything else — `var`, effects, exceptions, casts, closures,
+generics, mutual recursion, external calls — is **rejected with a diagnostic**,
+not approximated.
+
+Verification only happens when the plugin is enabled by the build. The
+annotations alone do nothing:
+
+```scala
+Compile / scalacOptions += "-Xplugin:" + pluginClasspath   // see build.sbt
+```
+
+Full details, including the exact supported and unsupported subsets and the
+translation rules, are in [docs/scala3-frontend.md](docs/scala3-frontend.md).
+A working example lives in `examples-scala3/`.
+
+---
+
 ## Architecture
 
 ```
 sroof/
-├── core/       # Term ADT, De Bruijn substitution, typing context
-├── eval/       # Normalization by Evaluation (NbE)
-├── checker/    # Bidirectional type checking
-├── tactic/     # TacticM monad, built-in tactics
-├── syntax/     # Parsley-based parser, surface AST, pretty-printer
-├── extract/    # Scala 3 code generation
-├── kernel/     # Trusted kernel (<500 lines, auditable)
-└── cli/        # REPL and file loader
+├── core/            # Term ADT, De Bruijn substitution, typing context
+├── eval/            # Normalization by Evaluation (NbE)
+├── checker/         # Bidirectional type checking
+├── tactic/          # TacticM monad, built-in tactics
+├── syntax/          # Parsley-based parser, surface AST, pretty-printer  (legacy .sroof path)
+├── extract/         # Scala 3 code generation                            (legacy .sroof path)
+├── kernel/          # Trusted kernel (<500 lines, auditable)
+├── cli/             # REPL and file loader                               (legacy .sroof path)
+├── scala-api/       # @proofModule / @theorem annotations and the sroof.lang DSL
+├── scala-frontend/  # Resolved IR, Scala-to-core translation, proof runner, kernel gate
+├── scala-plugin/    # The Scala 3 compiler plugin (compiler-version-specific)
+├── examples-scala3/ # Real .scala sources compiled with the plugin enabled
+└── scala-it/        # Integration tests that invoke dotc for real
 ```
 
 ## Trust Model
@@ -281,6 +403,11 @@ Soundness boundary and trusted computing base (TCB) are documented in [docs/trus
 Pipeline note:
 - checker/tactic generates candidate proof terms
 - final accept/reject decision is centralized in `kernel` validation
+
+On the Scala 3 path the kernel decides logical validity exactly the same way, but
+one extra thing is trusted: that the core model **is** the Scala program. That
+Scala-to-core correspondence rests on the translation layer, so it is part of the
+TCB for theorems stated about Scala code. See the trust-model document.
 
 **Type theory**: Predicative CIC (Calculus of Inductive Constructions)
 - Universe hierarchy: `Type`, `Type1`, `Type2`, ...
@@ -307,7 +434,7 @@ sudo apt-get install clang lld libunwind-dev
 sbt cliNative/nativeLink
 
 # Run the native binary
-./cli-native/target/scala-3.3.6/sroof-cli-native-out check examples/nat.sroof
+./cli-native/target/scala-3.3.6/sroof-cli-native check examples/nat.sroof
 ```
 
 ### Performance

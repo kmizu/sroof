@@ -24,6 +24,19 @@ object Eq:
   def mkType(tpe: Term, lhs: Term, rhs: Term): Term =
     Term.App(Term.App(Term.App(eqInd, tpe), lhs), rhs)
 
+  /** Construct the 2-arg goal type `Eq lhs rhs`, leaving the type implicit.
+   *
+   *  This is the form the checker can actually type: `Bidirectional.inferUniverse`
+   *  recognises `Eq a b` (and `Eq a`) as Prop-level, but not the 3-arg form,
+   *  because `Ind("Eq",...)` is a built-in that is absent from `GlobalEnv` and so
+   *  has no Pi type to apply.  `infer` on `refl(a)` likewise produces this shape.
+   *
+   *  Frontends that state equality goals should use this rather than rebuilding
+   *  the encoding, so there is one definition of what a goal looks like.
+   */
+  def mkPropType(lhs: Term, rhs: Term): Term =
+    Term.App(Term.App(eqInd, lhs), rhs)
+
   /** Construct the reflexivity proof `refl(lhs)`. */
   def mkRefl(lhs: Term): Term =
     Term.Con("refl", "Eq", List(lhs))

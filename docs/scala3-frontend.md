@@ -1,0 +1,356 @@
+# The Scala 3 frontend
+
+sroof is becoming **a Scala 3 verification system with an independent proof
+kernel, rather than a separate Scala-like programming language**. This document
+describes the new primary path: ordinary `.scala` sources, verified during
+compilation by a standard Scala 3 compiler plugin.
+
+The legacy `.sroof` language, its parser, CLI, extractor, and examples all still
+work and are unchanged. See [Migration](#migration-from-sroof) for how the two
+relate.
+
+---
+
+## 1. Why abandon a separate Scala-like syntax
+
+sroof's original premise was that syntax is what keeps proof assistants away
+from mainstream programmers, so it offered a Scala-shaped language. That solved
+the *reading* problem but left three structural ones:
+
+- **A second language is still a second language.** A `.sroof` file cannot be
+  compiled, tested, refactored, or reviewed with the tools a Scala team already
+  has. Familiar syntax does not buy IDE support, build integration, or library
+  reuse.
+- **Extraction runs the wrong way.** Generating Scala *from* proofs means the
+  verified artifact and the shipped artifact are different objects, and the
+  correspondence between them is asserted rather than checked.
+- **Every language feature had to be re-invented.** Parser, elaborator, type
+  inference, and error messages all had to be built and maintained for a
+  language nobody writes anything else in.
+
+Embedding in Scala 3 inverts all three. The program is the Scala program; the
+Scala compiler does the parsing, typing, and IDE work; and sroof adds exactly
+one thing — a proof obligation checked by an independent kernel.
+
+## 2. Architecture
+
+```text
+.scala source
+    ↓  (Scala 3 parser and typer — unmodified)
+typed trees
+    ↓  scala-plugin: symbol-resolved extraction
+resolved frontend IR (no dotc types)
+    ↓  scala-frontend: translation
+core Terms / IndDef / DefEntry / GlobalEnv
+    ↓  existing tactics (untrusted generators)
+candidate proof term
+    ↓  Kernel.verify  ← the sole proof-validity gate
+ordinary Scala compilation continues
+```
+
+### Modules
+
+| Module | Depends on | Responsibility |
+|---|---|---|
+| `scala-api` | nothing but the Scala library | `sroof.annotation` markers and the `sroof.lang` DSL. Compiled into user code. |
+| `scala-frontend` | `kernel` | The resolved IR, translation into core terms, the proof runner, and the kernel call. **Must not import `dotty.tools.dotc`.** |
+| `scala-plugin` | `scala-frontend`, `scala3-compiler` (provided) | The `StandardPlugin`, its phase, and all dotc tree/symbol handling. Compiler-version-specific. |
+| `examples-scala3` | `scala-api` | Real sources compiled with the plugin enabled; a failed proof fails this build. |
+| `scala-it` | `scala-frontend` (test) | Integration tests that invoke `dotc` for real. |
+
+The boundary that matters is `scala-frontend` ⊥ `dotc`. All compiler-specific
+code lives in `sroof.plugin.dotc`, so porting to a future Scala version means
+rewriting extraction only — not translation, proof running, or the kernel.
+
+None of these are mirrored into the Scala Native build: the plugin links against
+the JVM-only compiler. `nativeRoot` is untouched.
+
+## 3. Developer-facing syntax
+
+```scala
+package sroof.examples.scala3
+
+import sroof.annotation.*
+import sroof.lang.*
+
+@proofModule
+object NatProofs:
+
+  enum Nat:
+    case Zero
+    case Succ(n: Nat)
+
+  import Nat.*
+
+  def plus(n: Nat, m: Nat): Nat =
+    n match
+      case Zero    => m
+      case Succ(k) => Succ(plus(k, m))
+
+  @theorem
+  def plusZeroRight(n: Nat): Proof =
+    prove(plus(n, Zero) === n)(
+      induction(n) {
+        case Zero    => trivial
+        case Succ(k) => simplify(ih(k))
+      }
+    )
+```
+
+This is the file in `examples-scala3/`. It is ordinary Scala 3: it type-checks,
+compiles, and runs without the plugin — it simply proves nothing in that case.
+
+### Annotation and DSL reference
+
+| Name | Meaning |
+|---|---|
+| `@proofModule` | Marks an `object` whose entire contents are verified code. |
+| `@theorem` | Marks a method to prove. Must be in a `@proofModule`, return exactly `Proof`, and have the body `prove(goal)(tactic)`. |
+| `@simp` | Adds a theorem to the default simplification set — only after the kernel accepts it. |
+| `a === b` | The equality proposition. Both sides must be verified computations at a supported enum type. |
+| `prove(goal)(tactic)` | States a goal and its proof script. Both arguments are by-name and never evaluated. |
+| `trivial` | Closes a goal whose sides are definitionally equal. |
+| `induction(x) { case ... }` | Structural induction on a theorem parameter. |
+| `ih(k)` | The induction hypothesis for the recursive field binder `k`. |
+| `simplify(lemmas*)` | Rewrites with the given lemmas, then closes the goal. With no arguments, uses the `@simp` set. |
+
+`Prop`, `Proof`, and `Tactic` are opaque type aliases of `Unit`. Proof code
+therefore erases to inert values: nothing is executed, no reflection is
+involved, and there is no runtime proof checking.
+
+## 4. Supported subset
+
+Inside a `@proofModule`, this milestone supports:
+
+**Declarations**
+- non-generic `enum`s whose case fields all have supported enum types;
+- `def`s with one parameter list, explicitly typed parameters and result;
+- `@theorem def`s returning exactly `sroof.lang.Proof`;
+- `@simp` on a theorem.
+
+**Types**
+- enums declared in the same `@proofModule`, and nothing else.
+
+**Expressions**
+- parameter and pattern-binder references;
+- calls to definitions of the same module, including direct self-recursion;
+- enum constructor applications (`Succ(x)`, `Zero`, and `new Succ(x)`);
+- exhaustive `match` over a supported enum, one branch per constructor;
+- a single immutable local `val` binding;
+- transparent wrappers (`Typed`, `Inlined` with no bindings, empty `Block`).
+
+**Proof DSL**
+- equality goals built with sroof's `===`;
+- `prove`, `trivial`, `induction`, `ih`, `simplify`;
+- `simplify` citing a `@theorem` verified **earlier in the same module**.
+
+## 5. Explicitly unsupported
+
+Rejected with a targeted diagnostic rather than approximated:
+
+`var`, assignment, mutable fields · exceptions, `throw`/`try` · I/O, `println`,
+any call outside the module · `Future`, threads · casts, `asInstanceOf` ·
+implicit/given search in verified computation · closures and higher-order values
+· general, non-structural, or mutual recursion · generic enums, GADTs, indexed
+families · classes, traits, case classes, opaque types as verified data ·
+numeric and string primitives · macros, inline, quotes, splices · pattern guards,
+pattern alternatives, nested patterns, `x @ pattern` · theorem bodies not shaped
+as `prove(goal)(tactic)` · tactics other than the ones listed above.
+
+Two restrictions are worth calling out because they are sroof-specific rather
+than obviously unsupported:
+
+- **`ih` requires a single recursive field.** `Builtins.buildFixCase` applies the
+  recursion to `Var(0)`, the last constructor argument, so an induction
+  hypothesis is only generated for a constructor with exactly one field of its
+  own inductive type. `Succ(n: Nat)` qualifies; `Node(l: Tree, r: Tree)` does not.
+- **A pattern binder may not be named `ih`.** The tactic engine binds the
+  generated hypothesis under that exact name, so a user binder with the same name
+  is rejected rather than allowed to shadow it.
+
+Being legal Scala does not make code legal verified sroof code. Everything a
+`@proofModule` declares is treated as verified code, so an unsupported member
+fails the compilation instead of being silently skipped.
+
+## 6. Compiler plugin
+
+`sroof.plugin.SroofPlugin` is a `StandardPlugin` contributing one `PluginPhase`,
+`sroofVerify`.
+
+**Placement.** `runsAfter = PostTyper.name`, `runsBefore = Pickler.name`,
+referenced through the compiler's own constants rather than string literals so a
+rename cannot silently detach the phase. In Scala 3.3.6 the resolved names are
+`posttyper` and `pickler`, and the surrounding order is
+`typer → posttyper → … → pickler → inlining → …`. That window gives the phase:
+
+- resolved symbols and inferred types on every tree;
+- the user's original source positions;
+- enum cases, method bodies, applications, and matches still in recognisable
+  form — notably, a `PartialFunction` literal is still
+  `Block(DefDef($anonfun), Closure)` over a `Match`, rather than the anonymous
+  class it becomes later;
+- execution before TASTy is written, so a rejected proof fails compilation rather
+  than being pickled first.
+
+The phase inspects and reports. It rewrites no trees.
+
+**Symbol identity.** Every DSL operation, annotation, constructor, and binder is
+recognised by comparing resolved `Symbol`s (`sroof.plugin.dotc.DslSymbols`). A
+user-defined `prove`, `trivial`, `simplify`, or `===` is ordinary Scala as far as
+sroof is concerned; `SymbolIdentitySuite` pins this behaviour.
+
+**Version coupling.** `scala-plugin` depends on `scala3-compiler` at the exact
+build version. Direct dotc usage is confined to the `sroof.plugin.dotc` package
+so a future port does not touch the frontend or kernel.
+
+**Lifecycle.** The plugin has no static mutable state. Resolved DSL symbols are
+cached per compiler run and recomputed when the run changes, so nothing leaks
+between compilations sharing a JVM. Any internal exception becomes a positioned
+compiler error — never a silent success.
+
+**Enabling.** Verification happens only when the plugin is enabled by the build:
+
+```scala
+Compile / scalacOptions += "-Xplugin:" + pluginClasspath
+```
+
+The head entry of that classpath must be the plugin JAR (it carries
+`plugin.properties`); the remaining entries are the plugin's runtime
+dependencies. See `sroofPluginClasspath` in `build.sbt`.
+
+## 7. Translation into core
+
+### Inductives
+
+A supported enum becomes an `IndDef`. Cases come from the compiler's `children`,
+sorted by source offset so constructor order is exactly declaration order — which
+is what `Term.Mat` branch positions mean. Strict positivity is checked by the
+existing `PositivityChecker`.
+
+### Definitions
+
+A `def` becomes a `DefEntry` whose body is always `Fix`-wrapped, recursive or
+not, matching what the legacy elaborator produces:
+
+```text
+def f(a: A, b: B): C = body
+  ⇒  tpe  = Pi(a, A, Pi(b, B, C))
+     body = Fix(f, tpe, Lam(a, A, Lam(b, B, ⟦body⟧)))
+```
+
+De Bruijn conventions, stated once because they are the easiest thing to get
+backwards:
+
+- parameters enter the scope **reversed** — for `f(a, b)`, `b` is `Var(0)` and
+  `a` is `Var(1)`;
+- match field binders also enter **reversed** — in a branch for `C(x, y)`, `y` is
+  `Var(0)` and `x` is `Var(1)`;
+- self-reference is `Var(scope.length)`: the `Fix` binder sits immediately
+  outside all lambdas and all match binders, so it is always one past the
+  innermost scope.
+
+Core `Term` has no global-reference node, so a call to another definition is
+**inlined** as that definition's translated body. Translated bodies are closed,
+so no shifting is involved. `TerminationChecker` runs on every definition.
+
+**Definition ordering.** Scala allows forward references between methods, so
+definitions are scheduled by dependency rather than by source order. Direct
+self-recursion is fine; any cycle involving two or more definitions is mutual
+recursion and is rejected with the participants named.
+
+**No fallback metavariables.** Every supported type is a closed
+`Ind(name, Nil, Nil)`, which lets the expected type be threaded top-down and used
+verbatim as a `Mat` return type. No accepted translation contains a `Meta` node;
+`CoreTranslatorSuite` asserts this. (Widening the type language means revisiting
+the threading — the expected type would then need shifting under binders.)
+
+**Equality goals** use the 2-argument encoding `App(App(Ind("Eq"), lhs), rhs)`.
+That is deliberate, not a shortcut: it is the form `Bidirectional.inferUniverse`
+recognises as Prop-level and the form `infer` produces for `refl`. The 3-argument
+form cannot be typed by the existing checker, since `Ind("Eq", …)` is a built-in
+absent from `GlobalEnv` and so has no `Pi` type to apply. `Eq.mkPropType` is the
+single definition of this encoding.
+
+## 8. Proof execution and the kernel gate
+
+For each `@theorem`, in source order:
+
+1. parameters become a `Context` (left to right, so the last parameter is
+   `Var(0)`) and the goal is translated in the reversed scope;
+2. the tactic script runs through the existing `TacticM`/`Builtins`, producing a
+   *candidate* term;
+3. the candidate is closed over the parameters into a full `Lam`, and the goal
+   into the matching full `Pi`;
+4. `Kernel.verify(Context.empty, fullProof, fullProp)` decides;
+5. only on success does the theorem enter `GlobalEnv` as a `DefEntry`, and only
+   then does a `@simp` theorem enter `simpSet`.
+
+Step 5 is what keeps proof reuse honest: an unproved or rejected theorem never
+reaches the environment, so it cannot be cited by a later proof.
+
+`induction` maps onto `Builtins.induction`, which chooses between a plain `Mat`
+and a `Fix`-wrapped proof by comparing each branch's binding count against the
+constructor arity. The frontend appends the reserved binding name `ih` for
+branches that used `ih(...)`, which is what requests the hypothesis.
+
+There is no `sorry`, no `skipKernel`, no warning-only mode, and no fallback proof
+on this path. The legacy `.sroof` path keeps its `sorry` support; the Scala path
+never had it.
+
+## 9. Trust and semantic correspondence
+
+See [trust-model.md](trust-model.md) for the full statement. In short, the Scala
+path makes two distinct claims:
+
+- **Core logical validity** — decided by the kernel, checker, and evaluator,
+  exactly as on the `.sroof` path. Tactics remain untrusted generators.
+- **Scala semantic correspondence** — the claim that the core model *is* the
+  Scala program. This rests on `scala-frontend`'s translation and on the
+  plugin's extraction, both of which are therefore inside the trusted computing
+  base for that claim.
+
+The bridge is kept small and conservative, and is backed by golden translation
+tests, a finite differential test comparing Scala `plus` against core evaluation,
+and negative tests ensuring unsupported Scala is rejected rather than
+mistranslated.
+
+## 10. Migration from `.sroof`
+
+The `.sroof` path is a supported legacy path, not a deprecated one. Nothing about
+it changed in this milestone: the parser, elaborator, CLI (`check`, `agent`,
+`extract`, `repl`), stdlib, examples, VS Code extension, sbt plugin, and Scala
+Native binary all behave as before.
+
+Planned sequence:
+
+1. **now** — both paths coexist; the Scala path covers the `nat.sroof` slice.
+2. **next** — the Scala path grows until it covers the stdlib's proof patterns.
+3. **later** — `sbt-sroof` gains a mode that injects `scala-api` and the compiler
+   plugin instead of extracting generated Scala (see below).
+4. **eventually** — the legacy parser is removed once the Scala path reaches
+   parity and users have migrated. Not before.
+
+### `sbt-sroof`
+
+The existing nested sbt plugin is **legacy integration**: it drives the `.sroof`
+CLI and its extraction workflow, and is unchanged. A future mode that adds
+`scala-api` as a dependency and the compiler plugin to `scalacOptions` is
+designed but not implemented, because it cannot be tested honestly until the
+artifacts are published. `build.sbt` shows the shape such a mode would take.
+
+## 11. Future work
+
+- **Generic enums** — requires parameterised `IndDef`s and type-argument
+  translation; the IR's `ResolvedType` is where that starts.
+- **Indexed families / GADTs** — `Vec`-style indexed types, as the `.sroof` path
+  already supports.
+- **Richer tactic DSL** — `cases`, `rewrite`, `calc`, `apply`, and the rest of
+  the built-ins the `.sroof` path exposes.
+- **Multi-field recursive constructors** — needs the tactic engine to target a
+  chosen field rather than `Var(0)`.
+- **Cross-JAR theorem metadata** — today a lemma must be a theorem verified
+  earlier in the same module; sharing across compilation units needs proof
+  metadata in TASTy or a sidecar.
+- **Incremental verification** — re-verifying only modules whose proof-relevant
+  content changed, in the spirit of `INCREMENTAL_CHECKING.md`.
+- **Numeric primitives** — deliberately modelled, rather than assumed.

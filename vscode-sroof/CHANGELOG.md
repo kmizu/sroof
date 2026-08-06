@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.3.0] — 2026-08-06
+
+### Changed
+- Version bump for the v0.3 release.
+
+### Notes
+- The extension continues to serve the `.sroof` language. Verification of
+  ordinary `.scala` sources, added in v0.3, happens inside the Scala compiler
+  and is surfaced by whatever tooling already reports Scala compiler
+  diagnostics — no extension support is required for it.
+
 ## [0.2.0] — 2026-03-02
 
 ### Added

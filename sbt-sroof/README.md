@@ -4,6 +4,12 @@ An sbt plugin for the [sroof](https://github.com/kmizu/sroof) theorem prover.
 
 Automatically type-checks `.sroof` files and extracts verified Scala 3 source code as part of your sbt build.
 
+> **Status: legacy integration.** This plugin drives the `.sroof` language and its
+> extraction workflow. It is fully supported and unchanged, but it is not the
+> direction sroof is heading: the newer Scala 3 frontend verifies ordinary
+> `.scala` sources in place, so there is nothing to extract. See
+> [Future: compiler-plugin mode](#future-compiler-plugin-mode).
+
 ---
 
 ## Setup
@@ -154,6 +160,32 @@ sroofSources := Seq(baseDirectory.value / "proofs")
 ## Incremental extraction
 
 `sroofExtract` skips files that haven't changed since the last extraction (source `.lastModified` vs generated file). The generated files are placed in `target/src_managed/main/sroof/` and automatically added to the Scala compilation classpath.
+
+---
+
+## Future: compiler-plugin mode
+
+The Scala 3 frontend verifies `.scala` sources in place, so there is nothing to
+extract and no CLI to shell out to. A future mode of this plugin would replace
+the extraction workflow with two build edits:
+
+```sbt
+// sketch — not implemented
+libraryDependencies += "io.sroof" %% "sroof-scala-api"    % sroofVersion
+Compile / scalacOptions += "-Xplugin:" + sroofPluginClasspath.value
+```
+
+where `sroofPluginClasspath` resolves `sroof-scala-plugin` and its runtime
+dependencies, with the plugin JAR first (it carries `plugin.properties`).
+
+**This mode is deliberately not implemented yet.** Wiring it up would mean
+depending on `io.sroof` artifacts that are not published, so the plugin would
+either fail at resolution or need a fake local path — and a half-working
+packaging story is worse than an honest note. The design is recorded here and in
+[`docs/scala3-frontend.md`](../docs/scala3-frontend.md); implementation waits on
+publication.
+
+Nothing about the current `.sroof` extraction behaviour changes in the meantime.
 
 ---
 

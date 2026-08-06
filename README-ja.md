@@ -87,6 +87,24 @@ sbt "cli/run check examples/nat.sroof"
 OK: examples/nat.sroof — 1 inductive(s), 1 definition(s), 4 defspec(s)
 ```
 
+### v0.3 リリース情報
+
+- 変更履歴: [`CHANGELOG.md`](CHANGELOG.md)
+- リリースノート: [`RELEASE_NOTES_v0.3.md`](RELEASE_NOTES_v0.3.md)
+- リリースチェックリスト: [`RELEASE_CHECKLIST_v0.3.md`](RELEASE_CHECKLIST_v0.3.md)
+
+### 移行メモ（v0.2 → v0.3）
+
+- **壊れるものはありません。** `.sroof` 言語、CLI、stdlib、examples、VS Code 拡張、
+  sbt プラグイン、ネイティブバイナリはすべて v0.2 と同じ挙動です。
+- Scala 3 フロントエンドは加算的です。コンパイラプラグインを有効にしなければ、
+  ビルドは一切影響を受けません。
+- Scala 経路では信頼モデルに主張がひとつ増えました。依拠する前に
+  [`docs/trust-model.md`](docs/trust-model.md) を確認してください。
+- ドキュメントの誤り訂正: タクティク表に載っていた `ring` と省略形 `induct` は
+  どちらも実装に存在しません。また `assumption` と `assume` は別のタクティクです。
+  ネイティブバイナリ名は `sroof-cli-native` です（`-out` は付きません）。
+
 ---
 
 ## 構文ガイド
@@ -175,18 +193,57 @@ defspec refl_intro(n: Nat): n = n {
 
 ## タクティク一覧
 
-| タクティク              | 省略形       | 意味                                              |
-|------------------------|-------------|---------------------------------------------------|
-| `trivial`              | `triv`      | 両辺が定義的に等しければゴールを閉じる             |
-| `simplify [f, g, ...]` | `simp`      | 指定した補題で簡約し、trivial で閉じる            |
-| `induction x { ... }` | `induct x`  | `x` の型でコンストラクタ分割。再帰ケースに IH 付き |
-| `assumption x`         | `assume x`  | `x : A` をコンテキストに導入し、ゴールを `B` に   |
-| `apply f`              | —           | ゴールを `f` の戻り型と単一化、引数をサブゴールに  |
-| `cases x { ... }`      | —           | 帰納仮説なしでコンストラクタ分割                  |
-| `have h : T = proof`   | —           | ローカル補題を定義                                |
-| `calc { ... }`         | —           | 等式の連鎖推論                                    |
-| `ring`                 | —           | 環の等式を自動証明                                |
-| `sorry`                | —           | 未完プレースホルダー（警告付き）                  |
+### ゴールを閉じる
+
+| タクティク      | 省略形         | 意味                                             |
+|----------------|---------------|--------------------------------------------------|
+| `trivial`      | `triv`, `rfl` | 両辺が定義的に等しければゴールを閉じる             |
+| `decide`       | —             | 決定可能なゴールを閉じる（現状は `trivial` と同じ）|
+| `assumption`   | —             | コンテキストにある仮定でゴールを閉じる             |
+| `contradiction`| —             | 矛盾した仮定から任意のゴールを閉じる               |
+| `tauto`        | —             | 命題論理のトートロジーを消化する                   |
+| `exact e`      | —             | 明示的な証明項 `e` でゴールを閉じる                |
+| `sorry`        | —             | 未完プレースホルダー（不健全・警告付き）           |
+| `skip`         | —             | 何もしない                                        |
+
+### 書き換えと場合分け
+
+| タクティク                             | 省略形    | 意味                                                    |
+|---------------------------------------|----------|---------------------------------------------------------|
+| `simplify [f, g, ...]`                | `simp`   | 指定した補題で簡約して閉じる。省略時は `@[simp]` 集合を使用 |
+| `rewrite [h]`                         | `rw [h]` | 与えた等式でゴールを書き換える                            |
+| `induction x { ... }`                 | —        | `x` の型でコンストラクタ分割。再帰ケースに IH 付き        |
+| `induction x generalizing y z { ... }`| —        | 上記に加え、IH を `y`, `z` について全称量化する           |
+| `cases x { ... }`                     | —        | 帰納仮説なしでコンストラクタ分割                          |
+
+### 構造と論理
+
+| タクティク                   | 省略形             | 意味                                          |
+|-----------------------------|-------------------|-----------------------------------------------|
+| `assume x ...`              | `intro`, `intros` | `∀` 束縛変数をコンテキストに導入する            |
+| `apply f`                   | —                 | `f` の戻り型でゴールを縮約し、引数をサブゴールに |
+| `have h : T = { p }; rest`  | —                 | ローカル補題を定義してから `rest` を続ける       |
+| `calc { ... }`              | —                 | 等式の連鎖推論                                  |
+| `split` / `constructor`     | —                 | 連言を分割 / 唯一のコンストラクタを適用          |
+| `left` / `right`            | —                 | 選言の第1 / 第2コンストラクタを選ぶ              |
+| `use e`                     | `exists e`        | 存在量化子に証拠を与える                         |
+| `obtain [x y] from h`       | —                 | 仮定を分解する                                   |
+| `specialize h arg`          | —                 | 全称量化された仮定を具体化する                   |
+| `by_contra h`               | —                 | 背理法。否定を `h` として仮定する                |
+
+### コンビネータ
+
+| 形                    | 意味                                     |
+|----------------------|------------------------------------------|
+| `{ t1; t2; t3 }`     | 順に実行する                              |
+| `try t`              | `t` を試し、失敗しても成功扱いにする        |
+| `first \| t1 \| t2`  | 最初に成功した選択肢を採用する              |
+| `repeat t`           | 進展がなくなるまで `t` を繰り返す           |
+| `all_goals t`        | 残る全ゴールに `t` を適用する               |
+
+**simp ルール修飾子**: `simplify` に渡す補題名には接尾辞が付けられる。
+`h__rev` は逆向き書き換え、`h__p10` は優先度を上げる（大きいほど先に試す）、
+`h__rev__p10` は両方。
 
 **初心者へ**: まずフルスペル（`trivial`, `induction`, `simplify`）で書いてください。意味が直感的にわかります。省略形は慣れてから使えば十分です。
 
@@ -228,19 +285,89 @@ def plus_zero_right(n: Nat): Unit = ()   // 証明は消去
 
 ---
 
+## 通常の Scala 3 を検証する（初期サブセット）
+
+`.sroof` ファイルを書く代わりに、**普通の Scala** を書いて、sroof コンパイラ
+プラグインにコンパイル時に定理を証明させることもできます。
+
+```scala
+import sroof.annotation.*
+import sroof.lang.*
+
+@proofModule
+object NatProofs:
+
+  enum Nat:
+    case Zero
+    case Succ(n: Nat)
+
+  import Nat.*
+
+  def plus(n: Nat, m: Nat): Nat =
+    n match
+      case Zero    => m
+      case Succ(k) => Succ(plus(k, m))
+
+  @theorem
+  def plusZeroRight(n: Nat): Proof =
+    prove(plus(n, Zero) === n)(
+      induction(n) {
+        case Zero    => trivial
+        case Succ(k) => simplify(ih(k))
+      }
+    )
+```
+
+このファイルは Scala 自身のパーサーと型検査器が処理します。`Nat` と `plus` は
+実プログラムのままで、sroof コアから再生成されるわけではありません。プラグインが
+加えるのは、`plusZeroRight` がコンパイル時に証明され、`.sroof` 経路と同じ信頼済み
+カーネルで再検査されるという一点だけです。定理が成り立たなくなれば、そのファイルは
+コンパイルできなくなります。
+
+**これは初期サブセットであり、Scala 全般の検証ではありません。** 現時点で対応して
+いるのは、ジェネリックでない enum、それらの上の単一パラメータリストの純粋な `def`、
+停止性検査を通る自己再帰、網羅的な match、不変なローカル `val`、等式ゴール、そして
+`trivial` / `induction` / `ih` / `simplify` のタクティクです。それ以外（`var`、副作用、
+例外、キャスト、クロージャ、ジェネリクス、相互再帰、モジュール外呼び出しなど）は
+**近似せずに診断メッセージ付きで拒否**します。
+
+検証はビルドがプラグインを有効にしたときにだけ行われます。アノテーション単体では
+何も起こりません。
+
+```scala
+Compile / scalacOptions += "-Xplugin:" + pluginClasspath   // build.sbt を参照
+```
+
+対応・非対応サブセットの詳細と変換規則は
+[docs/scala3-frontend.md](docs/scala3-frontend.md) にあります。動く例は
+`examples-scala3/` です。
+
+---
+
 ## アーキテクチャ
 
 ```
 sroof/
-├── core/       # Term ADT、De Bruijn 置換、型付けコンテキスト
-├── eval/       # NbE（Normalization by Evaluation）
-├── checker/    # 双方向型検査（bidirectional type checking）
-├── tactic/     # TacticM モナド、組み込みタクティク
-├── syntax/     # Parsley ベースパーサー、表面 AST、pretty-print
-├── extract/    # Scala 3 コード生成
-├── kernel/     # 信頼済みカーネル（< 500 行、監査可能）
-└── cli/        # REPL、ファイルローダー
+├── core/            # Term ADT、De Bruijn 置換、型付けコンテキスト
+├── eval/            # NbE（Normalization by Evaluation）
+├── checker/         # 双方向型検査（bidirectional type checking）
+├── tactic/          # TacticM モナド、組み込みタクティク
+├── syntax/          # Parsley ベースパーサー、表面 AST、pretty-print（レガシー .sroof 経路）
+├── extract/         # Scala 3 コード生成                              （レガシー .sroof 経路）
+├── kernel/          # 信頼済みカーネル（< 500 行、監査可能）
+├── cli/             # REPL、ファイルローダー                          （レガシー .sroof 経路）
+├── scala-api/       # @proofModule / @theorem アノテーションと sroof.lang DSL
+├── scala-frontend/  # 解決済み IR、Scala→コア変換、証明ランナー、カーネルゲート
+├── scala-plugin/    # Scala 3 コンパイラプラグイン（コンパイラバージョン固有）
+├── examples-scala3/ # プラグインを有効にしてコンパイルされる実 .scala ソース
+└── scala-it/        # 実際に dotc を起動する統合テスト
 ```
+
+**信頼モデルの注意:** Scala 経路では、カーネルが論理的妥当性を判定するのは
+`.sroof` 経路とまったく同じですが、追加でひとつ信頼するものがあります —
+「コアのモデルが Scala プログラムそのものである」という対応関係です。これは変換層に
+依存するため、Scala コードについて述べる定理においては TCB の一部になります。
+詳細は [docs/trust-model.md](docs/trust-model.md) を参照してください。
 
 **型理論**: Predicative CIC（Calculus of Inductive Constructions）
 - 宇宙階層: `Type`, `Type1`, `Type2`, ...
@@ -267,7 +394,7 @@ sudo apt-get install clang lld libunwind-dev
 sbt cliNative/nativeLink
 
 # 生成されたネイティブバイナリを実行
-./cli-native/target/scala-3.3.6/sroof-cli-native-out check examples/nat.sroof
+./cli-native/target/scala-3.3.6/sroof-cli-native check examples/nat.sroof
 ```
 
 ### 設定

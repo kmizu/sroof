@@ -52,6 +52,38 @@ jobs:
       - name: Check Effect runtime extraction
         run: ./scripts/check_effect_runtime.sh
 
+  # ---- Scala 3 frontend: compiler-plugin verification ----
+  scala-frontend:
+    name: Scala 3 frontend (compiler plugin)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+          cache: sbt
+
+      - uses: sbt/setup-sbt@v1
+
+      # Translation and proof-runner tests, with no compiler in the loop: a
+      # failure here points at the Scala-to-core bridge rather than extraction.
+      - name: Frontend translation and proof tests
+        run: sbt scalaFrontend/test
+
+      # The real end-to-end gate: this compiles ordinary .scala with the plugin
+      # enabled, so a theorem that stops holding fails the build.
+      - name: Verify the Scala 3 example with the plugin enabled
+        run: sbt scalaExamples/compile
+
+      - name: Verified module still runs as an ordinary program
+        run: sbt scalaExamples/test
+
+      # Positive, negative, and symbol-identity tests driving genuine dotc runs.
+      - name: Compiler-plugin integration tests
+        run: sbt scalaIt/test
+
   # ---- Benchmarks: median + threshold gate ----
   benchmarks:
     name: Benchmarks (median thresholds)

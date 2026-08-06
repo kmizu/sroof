@@ -4,7 +4,14 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What is sroof?
 
-A dependently-typed theorem prover (proof assistant) written in Scala 3. Uses a predicative Calculus of Inductive Constructions (CIC) with Scala-like brace syntax. The goal is making formal verification accessible to programmers familiar with Scala/Java/Rust/C++.
+A dependently-typed theorem prover (proof assistant) written in Scala 3. Uses a predicative Calculus of Inductive Constructions (CIC).
+
+There are **two frontends** over one shared core and kernel:
+
+1. **Scala 3 frontend** (`scala-api`, `scala-frontend`, `scala-plugin`) — the new primary path. Users write ordinary `.scala` files with `@proofModule`/`@theorem` annotations; a standard Scala 3 compiler plugin translates a restricted pure subset into core terms, runs the existing tactics, and gates every proof through `Kernel.verify`. Currently covers a deliberately narrow subset (see `docs/scala3-frontend.md`).
+2. **`.sroof` language** (`syntax`, `cli`, `extract`) — the mature legacy path, with Scala-like brace syntax. Fully supported and unchanged; not deprecated.
+
+When changing shared code (`core`, `eval`, `checker`, `tactic`, `kernel`), remember both frontends depend on it.
 
 ## Build & Test Commands
 
@@ -43,10 +50,30 @@ sbt "cli/run repl"
 
 # Build native binary (requires clang, lld, libunwind-dev)
 sbt cliNative/nativeLink
-# Native binary location: ./cli-native/target/scala-3.3.6/sroof-cli-native-out
+# Native binary location: ./cli-native/target/scala-3.3.6/sroof-cli-native
 
 # Run all native tests (LLVM required)
 sbt nativeRoot/test
+```
+
+### Scala 3 frontend
+
+```bash
+# Frontend unit + golden translation tests (no compiler involved)
+sbt scalaFrontend/test
+
+# Build the compiler plugin
+sbt scalaPlugin/package
+
+# Compile the normative example WITH the plugin enabled.
+# A failing @theorem makes this command fail — that is the point.
+sbt scalaExamples/compile
+
+# Runtime tests proving the verified Scala is still an ordinary program
+sbt scalaExamples/test
+
+# Integration tests: real dotc invocations with the plugin (positive + negative)
+sbt scalaIt/test
 ```
 
 ## Module Dependency Graph
@@ -65,7 +92,21 @@ cli (entry point: sroof.Main)
     └── tactic
 ```
 
-Eight JVM modules + eight mirrored Scala Native modules. Native modules have no source of their own — they share sources from JVM counterparts via `unmanagedSourceDirectories` in build.sbt.
+The Scala 3 frontend sits alongside, sharing the same core and kernel:
+
+```
+scala-plugin (StandardPlugin + PluginPhase; the only dotc-aware code)
+└── scala-frontend (resolved IR → core Terms → tactics → Kernel.verify)
+    └── kernel
+
+scala-api      (annotations + DSL; depends on nothing but the Scala library)
+examples-scala3 (real .scala compiled with -Xplugin; fails the build if a proof fails)
+scala-it        (integration tests invoking dotc in-process)
+```
+
+Eight JVM modules + eight mirrored Scala Native modules, plus five Scala-frontend modules. Native modules have no source of their own — they share sources from JVM counterparts via `unmanagedSourceDirectories` in build.sbt. **The Scala-frontend modules are deliberately not mirrored into `nativeRoot`** (the plugin links against the JVM-only compiler).
+
+Outside the sbt build: `vscode-sroof/` (VS Code extension: `npm ci && npm run compile`), `sbt-sroof/` (sbt plugin, Scala 2.12, legacy `.sroof` integration), `benchmarks/` + `scripts/benchmark.py` (perf suite used by CI), `docs/` (scala3-frontend, proof-cookbook, trust-model, json-schema, effects, stdlib, lemma-bundles).
 
 Note: in `build.sbt` the `eval` directory's project variable is named `nbe` (so `sbt nbeNative/compile` etc.), but the sbt task prefix follows the directory name: `sbt eval/test`.
 
@@ -114,14 +155,26 @@ defspec plus_zero_right(n: Nat): plus(n, Nat.zero) = n {
 }
 ```
 
-Built-in tactics: `trivial`, `simplify [lemmas]`, `induction x { cases }`, `assumption x`, `apply f`, `cases x { cases }`, `have h : T = proof`, `calc { chain }`, `ring`, `rewrite [h]`, `contradiction`, `tauto`, `decide`, `split`, `left`, `right`, `use e`, `obtain [x y] from h`, `specialize h arg`, `sorry`.
+Built-in tactics (full set in `syntax/Parser.scala` tactic parser):
+- Closers: `trivial` (alias `triv`), `rfl`, `decide`, `assumption`, `contradiction`, `tauto`, `sorry`, `skip`
+- Intro/apply: `assume x ...` (aliases `intro`/`intros`), `apply f`, `exact e`
+- Rewriting: `simplify [lemmas]` (alias `simp`), `rewrite [h]` (alias `rw`)
+- Case analysis: `induction x { cases }` (supports `induction x generalizing y z { ... }`), `cases x { cases }`
+- Structure: `have h : T = { proof }; cont`, `calc { chain }`, `{ t1; t2 }` sequencing
+- Logic: `split`, `constructor`, `left`, `right`, `use e` (alias `exists`), `by_contra h`, `obtain [x y] from h`, `specialize h arg`
+- Combinators: `try t`, `first | t1 | t2`, `repeat t`, `all_goals t`
+
+There is no `ring` tactic (removed; use `simplify`/`calc`).
 
 Additional language features:
+- Scala 3-style aliases: `theorem` = `defspec`, `enum` = `inductive`, `trait` = `structure`, `given` = `instance`
 - `structure Name { field: Type ... }` — record types (desugared to inductive + field accessor defs)
+- `instance name: StructName { field = expr ... }` — record values with named field bindings (typeclass-style; see `examples/typeclass.sroof`)
 - `@[simp] def ...` — marks a def as a default simplification lemma
 - `#check expr` — type-checks an expression inline (results appear in `--json` output under `checks`)
-- `import "stdlib/Nat.sroof"` — imports a stdlib file; stdlib lives in `stdlib/` at repo root (Nat, Bool, List, Vec, Dictionary, Relation, Effect)
+- `import "stdlib/Nat.sroof"` — imports a stdlib file; stdlib lives in `stdlib/` at repo root (Nat, Bool, Char, String, List, PolyList, Vec, Option, Either, Pair, Sigma, Dictionary, Relation, Regex, Effect)
 - Operator overloading via `operator (x: T1) + (y: T2): T3 = body` syntax, registered in `GlobalEnv.operators`
+- `stdlib/bundles/*.bundle` — lemma-bundle manifests (docs/lemma-bundles.md). Documentation-level convention only; not parsed by the tool
 
 **Simp rule modifiers** (`tactic/SimpRewriteDb.scala`): lemma names passed to `simplify` support suffixes:
 - `h__rev` — rewrite backwards (RHS → LHS)
@@ -130,16 +183,26 @@ Additional language features:
 
 ## CI Pipeline
 
-Three parallel GitHub Actions jobs:
-1. **JVM tests** — `sbt test` + end-to-end checks on `nat.sroof` and `int.sroof`
-2. **Scala Native** — compile + link + smoke-test native binary
-3. **sbt plugin** — compile `sbt-sroof/` (Scala 2.12)
+Five parallel GitHub Actions jobs (`.github/workflows/ci.yml`):
+1. **kernel-soundness** — trusted-kernel soundness gate
+2. **test** — `sbt test` + end-to-end checks on `nat.sroof`/`int.sroof` + Effect runtime extraction (`scripts/check_effect_runtime.sh`)
+3. **benchmarks** — `scripts/benchmark.py`, 3 runs, median thresholds
+4. **native** — compile + link + smoke-test native binary
+5. **sbt-plugin** — compile `sbt-sroof/` (Scala 2.12)
 
 ## Common Pitfalls
 
 - **De Bruijn index bugs**: When modifying tactics in `Builtins.scala`, carefully track `shiftFrom`/`shiftBelow`/`subst` calls. Multi-variable defspecs are especially tricky (see commit bf0d869).
 - **Native modules**: Don't add source files to `*-native/` directories — they share sources from JVM counterparts.
 - **Parser changes**: `syntax/Parser.scala` uses Parsley combinators. Changes there may require updating `Elaborator.scala` in tandem.
-- **Kernel trust boundary**: Tactics (`Builtins.scala`, `TacticM`) are NOT trusted. Every proof term must pass `Kernel.verify`; any shortcut that skips this check breaks soundness.
+- **Kernel trust boundary**: Tactics (`Builtins.scala`, `TacticM`) are NOT trusted. Every proof term must pass `Kernel.verify`; any shortcut that skips this check breaks soundness. This applies identically to both frontends.
+
+**Scala frontend: the semantic bridge is trusted.** `frontend/CoreTranslator.scala` and `plugin/dotc/TreeExtractor.scala` decide *what core proposition a Scala theorem is about*. The kernel cannot check that correspondence, so a bug there yields a valid proof of the wrong statement. Keep the accepted subset small, give every accepted construct exactly one core reading, and pin it with a golden test. Never add a catch-all that turns an unrecognised tree into an IR node.
+
+**Scala frontend: no `Meta` in accepted translations.** All supported types are closed `Ind(name, Nil, Nil)`, so the expected type is threaded top-down and used verbatim as a `Mat` return type. `CoreTranslatorSuite` asserts no `Meta` survives. Widening the type language means revisiting that threading (the expected type would then need shifting under binders).
+
+**Equality goals use the 2-arg `Eq` form** (`Eq.mkPropType`). The 3-arg form cannot be typed by the existing checker: `Ind("Eq", ...)` is a built-in absent from `GlobalEnv`, so `inferUniverse` only special-cases the 1- and 2-arg shapes.
+
+**Plugin phase placement**: `runsAfter = PostTyper.name`, `runsBefore = Pickler.name`, via the compiler's own constants (resolving to `posttyper`/`pickler` in 3.3.6). That window is chosen because a `PartialFunction` literal is still `Block(DefDef, Closure)` over a `Match` there — later phases turn it into an anonymous class and the induction-case extraction would break.
 - **`induction` vs `cases`**: `induction` wraps the proof in `Fix` when any case requests an IH (binding count > ctor arity). `cases` always uses plain `Mat` with no IH. Keep this distinction when adding new case-analysis tactics.
 - **`Eq` is special**: `Eq` is a built-in inductive handled specially in the kernel and in `tactic/Eq.scala`. Do not normalize the outer `Ind("Eq",...)` with NbE — the constructor name is lost and pattern matching breaks.
