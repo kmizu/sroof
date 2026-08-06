@@ -40,13 +40,18 @@ $ctxLines)
 
   /** Format context entries as `(hyp "name" "type")` lines, outermost first.
     *
-    * Note on De Bruijn indexing: some tactics (e.g., `induction`) store hypothesis
-    * types that have been pre-shifted by 1 to account for their own binder.  This
-    * means `e.tpe` for entry at position `i` is valid in the context that includes
-    * entries[i] itself (i.e., names from `entries.drop(i)` rather than
-    * `entries.drop(i+1)`).  Using `entries.drop(i)` as the name list handles both
-    * the normal case (the extra name at position 0 simply goes unused) and the
-    * pre-shifted case correctly.
+    * Note on De Bruijn indexing: an entry's type is stated in the context
+    * *outside* that entry, so the name list for `entries(i)` is
+    * `entries.drop(i + 1)` — the entry itself excluded.
+    *
+    * This used to be `entries.drop(i)`, justified by a claim that some tactics
+    * pre-shift the types they store and that "the extra name at position 0 simply
+    * goes unused".  The second half only holds when the type is closed.  For a
+    * dependent type every index resolves one binder too late, so `v : Vec A n`
+    * rendered as `Vec n v` — a hypothesis inside its own type, which cannot
+    * happen.  The entries `induction` creates (`_rec`, `_n`) were checked and
+    * render correctly under `drop(i + 1)` too; see the dependent-hypothesis test
+    * in `cli/.../ProofStateSuite.scala`, which fails under the old form.
     */
   private def formatContext(ctx: Context): String =
     if ctx.entries.isEmpty then "    (empty)"
@@ -55,7 +60,7 @@ $ctxLines)
       // entries(0) = innermost (De Bruijn 0), entries.last = outermost
       // Display outermost-first: iterate from last to 0
       val lines = entries.zipWithIndex.reverse.map { case (e, i) =>
-        val namesFromHere = entries.drop(i).map(_.name)
+        val namesFromHere = entries.drop(i + 1).map(_.name)
         val tpeStr        = Term.show(e.tpe, namesFromHere)
         s"""    (hyp "${esc(e.name)}" "${esc(tpeStr)}")"""
       }

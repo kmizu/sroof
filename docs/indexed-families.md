@@ -211,6 +211,32 @@ Each step is useful on its own and testable before the next begins.
 4. **Tactic engine.** `Builtins.buildFixCase` gains index abstraction and
    per-branch specialisation, mirroring `inductionWithIHGeneralized`.
 
+   **What it looks like today** (measured in v0.11, so the next attempt starts
+   from an observation rather than a guess). Given
+
+   ```scala
+   def vlen(A: Type, n: Nat, v: Vec(A)(n)): Nat { ... }
+   defspec vlen_correct(A: Type, n: Nat, v: Vec(A)(n)): vlen(A, n, v) = n {
+     by induction v { case vnil => trivial  case vcons m h t ih => simplify [ih] }
+   }
+   ```
+
+   the `vnil` branch produces
+
+   ```
+   (goal "((Eq ((((fix vlen) A) n) vnil)) n)")
+   (error "trivial: not definitionally equal: ((((fix vlen) #4) #3) vnil) ≢ #3")
+   ```
+
+   The scrutinee was replaced by `vnil` but the **index was not**: the goal should
+   be `vlen A zero vnil = zero`. `n` is a context variable that the branch has to
+   specialise, exactly as `specializeGoalOver` already specialises the scrutinee.
+   `induction v generalizing n` does not help — generalising a context variable is
+   not the same as tying it to the constructor's declared index.
+
+   Note that the proof state above is only legible because v0.11 fixed
+   `ProofStatePretty.formatContext`; before that, `v` printed at type `Vec n v`.
+
 5. **`.sroof` validation.** Rewrite `stdlib/Vec.sroof` with real indices and
    prove something that needs them — `concat` preserving length is the obvious
    first target, and the file already defines `concat`.

@@ -159,6 +159,18 @@ python3 scripts/benchmark.py --runs 3 --thresholds benchmarks/thresholds.json --
 - published releases: <https://github.com/kmizu/sroof/releases>
 - publishing setup: [`docs/publishing.md`](docs/publishing.md)
 
+### Migration Notes (v0.10 -> v0.11)
+
+- **Nothing breaks.** 605 tests, no behaviour change to what is accepted or
+  rejected.
+- Failed proofs print correct hypothesis types. A dependent hypothesis used to
+  render against a scope that included itself, so `v : Vec A n` showed as
+  `Vec n v`. If you have tooling that parses `(hyp ...)` lines, it was reading
+  shifted names.
+- `checker.IndChecker` is documented as being inside the TCB — a correction to a
+  comment, not a change in what is trusted. See
+  [`docs/trust-model.md`](docs/trust-model.md).
+
 ### Migration Notes (v0.9 -> v0.10)
 
 - **Nothing breaks.** All 590 pre-existing tests pass unchanged; 604 in total.

@@ -5,6 +5,66 @@ All release detail lives here. Earlier releases also had per-version
 favour of this one file. The long-form notes for v0.3–v0.9 remain published on
 the [GitHub releases page](https://github.com/kmizu/sroof/releases).
 
+## [0.11.0] - 2026-08-07
+
+Two things that were **written down wrong**: a proof state that misrendered every
+dependent hypothesis, and a comment claiming the checker's typing rules are
+outside the trusted computing base when the kernel runs on them.
+
+Both were found while scoping induction over indexed families (step 4), and both
+had to be fixed before that work is worth starting — you cannot debug De Bruijn
+arithmetic against a printer that is itself off by one.
+
+### Fixed
+- **`ProofStatePretty.formatContext` rendered each hypothesis's type against a
+  name list that included the hypothesis itself.** Every De Bruijn index in a
+  dependent type therefore resolved one binder too late, and `v : Vec A n`
+  printed as `Vec n v` — a hypothesis appearing inside its own type, which cannot
+  happen. The recursor was worse: `_rec` showed a motive over the wrong variables
+  entirely.
+
+  The old code was justified by a comment claiming some tactics pre-shift the
+  types they store, and that "the extra name at position 0 simply goes unused".
+  The second half only holds for a *closed* type — which every hypothesis in the
+  test suite was, until indexed families arrived. The entries `induction` creates
+  (`_rec`, `_n`) were checked directly and render correctly under the corrected
+  form.
+
+  ```
+  before:  (hyp "v" "((Vec n) v)")
+  after:   (hyp "v" "((Vec A) n)")
+  ```
+
+### Changed
+- **`IndChecker` is now documented as being inside the TCB, because it is.** Its
+  header said "This module is NOT part of the trusted kernel. Every proof term it
+  produces is re-checked by `Kernel.check`." `Kernel.verify` delegates to
+  `Bidirectional.check`, which calls straight into `IndChecker` — the kernel
+  re-checks a proof term *using* these rules, so it cannot catch a bug in them.
+  The v0.10.0 constructor-index unsoundness lived here for seven releases and the
+  kernel accepted it every time.
+
+  `docs/trust-model.md` had it right but did not name `IndChecker`, leaving
+  "everything in `checker/` except `Bidirectional` is re-checked" as an available
+  and wrong reading. It is now named on both lists explicitly.
+
+### Added
+- A `ProofStateSuite` case asserting a dependent hypothesis type renders in the
+  scope outside that hypothesis. Verified to **fail** on the v0.10 tree. 605 tests.
+- `docs/indexed-families.md` records the measured proof state for induction over
+  an indexed family: the scrutinee is replaced by the constructor but the index is
+  not, so the `vnil` branch asks for `vlen A n vnil = n` where it should ask for
+  `vlen A zero vnil = zero`. `induction v generalizing n` does not help —
+  generalising a context variable is not the same as tying it to the constructor's
+  declared index. That is step 4, and it is next.
+
+### Not in this release
+- **Step 4 itself.** The induction machinery in `Builtins` runs to roughly 500
+  lines across six mutually-dependent helpers, and this project does not ship
+  delicate De Bruijn work it has not validated end to end. What it ships instead
+  is the observation that work starts from, and a printer that can be trusted
+  while doing it.
+
 ## [0.10.0] - 2026-08-07
 
 Indexed families stop being decorative. `Vec(A)(n)` now has a length the checker

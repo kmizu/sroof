@@ -211,4 +211,40 @@ class ProofStateSuite extends FunSuite:
     // On success there is no error at all
   }
 
+  // ---- dependent hypothesis types ----
+
+  test("a dependent hypothesis type is shown in the scope OUTSIDE that hypothesis") {
+    // `formatContext` used to render each entry's type against a name list that
+    // included the entry itself, so every De Bruijn index in a dependent type
+    // resolved one binder too late.  `v : Vec A n` printed as `Vec n v` — a
+    // hypothesis appearing in its own type, which cannot happen.
+    //
+    // It stayed invisible for as long as hypothesis types were closed (`Nat`,
+    // `Type`), which is every proof in this suite written before indexed families.
+    val src =
+      """|inductive Nat {
+         |  case zero: Nat
+         |  case succ(n: Nat): Nat
+         |}
+         |inductive Vec(A: Type)(n: Nat) {
+         |  case vnil: Vec(A)(Nat.zero)
+         |  case vcons(m: Nat, head: A, tail: Vec(A)(m)): Vec(A)(Nat.succ(m))
+         |}
+         |defspec bogus(A: Type, n: Nat, v: Vec(A)(n)): n = Nat.zero {
+         |  by trivial
+         |}
+         |""".stripMargin
+    val result = Main.processSource(src, "dep.sroof")
+    assert(result.isLeft, "the proposition is false, so a proof state must be produced")
+    val msg = result.swap.toOption.get
+    assert(
+      msg.contains("(hyp \"v\" \"((Vec A) n)\")"),
+      s"`v` must be shown at type `Vec A n`; got:\n$msg",
+    )
+    assert(
+      !msg.contains("(hyp \"v\" \"((Vec n) v)\")"),
+      s"`v` must not appear inside its own type; got:\n$msg",
+    )
+  }
+
 end ProofStateSuite

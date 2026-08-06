@@ -39,7 +39,16 @@ being trusted on inspection.
 Trusted for **core logical validity** (TCB):
 
 - `kernel/` (`sroof.kernel.Kernel`)
-- Core type-checking semantics used by kernel verification (`checker.Bidirectional`, term/eval semantics)
+- Core type-checking semantics used by kernel verification: `checker.Bidirectional`,
+  **`checker.IndChecker`** (constructor and match rules — `Bidirectional` calls
+  straight into it), and term/eval semantics
+
+`IndChecker` is called out by name because "everything in `checker/` except
+`Bidirectional` is re-checked" is a tempting and wrong reading. `Kernel.verify`
+delegates to `Bidirectional.check`, which delegates to `IndChecker`; the kernel
+re-checks a proof term *using* those rules, so it cannot catch a bug in them.
+The v0.10.0 constructor-index unsoundness was exactly that, and it survived
+seven releases with the kernel accepting it every time.
 
 Additionally trusted for **Scala semantic correspondence** (Scala frontend only):
 
@@ -52,7 +61,8 @@ Additionally trusted for **Scala semantic correspondence** (Scala frontend only)
 Untrusted (must be re-checked by kernel):
 
 - `tactic/` (proof-term generation)
-- `checker/` orchestration logic
+- `checker/` orchestration only — the pipeline that decides *what* to check.
+  The typing rules themselves (`Bidirectional`, `IndChecker`) are trusted, above.
 - `syntax/` parser/elaborator
 - `cli/` command-line and JSON formatting
 - `vscode-sroof/` editor integration

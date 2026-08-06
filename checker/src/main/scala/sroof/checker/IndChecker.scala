@@ -4,8 +4,14 @@ import sroof.core.{Term, Context, Subst, GlobalEnv, IndDef, CtorDef, MatchCase, 
 
 /** Type-checking rules for inductive types: constructors (Con) and eliminators (Mat).
  *
- *  This module is NOT part of the trusted kernel.
- *  Every proof term it produces is re-checked by `Kernel.check`.
+ *  This module IS inside the trusted computing base for logical validity.
+ *  `Kernel.verify` delegates to `Bidirectional.check`, which calls straight into
+ *  the rules below — so "the kernel re-checks it" does not apply here: the kernel
+ *  re-checks *using* this code. A bug here is a valid proof of the wrong
+ *  statement, and nothing downstream can catch it.
+ *
+ *  (This comment previously claimed the opposite. The v0.10.0 constructor-index
+ *  unsoundness lived here for seven releases, accepted by the kernel every time.)
  *
  *  Design note: both methods take `using env: GlobalEnv` as a contextual parameter
  *  so they can look up constructor types and inductive definitions.
