@@ -133,8 +133,12 @@ enum ResolvedLemmaRef extends Spanned:
 enum ResolvedTactic extends Spanned:
   case Trivial(span: SourceSpan)
   case Simplify(lemmas: List[ResolvedLemmaRef], span: SourceSpan)
+  case Rewrite(equations: List[ResolvedLemmaRef], span: SourceSpan)
   case Induction(target: SymbolId, targetName: String,
                  cases: List[ResolvedTacticCase], span: SourceSpan)
+  /** Constructor split with no induction hypothesis. */
+  case Cases(target: SymbolId, targetName: String,
+             cases: List[ResolvedTacticCase], span: SourceSpan)
 
 /** One branch of an `induction`, in the inductive's constructor order.
  *

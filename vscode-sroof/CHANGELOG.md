@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.4.0] — 2026-08-06
+
+### Changed
+- Version bump for the v0.4 release. The extension itself is unchanged; v0.4
+  widens the Scala 3 frontend, which the Scala compiler reports on directly.
+
 ## [0.3.0] — 2026-08-06
 
 ### Changed

@@ -1,5 +1,50 @@
 # Changelog
 
+## [0.4.0] - 2026-08-06
+
+Widens the Scala subset the compiler plugin accepts, and tightens the parts that
+were already there.
+
+### Added
+- **Curried parameter lists.** `def f(a: A)(b: B)` and `@theorem def t(a: A)(b: B)`
+  are supported. Lists are flattened — core types are curried anyway — and call
+  sites are checked against the flattened arity, so partial application is
+  rejected rather than silently accepted.
+- **Runs of local `val`s.** A verified definition may now open with several
+  immutable bindings, each visible to the next, instead of exactly one.
+- **Recursive fields after other fields.** An induction hypothesis is generated
+  whenever a constructor's *last* field has the inductive's own type, so
+  `Cons(tag: Tag, rest: Tagged)` now supports `ih(rest)`. Previously only
+  single-field constructors qualified.
+- **`cases(x) { ... }`** — constructor split with no induction hypothesis. `ih`
+  inside it is rejected with a message pointing at `induction`.
+- **`rewrite(equations*)`** — applies equations as directed rewrites, alongside
+  `simplify`'s normalise-then-close.
+
+### Fixed
+- The induction hypothesis was located by taking the head of an unordered map of
+  pattern binders. With single-field constructors that happened to be correct;
+  with the multi-field constructors this release accepts, it would have bound the
+  hypothesis to an arbitrary field. It is now looked up by binder identity
+  against the constructor's last field.
+- `ih` on an unnamed (`_`) recursive field reported "no recursive field"; it now
+  asks for the field to be bound to a name.
+- The diagnostic for an unsupported block still claimed only a single `val` was
+  allowed.
+
+### Changed
+- `docs/scala3-frontend.md`, both READMEs, and the normative example reflect the
+  wider subset. The example now also demonstrates `cases`, curried theorem
+  parameters, and `@simp` feeding a bare `simplify()`.
+- Future work now records *why* generic enums are deferred rather than merely
+  that they are: they touch the trusted translation layer at several points at
+  once, and belong in their own milestone with per-construct golden tests.
+
+### Unchanged
+- The trusted kernel, and the `.sroof` language path in its entirety.
+
+
+
 ## [0.3.0] - 2026-08-06
 
 The release that changes what sroof *is*: a Scala 3 verification system with an

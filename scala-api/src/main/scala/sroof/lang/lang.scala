@@ -47,6 +47,14 @@ def trivial: Tactic = ()
  */
 def induction[A](value: A)(cases: PartialFunction[A, Tactic]): Tactic = ()
 
+/** Case analysis on `value`, **without** an induction hypothesis.
+ *
+ *  Same shape as [[induction]], and subject to the same branch rules, but no
+ *  hypothesis is generated — so [[ih]] is not available inside a branch. Use
+ *  this when the proof needs only to split on constructors.
+ */
+def cases[A](value: A)(branches: PartialFunction[A, Tactic]): Tactic = ()
+
 /** The induction hypothesis for `value`.
  *
  *  Legal only inside a recursive branch of the enclosing [[induction]], applied
@@ -56,3 +64,11 @@ def ih[A](value: A): Proof = ()
 
 /** Rewrite the goal with the given lemmas, then close it. */
 def simplify(lemmas: Proof*): Tactic = ()
+
+/** Rewrite the goal with the given equations.
+ *
+ *  Where [[simplify]] normalises and then closes, this applies the equations as
+ *  directed rewrites — useful when the goal needs one specific step rather than
+ *  full simplification.
+ */
+def rewrite(equations: Proof*): Tactic = ()

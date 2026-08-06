@@ -113,12 +113,19 @@ python3 scripts/benchmark.py --runs 3 --thresholds benchmarks/thresholds.json --
 - compares workload medians against CI thresholds
 - writes a machine-readable report at `benchmarks/results.json`
 
-### v0.3 Release Notes
+### v0.4 Release Notes
 
 - changelog: [`CHANGELOG.md`](CHANGELOG.md)
-- release notes: [`RELEASE_NOTES_v0.3.md`](RELEASE_NOTES_v0.3.md)
-- release checklist: [`RELEASE_CHECKLIST_v0.3.md`](RELEASE_CHECKLIST_v0.3.md)
-- previous release: [`RELEASE_NOTES_v0.2.md`](RELEASE_NOTES_v0.2.md), [`RELEASE_CHECKLIST_v0.2.md`](RELEASE_CHECKLIST_v0.2.md)
+- release notes: [`RELEASE_NOTES_v0.4.md`](RELEASE_NOTES_v0.4.md)
+- release checklist: [`RELEASE_CHECKLIST_v0.4.md`](RELEASE_CHECKLIST_v0.4.md)
+- previous releases: [`RELEASE_NOTES_v0.3.md`](RELEASE_NOTES_v0.3.md), [`RELEASE_NOTES_v0.2.md`](RELEASE_NOTES_v0.2.md)
+
+### Migration Notes (v0.3 -> v0.4)
+
+- **Nothing breaks.** Every v0.3 program still compiles and verifies; the changes
+  are all widenings of what the Scala frontend accepts.
+- One diagnostic changed wording: `ih` on the wrong binder now says
+  "last (recursive) field". Check any tooling that matches on plugin output.
 
 ### Migration Notes (v0.2 -> v0.3)
 
@@ -357,12 +364,12 @@ proved at compile time and re-checked by the same trusted kernel the `.sroof`
 path uses. If the theorem stopped holding, the file would stop compiling.
 
 **This is an initial subset, not general Scala verification.** Today it covers:
-non-generic enums, single-parameter-list pure `def`s over those enums,
-self-recursion accepted by the termination checker, exhaustive matches, immutable
-local `val`s, equality goals, and the tactics `trivial`, `induction`, `ih`, and
-`simplify`. Everything else — `var`, effects, exceptions, casts, closures,
-generics, mutual recursion, external calls — is **rejected with a diagnostic**,
-not approximated.
+non-generic enums, pure `def`s over those enums (curried parameter lists
+included), self-recursion accepted by the termination checker, exhaustive
+matches, runs of immutable local `val`s, equality goals, and the tactics
+`trivial`, `induction`, `cases`, `ih`, `simplify`, and `rewrite`. Everything
+else — `var`, effects, exceptions, casts, closures, generics, mutual recursion,
+external calls — is **rejected with a diagnostic**, not approximated.
 
 Verification only happens when the plugin is enabled by the build. The
 annotations alone do nothing:

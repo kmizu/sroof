@@ -67,7 +67,7 @@ class NegativeProofSuite extends FunSuite:
         |        case Succ(k) => simplify(ih(m))
         |      })
         |""".stripMargin)) { r =>
-      assert(r.mentions("recursive field"), r.report)
+      assert(r.mentions("(recursive) field"), r.report)
     }
   }
 

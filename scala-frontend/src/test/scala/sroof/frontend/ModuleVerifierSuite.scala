@@ -69,6 +69,47 @@ class ModuleVerifierSuite extends FunSuite:
       case Left(err) => assert(err.message.contains("already been verified"), err.message)
   }
 
+  test("cases proves a goal that needs only a constructor split") {
+    val n = ResolvedBinder(NatFixture.sym("th.n"), "n", NatFixture.natTpe)
+    val k = ResolvedBinder(NatFixture.sym("th.k"), "k", NatFixture.natTpe)
+    val thm = ResolvedTheorem(
+      NatFixture.sym("NatProofs.viaCases"), "viaCases", List(n),
+      ResolvedProp(NatFixture.natTpe,
+        NatFixture.plus(NatFixture.zero, NatFixture.local("th.n", "n")),
+        NatFixture.local("th.n", "n"), sp),
+      ResolvedTactic.Cases(NatFixture.sym("th.n"), "n", List(
+        ResolvedTacticCase(NatFixture.zeroId, "Zero", Nil, usesIh = false,
+          ResolvedTactic.Trivial(sp), sp),
+        ResolvedTacticCase(NatFixture.succId, "Succ", List(k), usesIh = false,
+          ResolvedTactic.Trivial(sp), sp),
+      ), sp), isSimp = false, sp)
+    val verified = ModuleVerifier
+      .verify(NatFixture.module.copy(theorems = List(thm)))
+      .fold(e => fail(e.render), identity)
+    assertEquals(verified.theorems.map(_.name), List("viaCases"))
+  }
+
+  test("rewrite closes an inductive goal with the hypothesis") {
+    val n = ResolvedBinder(NatFixture.sym("th.n"), "n", NatFixture.natTpe)
+    val k = ResolvedBinder(NatFixture.sym("th.k"), "k", NatFixture.natTpe)
+    val thm = ResolvedTheorem(
+      NatFixture.sym("NatProofs.viaRewrite"), "viaRewrite", List(n),
+      ResolvedProp(NatFixture.natTpe,
+        NatFixture.plus(NatFixture.local("th.n", "n"), NatFixture.zero),
+        NatFixture.local("th.n", "n"), sp),
+      ResolvedTactic.Induction(NatFixture.sym("th.n"), "n", List(
+        ResolvedTacticCase(NatFixture.zeroId, "Zero", Nil, usesIh = false,
+          ResolvedTactic.Trivial(sp), sp),
+        ResolvedTacticCase(NatFixture.succId, "Succ", List(k), usesIh = true,
+          ResolvedTactic.Rewrite(
+            List(ResolvedLemmaRef.InductionHypothesis(NatFixture.sym("th.k"), "k", sp)), sp), sp),
+      ), sp), isSimp = false, sp)
+    val verified = ModuleVerifier
+      .verify(NatFixture.module.copy(theorems = List(thm)))
+      .fold(e => fail(e.render), identity)
+    assertEquals(verified.theorems.map(_.name), List("viaRewrite"))
+  }
+
   test("a @simp theorem enters simpSet only after the kernel accepts it") {
     val simped = NatFixture.plusZeroRight.copy(isSimp = true)
     val verified = ModuleVerifier

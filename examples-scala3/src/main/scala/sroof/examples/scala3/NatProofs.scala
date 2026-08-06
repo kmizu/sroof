@@ -46,6 +46,7 @@ object NatProofs:
       }
     )
 
+  @simp
   @theorem
   def plusZeroRight(n: Nat): Proof =
     prove(plus(n, Zero) === n)(
@@ -53,4 +54,31 @@ object NatProofs:
         case Zero    => trivial
         case Succ(k) => simplify(ih(k))
       }
+    )
+
+  // `cases` splits on constructors without generating a hypothesis. Use it when
+  // the proof does not need one — `ih` is not available inside it.
+  @theorem
+  def plusZeroLeftByCases(n: Nat): Proof =
+    prove(plus(Zero, n) === n)(
+      cases(n) {
+        case Zero    => trivial
+        case Succ(k) => trivial
+      }
+    )
+
+  // Curried parameter lists are supported; they flatten to the same core type as
+  // a single list would.
+  @theorem
+  def plusSuccLeftCurried(n: Nat)(m: Nat): Proof =
+    prove(plus(Succ(n), m) === Succ(plus(n, m)))(
+      trivial
+    )
+
+  // `plusZeroRight` is tagged `@simp`, so a bare `simplify()` can reach for it —
+  // but only because the kernel already accepted its proof above.
+  @theorem
+  def plusZeroRightAgain(n: Nat): Proof =
+    prove(plus(n, Zero) === n)(
+      simplify()
     )

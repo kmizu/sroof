@@ -135,10 +135,12 @@ final class TreeExtractor(dsl: DslSymbols)(using Context):
     val span = spanOf(dd)
     if dd.leadingTypeParams.nonEmpty then
       Left(FrontendError.defError(name, "type parameters are not supported", span))
-    else if dd.termParamss.length > 1 then
-      Left(FrontendError.defError(name, "multiple parameter lists are not supported", span))
     else
-      val params = dd.termParamss.headOption.getOrElse(Nil)
+      // Curried parameter lists are flattened: core types are curried anyway, so
+      // `f(a: A)(b: B)` and `f(a: A, b: B)` produce the same `Pi(a, A, Pi(b, B, _))`.
+      // Call sites are matched against the flattened arity, and a partial
+      // application is rejected there rather than silently accepted here.
+      val params = dd.termParamss.flatten
       for
         binders <- params.foldLeft[Either[FrontendError, List[ResolvedBinder]]](Right(Nil)) { (acc, vd) =>
                      for
@@ -204,8 +206,11 @@ final class TreeExtractor(dsl: DslSymbols)(using Context):
         val (ind, ctor) = index.byCtor(tpt.tpe.typeSymbol)
         constructorCall(ind, ctor, args, binders, index, sigs, subject, span)
 
-      case Apply(fn, args) =>
-        val sym = stripTypeApply(strip(fn)).symbol
+      case app: Apply =>
+        // Curried calls arrive as nested Applies; flatten them so `f(a)(b)` and
+        // `f(a, b)` reach the same arity check.
+        val (callee, args) = flattenApply(app)
+        val sym = stripTypeApply(callee).symbol
         if index.byCtor.contains(sym) then
           val (ind, ctor) = index.byCtor(sym)
           constructorCall(ind, ctor, args, binders, index, sigs, subject, span)
@@ -213,7 +218,8 @@ final class TreeExtractor(dsl: DslSymbols)(using Context):
           val sig = sigs(sym)
           if sig.params.length != args.length then
             Left(FrontendError.defError(subject,
-              s"call to '${sym.name}' expects ${sig.params.length} argument(s) but got ${args.length}", span))
+              s"call to '${sym.name}' expects ${sig.params.length} argument(s) but got ${args.length}; " +
+              "partial application is not supported in verified code", span))
           else
             extractArgs(args, binders, index, sigs, subject)
               .map(as => ResolvedExpr.Call(idOf(sym), sym.name.toString, as, span))
@@ -237,17 +243,31 @@ final class TreeExtractor(dsl: DslSymbols)(using Context):
           _        <- checkBranchCoverage(ind, resolved.map(_.ctor), resolved.map(_.ctorName), subject, span)
         yield ResolvedExpr.Match(scrut, CoreTranslator.normaliseCaseOrder(ind, resolved), span)
 
-      case Block(List(vd: ValDef), rest)
-           if !vd.symbol.is(Flags.Mutable) && !vd.symbol.is(Flags.Lazy) && !vd.rhs.isEmpty =>
+      case Block((vd: ValDef) :: restStats, result) if isImmutableVal(vd) =>
+        // Peel one binding at a time; the remaining statements stay a Block, so a
+        // run of `val`s nests into nested `Let`s.  Any non-`val` statement lands
+        // in the recursive call and is rejected there.
         for
           tpe   <- resolveDeclaredType(vd.tpt.tpe, index, subject, spanOf(vd))
           value <- extractExpr(vd.rhs, binders, index, sigs, subject)
           binder = ResolvedBinder(idOf(vd.symbol), vd.name.toString, tpe)
+          rest   = if restStats.isEmpty then result else Block(restStats, result)
           body  <- extractExpr(rest, binders + (vd.symbol -> binder), index, sigs, subject)
         yield ResolvedExpr.Let(binder, value, body, span)
 
       case other =>
         Left(FrontendError.defError(subject, describeUnsupported(other), span))
+
+  private def isImmutableVal(vd: ValDef): Boolean =
+    !vd.symbol.is(Flags.Mutable) && !vd.symbol.is(Flags.Lazy) && !vd.rhs.isEmpty
+
+  /** Peel every `Apply` layer, returning the callee and all arguments in order. */
+  private def flattenApply(tree: Tree): (Tree, List[Tree]) =
+    strip(tree) match
+      case Apply(fn, args) =>
+        val (callee, earlier) = flattenApply(fn)
+        (callee, earlier ++ args)
+      case other => (other, Nil)
 
   private def constructorCall(
     ind:     ResolvedInductive,
@@ -417,7 +437,8 @@ final class TreeExtractor(dsl: DslSymbols)(using Context):
     case Block(stats, _) if stats.exists(s => s.symbol.is(Flags.Mutable)) =>
       "contains a mutable local (var); verified definitions must be pure"
     case _: Block =>
-      "contains a block with statements; only a single immutable `val` binding is allowed"
+      "contains a block with statements other than immutable `val` bindings; " +
+      "verified code has no way to sequence effects"
     case t @ (_: Ident | _: Select) =>
       s"refers to '${t.symbol.showFullName}', which is neither a binder nor a constructor of this proof module"
     case t => s"contains an unsupported expression (${t.getClass.getSimpleName})"
@@ -488,10 +509,14 @@ final class TreeExtractor(dsl: DslSymbols)(using Context):
         Left(FrontendError.theoremError(subject,
           "goal must be an equality built with sroof's `===`", span))
 
-  /** Where in an induction we are, so `ih` can be validated by identity. */
+  /** Where in a constructor split we are, so `ih` can be validated by identity. */
   private final case class BranchContext(
-    recursiveBinder: Option[Symbol],
-    ctorName:        String,
+    recursiveBinder:   Option[Symbol],
+    ctorName:          String,
+    /** False inside `cases(...)`, which generates no hypothesis. */
+    withHypothesis:    Boolean,
+    /** True when this constructor's last field is of the inductive's own type. */
+    hasRecursiveField: Boolean,
   )
 
   private def extractTactic(
@@ -508,12 +533,20 @@ final class TreeExtractor(dsl: DslSymbols)(using Context):
         Right(ResolvedTactic.Trivial(span))
 
       case Apply(fn, args) if stripTypeApply(strip(fn)).symbol == dsl.simplifyMethod =>
-        extractLemmas(args, index, subject, branch, span)
+        extractLemmas(args, subject, branch, span)
           .map(ls => ResolvedTactic.Simplify(ls, span))
+
+      case Apply(fn, args) if stripTypeApply(strip(fn)).symbol == dsl.rewriteMethod =>
+        extractLemmas(args, subject, branch, span)
+          .map(ls => ResolvedTactic.Rewrite(ls, span))
 
       case Apply(Apply(fn, List(target)), List(casesTree))
            if stripTypeApply(strip(fn)).symbol == dsl.inductionMethod =>
-        extractInduction(target, casesTree, binders, index, sigs, subject, span)
+        extractSplit(target, casesTree, binders, index, sigs, subject, span, withHypothesis = true)
+
+      case Apply(Apply(fn, List(target)), List(casesTree))
+           if stripTypeApply(strip(fn)).symbol == dsl.casesMethod =>
+        extractSplit(target, casesTree, binders, index, sigs, subject, span, withHypothesis = false)
 
       case Apply(fn, _) if stripTypeApply(strip(fn)).symbol == dsl.ihMethod =>
         Left(FrontendError.theoremError(subject,
@@ -526,7 +559,6 @@ final class TreeExtractor(dsl: DslSymbols)(using Context):
 
   private def extractLemmas(
     args:    List[Tree],
-    index:   InductiveIndex,
     subject: String,
     branch:  Option[BranchContext],
     span:    SourceSpan,
@@ -561,14 +593,22 @@ final class TreeExtractor(dsl: DslSymbols)(using Context):
           case None =>
             Left(FrontendError.theoremError(subject,
               "ih(...) is only valid inside an induction branch", span))
+          case Some(b) if !b.withHypothesis =>
+            Left(FrontendError.theoremError(subject,
+              "ih(...) is not available inside cases(...), which generates no induction " +
+              "hypothesis; use induction(...) instead", span))
+          case Some(b) if !b.hasRecursiveField =>
+            Left(FrontendError.theoremError(subject,
+              s"ih(...) is not available in the base case '${b.ctorName}': its last field is not " +
+              "of the type being inducted on", span))
           case Some(b) if b.recursiveBinder.isEmpty =>
             Left(FrontendError.theoremError(subject,
-              s"ih(...) is not available in the base case '${b.ctorName}': it has no recursive field",
-              span))
+              s"ih(...) needs the recursive field of '${b.ctorName}' bound to a name; " +
+              "replace the `_` in that position with a binder", span))
           case Some(b) if !b.recursiveBinder.contains(argSym) =>
             Left(FrontendError.theoremError(subject,
-              s"ih(${argSym.name}) is only valid for the recursive field of the current induction " +
-              s"branch (expected ih(${b.recursiveBinder.get.name}))", span))
+              s"ih(${argSym.name}) is only valid for the last (recursive) field of the current " +
+              s"induction branch (expected ih(${b.recursiveBinder.get.name}))", span))
           case Some(_) =>
             Right(ResolvedLemmaRef.InductionHypothesis(idOf(argSym), argSym.name.toString, span))
 
@@ -588,38 +628,49 @@ final class TreeExtractor(dsl: DslSymbols)(using Context):
     case Apply(fn, _) => stripTypeApply(strip(fn)).symbol
     case t            => stripTypeApply(t).symbol
 
-  private def extractInduction(
-    target:    Tree,
-    casesTree: Tree,
-    binders:   Map[Symbol, ResolvedBinder],
-    index:     InductiveIndex,
-    sigs:      Map[Symbol, DefSignature],
-    subject:   String,
-    span:      SourceSpan,
+  /** Extract `induction(x) { ... }` or `cases(x) { ... }`.
+   *
+   *  The two differ only in whether branches may use `ih`, which is why they
+   *  share everything else — including the requirement that every constructor be
+   *  covered exactly once.
+   */
+  private def extractSplit(
+    target:         Tree,
+    casesTree:      Tree,
+    binders:        Map[Symbol, ResolvedBinder],
+    index:          InductiveIndex,
+    sigs:           Map[Symbol, DefSignature],
+    subject:        String,
+    span:           SourceSpan,
+    withHypothesis: Boolean,
   ): Either[FrontendError, ResolvedTactic] =
     val targetTree = strip(target)
     val targetSym  = targetTree.symbol
+    val what       = if withHypothesis then "induction" else "cases"
     for
       _        <- binders.get(targetSym).toRight(FrontendError.theoremError(subject,
-                    s"induction target '${targetSym.name}' must be a parameter of this theorem",
+                    s"$what target '${targetSym.name}' must be a parameter of this theorem",
                     spanOf(target)))
       ind      <- index.byClass.get(targetTree.tpe.widen.typeSymbol).toRight(
                     FrontendError.theoremError(subject,
-                      s"induction target '${targetSym.name}' must have an enum type declared in " +
+                      s"$what target '${targetSym.name}' must have an enum type declared in " +
                       "this @proofModule", spanOf(target)))
-      caseDefs <- partialFunctionCases(casesTree, subject)
+      caseDefs <- partialFunctionCases(casesTree, subject, what)
       cases    <- caseDefs.foldLeft[Either[FrontendError, List[ResolvedTacticCase]]](Right(Nil)) { (acc, cd) =>
                     for
                       done <- acc
-                      c    <- extractTacticCase(cd, binders, index, sigs, subject)
+                      c    <- extractTacticCase(cd, binders, index, sigs, subject, withHypothesis)
                     yield done :+ c
                   }
       _        <- checkBranchCoverage(ind, cases.map(_.ctor), cases.map(_.ctorName), subject, span)
-    yield ResolvedTactic.Induction(
-      idOf(targetSym), targetSym.name.toString,
-      CoreTranslator.normaliseTacticCaseOrder(ind, cases), span)
+    yield
+      val ordered = CoreTranslator.normaliseTacticCaseOrder(ind, cases)
+      val id      = idOf(targetSym)
+      val name    = targetSym.name.toString
+      if withHypothesis then ResolvedTactic.Induction(id, name, ordered, span)
+      else ResolvedTactic.Cases(id, name, ordered, span)
 
-  /** Pull the branches out of the `PartialFunction` literal passed to `induction`.
+  /** Pull the branches out of the `PartialFunction` literal passed to the tactic.
    *
    *  At this phase a pattern-matching anonymous function is still
    *  `Block(List(DefDef($anonfun)), Closure(...))`, whose body is a `Match` on a
@@ -629,43 +680,52 @@ final class TreeExtractor(dsl: DslSymbols)(using Context):
   private def partialFunctionCases(
     tree:    Tree,
     subject: String,
+    what:    String,
   ): Either[FrontendError, List[CaseDef]] =
+    def malformed(at: Tree) = Left(FrontendError.theoremError(subject,
+      s"$what branches must be written as `{ case Ctor(...) => tactic }`", spanOf(at)))
     strip(tree) match
       case Block(List(dd: DefDef), _: Closure) =>
         strip(dd.rhs) match
           case Match(_, cases) => Right(cases)
-          case other => Left(FrontendError.theoremError(subject,
-            "induction cases must be written as `{ case Ctor(...) => tactic }`", spanOf(other)))
-      case other =>
-        Left(FrontendError.theoremError(subject,
-          "induction cases must be written as `{ case Ctor(...) => tactic }`", spanOf(other)))
+          case other           => malformed(other)
+      case other => malformed(other)
 
   private def extractTacticCase(
-    cd:      CaseDef,
-    binders: Map[Symbol, ResolvedBinder],
-    index:   InductiveIndex,
-    sigs:    Map[Symbol, DefSignature],
-    subject: String,
+    cd:             CaseDef,
+    binders:        Map[Symbol, ResolvedBinder],
+    index:          InductiveIndex,
+    sigs:           Map[Symbol, DefSignature],
+    subject:        String,
+    withHypothesis: Boolean,
   ): Either[FrontendError, ResolvedTacticCase] =
     for
       _   <- if cd.guard.isEmpty then Right(())
              else Left(FrontendError.theoremError(subject,
-               "pattern guards are not supported in induction branches", spanOf(cd.guard)))
+               "pattern guards are not supported in tactic branches", spanOf(cd.guard)))
       pat <- extractPattern(cd.pat, index, subject).left.map(e =>
                FrontendError.theoremError(subject, e.message, e.span))
       (_, ctor, fieldBinders, symbolScope) = pat
-      // The recursive field binder is what an induction hypothesis is about.
-      recursiveBinder = if index.recursiveCtors.contains(ctor.id) then symbolScope.keys.headOption
-                        else None
-      branch  = BranchContext(recursiveBinder, ctor.name)
+      hasRecursiveField = index.recursiveCtors.contains(ctor.id)
+      // The hypothesis is about the *last* field, which is the one the tactic
+      // engine applies the recursion to.  Look it up by binder identity rather
+      // than by iterating the scope map, whose order is unspecified.
+      recursiveBinder = if !hasRecursiveField then None
+                        else fieldBinders.lastOption.flatMap { last =>
+                          symbolScope.collectFirst { case (sym, b) if b.id == last.id => sym }
+                        }
+      branch  = BranchContext(recursiveBinder, ctor.name, withHypothesis, hasRecursiveField)
       tactic <- extractTactic(cd.body, binders ++ symbolScope, index, sigs, subject, Some(branch))
     yield ResolvedTacticCase(
       ctor.id, ctor.name, fieldBinders, usesIh = mentionsIh(tactic), tactic, spanOf(cd))
 
-  private def mentionsIh(tactic: ResolvedTactic): Boolean = tactic match
-    case ResolvedTactic.Trivial(_)      => false
-    case ResolvedTactic.Simplify(ls, _) => ls.exists {
+  private def mentionsIh(tactic: ResolvedTactic): Boolean =
+    def isIh(l: ResolvedLemmaRef) = l match
       case _: ResolvedLemmaRef.InductionHypothesis => true
       case _                                       => false
-    }
-    case ResolvedTactic.Induction(_, _, cs, _) => cs.exists(c => mentionsIh(c.tactic))
+    tactic match
+      case ResolvedTactic.Trivial(_)             => false
+      case ResolvedTactic.Simplify(ls, _)        => ls.exists(isIh)
+      case ResolvedTactic.Rewrite(ls, _)         => ls.exists(isIh)
+      case ResolvedTactic.Induction(_, _, cs, _) => cs.exists(c => mentionsIh(c.tactic))
+      case ResolvedTactic.Cases(_, _, cs, _)     => cs.exists(c => mentionsIh(c.tactic))

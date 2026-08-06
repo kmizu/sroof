@@ -128,12 +128,15 @@ object InductiveExtractor:
                        memberOpt(module.moduleClass, nme.unapply)).flatten
                 else Nil
               val aliases = List(cls, cls.primaryConstructor) ++ companionAliases
-              // Recursive only when the single (hence last) field is the enum
-              // itself: `Builtins.buildFixCase` applies the recursion to Var(0),
-              // the last constructor argument.
+              // A hypothesis can be generated exactly when the **last** field is
+              // the enum itself: `Builtins.buildFixCase` applies the recursion to
+              // Var(0), which is the last constructor argument.  Earlier fields
+              // may be anything, including other recursive occurrences — but an
+              // `ih` about one of those is rejected during tactic extraction,
+              // since the engine can only build the hypothesis for Var(0).
               val isRecursive =
-                fields.length == 1 &&
-                fields.head.tpe == ResolvedType.Inductive(idOf(enumClass), enumName)
+                fields.nonEmpty &&
+                fields.last.tpe == ResolvedType.Inductive(idOf(enumClass), enumName)
               (ResolvedConstructor(idOf(cls), name, fields, span), aliases, isRecursive)
             }
         case other =>

@@ -87,11 +87,19 @@ sbt "cli/run check examples/nat.sroof"
 OK: examples/nat.sroof — 1 inductive(s), 1 definition(s), 4 defspec(s)
 ```
 
-### v0.3 リリース情報
+### v0.4 リリース情報
 
 - 変更履歴: [`CHANGELOG.md`](CHANGELOG.md)
-- リリースノート: [`RELEASE_NOTES_v0.3.md`](RELEASE_NOTES_v0.3.md)
-- リリースチェックリスト: [`RELEASE_CHECKLIST_v0.3.md`](RELEASE_CHECKLIST_v0.3.md)
+- リリースノート: [`RELEASE_NOTES_v0.4.md`](RELEASE_NOTES_v0.4.md)
+- リリースチェックリスト: [`RELEASE_CHECKLIST_v0.4.md`](RELEASE_CHECKLIST_v0.4.md)
+- 過去のリリース: [`RELEASE_NOTES_v0.3.md`](RELEASE_NOTES_v0.3.md), [`RELEASE_NOTES_v0.2.md`](RELEASE_NOTES_v0.2.md)
+
+### 移行メモ（v0.3 → v0.4）
+
+- **壊れるものはありません。** v0.3 のプログラムはすべてそのままコンパイル・検証
+  できます。変更はすべて Scala フロントエンドの受理範囲の拡大です。
+- 診断メッセージの文言が1箇所変わりました（`ih` の対象違いが
+  "last (recursive) field" になった）。プラグイン出力を機械処理している場合は確認を。
 
 ### 移行メモ（v0.2 → v0.3）
 
@@ -325,10 +333,11 @@ object NatProofs:
 コンパイルできなくなります。
 
 **これは初期サブセットであり、Scala 全般の検証ではありません。** 現時点で対応して
-いるのは、ジェネリックでない enum、それらの上の単一パラメータリストの純粋な `def`、
-停止性検査を通る自己再帰、網羅的な match、不変なローカル `val`、等式ゴール、そして
-`trivial` / `induction` / `ih` / `simplify` のタクティクです。それ以外（`var`、副作用、
-例外、キャスト、クロージャ、ジェネリクス、相互再帰、モジュール外呼び出しなど）は
+いるのは、ジェネリックでない enum、それらの上の純粋な `def`（カリー化された
+パラメータリストを含む）、停止性検査を通る自己再帰、網羅的な match、不変なローカル
+`val` の連続、等式ゴール、そして `trivial` / `induction` / `cases` / `ih` /
+`simplify` / `rewrite` のタクティクです。それ以外（`var`、副作用、例外、キャスト、
+クロージャ、部分適用、ジェネリクス、相互再帰、モジュール外呼び出しなど）は
 **近似せずに診断メッセージ付きで拒否**します。
 
 検証はビルドがプラグインを有効にしたときにだけ行われます。アノテーション単体では

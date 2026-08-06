@@ -197,6 +197,8 @@ Five parallel GitHub Actions jobs (`.github/workflows/ci.yml`):
 - **Parser changes**: `syntax/Parser.scala` uses Parsley combinators. Changes there may require updating `Elaborator.scala` in tandem.
 - **Kernel trust boundary**: Tactics (`Builtins.scala`, `TacticM`) are NOT trusted. Every proof term must pass `Kernel.verify`; any shortcut that skips this check breaks soundness. This applies identically to both frontends.
 
+**Scala frontend: `ih` targets the constructor's LAST field.** `Builtins.buildFixCase` applies the recursion to `Var(0)`, the last constructor argument, so an induction hypothesis exists only when that field has the inductive's own type. Locate it by binder identity against `fieldBinders.last` — never by iterating the binder map, whose order is unspecified (this was a real bug, fixed in v0.4).
+
 **Scala frontend: the semantic bridge is trusted.** `frontend/CoreTranslator.scala` and `plugin/dotc/TreeExtractor.scala` decide *what core proposition a Scala theorem is about*. The kernel cannot check that correspondence, so a bug there yields a valid proof of the wrong statement. Keep the accepted subset small, give every accepted construct exactly one core reading, and pin it with a golden test. Never add a catch-all that turns an unrecognised tree into an IR node.
 
 **Scala frontend: no `Meta` in accepted translations.** All supported types are closed `Ind(name, Nil, Nil)`, so the expected type is threaded top-down and used verbatim as a `Mat` return type. `CoreTranslatorSuite` asserts no `Meta` survives. Widening the type language means revisiting that threading (the expected type would then need shifting under binders).

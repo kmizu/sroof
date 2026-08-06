@@ -111,8 +111,10 @@ compiles, and runs without the plugin — it simply proves nothing in that case.
 | `prove(goal)(tactic)` | States a goal and its proof script. Both arguments are by-name and never evaluated. |
 | `trivial` | Closes a goal whose sides are definitionally equal. |
 | `induction(x) { case ... }` | Structural induction on a theorem parameter. |
+| `cases(x) { case ... }` | Constructor split with **no** induction hypothesis; `ih` is unavailable inside. |
 | `ih(k)` | The induction hypothesis for the recursive field binder `k`. |
 | `simplify(lemmas*)` | Rewrites with the given lemmas, then closes the goal. With no arguments, uses the `@simp` set. |
+| `rewrite(equations*)` | Applies the given equations as directed rewrites. |
 
 `Prop`, `Proof`, and `Tactic` are opaque type aliases of `Unit`. Proof code
 therefore erases to inert values: nothing is executed, no reflection is
@@ -124,8 +126,9 @@ Inside a `@proofModule`, this milestone supports:
 
 **Declarations**
 - non-generic `enum`s whose case fields all have supported enum types;
-- `def`s with one parameter list, explicitly typed parameters and result;
-- `@theorem def`s returning exactly `sroof.lang.Proof`;
+- `def`s with explicitly typed parameters and result, in one or more
+  (curried) parameter lists;
+- `@theorem def`s returning exactly `sroof.lang.Proof`, likewise curried or not;
 - `@simp` on a theorem.
 
 **Types**
@@ -134,15 +137,17 @@ Inside a `@proofModule`, this milestone supports:
 **Expressions**
 - parameter and pattern-binder references;
 - calls to definitions of the same module, including direct self-recursion;
+  curried calls are flattened, and partial application is rejected;
 - enum constructor applications (`Succ(x)`, `Zero`, and `new Succ(x)`);
 - exhaustive `match` over a supported enum, one branch per constructor;
-- a single immutable local `val` binding;
+- a run of immutable local `val` bindings, each visible to the next;
 - transparent wrappers (`Typed`, `Inlined` with no bindings, empty `Block`).
 
 **Proof DSL**
 - equality goals built with sroof's `===`;
-- `prove`, `trivial`, `induction`, `ih`, `simplify`;
-- `simplify` citing a `@theorem` verified **earlier in the same module**.
+- `prove`, `trivial`, `induction`, `cases`, `ih`, `simplify`, `rewrite`;
+- `simplify`/`rewrite` citing a `@theorem` verified **earlier in the same
+  module**, and bare `simplify()` drawing on the `@simp` set.
 
 ## 5. Explicitly unsupported
 
@@ -150,20 +155,24 @@ Rejected with a targeted diagnostic rather than approximated:
 
 `var`, assignment, mutable fields · exceptions, `throw`/`try` · I/O, `println`,
 any call outside the module · `Future`, threads · casts, `asInstanceOf` ·
-implicit/given search in verified computation · closures and higher-order values
-· general, non-structural, or mutual recursion · generic enums, GADTs, indexed
-families · classes, traits, case classes, opaque types as verified data ·
-numeric and string primitives · macros, inline, quotes, splices · pattern guards,
-pattern alternatives, nested patterns, `x @ pattern` · theorem bodies not shaped
-as `prove(goal)(tactic)` · tactics other than the ones listed above.
+implicit/given search in verified computation · closures, higher-order values,
+and partial application · general, non-structural, or mutual recursion · generic
+enums, GADTs, indexed families · classes, traits, case classes, opaque types as
+verified data · numeric and string primitives · macros, inline, quotes, splices ·
+pattern guards, pattern alternatives, nested patterns, `x @ pattern` · theorem
+bodies not shaped as `prove(goal)(tactic)` · tactics other than the ones listed
+above.
 
 Two restrictions are worth calling out because they are sroof-specific rather
 than obviously unsupported:
 
-- **`ih` requires a single recursive field.** `Builtins.buildFixCase` applies the
-  recursion to `Var(0)`, the last constructor argument, so an induction
-  hypothesis is only generated for a constructor with exactly one field of its
-  own inductive type. `Succ(n: Nat)` qualifies; `Node(l: Tree, r: Tree)` does not.
+- **`ih` is about the constructor's *last* field.** `Builtins.buildFixCase`
+  applies the recursion to `Var(0)`, which is the last constructor argument, so
+  the hypothesis exists exactly when that field has the inductive's own type.
+  `Succ(n: Nat)` and `Cons(tag: Tag, rest: Tagged)` both qualify. For
+  `Node(l: Tree, r: Tree)` only `ih(r)` would be meaningful, and `ih(l)` is
+  rejected rather than silently answered with the hypothesis for `r`.
+  The recursive field must also be bound to a name — `ih` cannot refer to a `_`.
 - **A pattern binder may not be named `ih`.** The tactic engine binds the
   generated hypothesis under that exact name, so a user binder with the same name
   is rejected rather than allowed to shadow it.
@@ -341,13 +350,24 @@ artifacts are published. `build.sbt` shows the shape such a mode would take.
 ## 11. Future work
 
 - **Generic enums** — requires parameterised `IndDef`s and type-argument
-  translation; the IR's `ResolvedType` is where that starts.
+  translation; the IR's `ResolvedType` is where that starts. This is the largest
+  remaining gap, and it is deferred deliberately: every piece of it (type
+  parameters in constructor field types, in definition signatures, and in
+  applications) is a new place to get a De Bruijn index wrong, inside the layer
+  §9 identifies as trusted. It should land as its own milestone with golden
+  tests per construct, not folded into a release alongside other work.
 - **Indexed families / GADTs** — `Vec`-style indexed types, as the `.sroof` path
   already supports.
-- **Richer tactic DSL** — `cases`, `rewrite`, `calc`, `apply`, and the rest of
-  the built-ins the `.sroof` path exposes.
-- **Multi-field recursive constructors** — needs the tactic engine to target a
-  chosen field rather than `Var(0)`.
+- **Richer tactic DSL** — `calc`, `apply`, `have`, and the rest of the built-ins
+  the `.sroof` path exposes. `cases` and `rewrite` landed in v0.4.
+- **Induction hypotheses for non-final recursive fields** — the tactic engine
+  applies the recursion to `Var(0)`, so `ih` is only available for a
+  constructor's last field. Targeting a chosen field needs a change in
+  `Builtins`, not in the frontend.
+- **Nested patterns** — `case Succ(Succ(k))` would have to be desugared into
+  nested `Mat`s, and the desugaring has to redistribute the sibling branches to
+  stay exhaustive. Deferred because getting it subtly wrong is invisible to the
+  kernel.
 - **Cross-JAR theorem metadata** — today a lemma must be a theorem verified
   earlier in the same module; sharing across compilation units needs proof
   metadata in TASTy or a sidecar.

@@ -78,36 +78,66 @@ object ProofRunner:
       case ResolvedTactic.Trivial(_) =>
         Right(Builtins.trivial)
 
-      case ResolvedTactic.Simplify(lemmas, span) =>
-        lemmas.foldLeft[Either[FrontendError, List[String]]](Right(Nil)) { (acc, lemma) =>
-          for
-            names <- acc
-            name  <- lemmaName(lemma, subject, env)
-          yield names :+ name
-        }.map(names => Builtins.simplify(names))
+      case ResolvedTactic.Simplify(lemmas, _) =>
+        resolveLemmaNames(lemmas, subject, env).map(Builtins.simplify)
 
-      case ResolvedTactic.Induction(_, targetName, cases, span) =>
+      case ResolvedTactic.Rewrite(equations, _) =>
+        resolveLemmaNames(equations, subject, env).map(Builtins.rewrite)
+
+      case ResolvedTactic.Induction(_, targetName, cases, _) =>
         // `Builtins.induction` decides between a plain `Mat` and a `Fix`-wrapped
         // proof by comparing the binding count against the constructor arity:
         // one extra binding means "this branch wants an induction hypothesis".
-        val caseSpecs = cases.map { c =>
-          val bindings = c.binders.map(_.name) ++ (if c.usesIh then List(IhBinderName) else Nil)
-          (c.ctorName, bindings)
+        buildSplit(cases, tenv, subject, env) { caseSpecs =>
+          Builtins.induction(targetName, caseSpecs)
         }
+
+      case ResolvedTactic.Cases(_, targetName, cases, _) =>
+        // `cases` never requests a hypothesis, so the binding list is exactly the
+        // constructor fields and `Builtins.cases` produces a plain `Mat`.
+        buildSplit(cases, tenv, subject, env) { caseSpecs =>
+          Builtins.cases(targetName, caseSpecs)
+        }
+
+  /** Build a constructor-splitting tactic followed by its branch tactics.
+   *
+   *  Shared by `induction` and `cases`: both generate one subgoal per
+   *  constructor, in constructor order, and then run each branch against its own
+   *  subgoal.
+   */
+  private def buildSplit(
+    cases:   List[ResolvedTacticCase],
+    tenv:    CoreTranslator.TranslationEnv,
+    subject: String,
+    env:     GlobalEnv,
+  )(split: List[(String, List[String])] => TacticM[Unit]): Either[FrontendError, TacticM[Unit]] =
+    val caseSpecs = cases.map { c =>
+      val bindings = c.binders.map(_.name) ++ (if c.usesIh then List(IhBinderName) else Nil)
+      (c.ctorName, bindings)
+    }
+    cases
+      .foldLeft[Either[FrontendError, List[TacticM[Unit]]]](Right(Nil)) { (acc, c) =>
         for
-          branches <- cases.foldLeft[Either[FrontendError, List[TacticM[Unit]]]](Right(Nil)) { (acc, c) =>
-                        for
-                          done <- acc
-                          t    <- buildTactic(c.tactic, tenv, subject, env)
-                        yield done :+ t
-                      }
-        yield
-          // Each branch tactic runs against its own generated subgoal, in the
-          // same order the cases were normalised into (constructor order).
-          val runBranches = branches.foldLeft(TacticM.pure(())) { (acc, branch) =>
-            acc.flatMap(_ => branch)
-          }
-          Builtins.induction(targetName, caseSpecs).flatMap(_ => runBranches)
+          done <- acc
+          t    <- buildTactic(c.tactic, tenv, subject, env)
+        yield done :+ t
+      }
+      .map { branches =>
+        val runBranches = branches.foldLeft(TacticM.pure(()))((acc, b) => acc.flatMap(_ => b))
+        split(caseSpecs).flatMap(_ => runBranches)
+      }
+
+  private def resolveLemmaNames(
+    lemmas:  List[ResolvedLemmaRef],
+    subject: String,
+    env:     GlobalEnv,
+  ): Either[FrontendError, List[String]] =
+    lemmas.foldLeft[Either[FrontendError, List[String]]](Right(Nil)) { (acc, lemma) =>
+      for
+        names <- acc
+        name  <- lemmaName(lemma, subject, env)
+      yield names :+ name
+    }
 
   /** Resolve a `simplify` lemma to the name the tactic engine looks up. */
   private def lemmaName(
