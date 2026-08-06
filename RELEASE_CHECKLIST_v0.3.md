@@ -43,7 +43,7 @@ implementation before changing the docs.
 ## Regression and Smoke Checks
 
 - [x] `sbt kernel/test` — 14 passed
-- [x] `sbt test` — 553 passed, 0 failed
+- [x] `sbt clean test` — 539 passed, 0 failed (from a clean build)
 - [x] `sbt "cli/run check examples/nat.sroof"` — OK
 - [x] `sbt "cli/run check examples/int.sroof"` — OK
 - [x] `sbt cliNative/compile`

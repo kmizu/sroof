@@ -172,7 +172,7 @@ Every command below was run and passed:
 | Command | Result |
 |---|---|
 | `sbt kernel/test` | 14 passed |
-| `sbt test` (all modules) | 553 passed, 0 failed |
+| `sbt clean test` (all modules, from scratch) | 539 passed, 0 failed |
 | `sbt "cli/run check examples/nat.sroof"` | OK — 1 inductive, 1 definition, 4 defspec |
 | `sbt "cli/run check examples/int.sroof"` | OK — 2 inductives, 8 definitions, 3 defspec |
 | `sbt cliNative/compile` | success |
