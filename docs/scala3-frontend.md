@@ -426,8 +426,11 @@ artifacts are published. `build.sbt` shows the shape such a mode would take.
 
 ## 11. Future work
 
-- **Indexed families / GADTs** — `Vec`-style indexed types, as the `.sroof` path
-  already supports.
+- **Indexed families / GADTs** — **not** something the `.sroof` path already
+  supports, despite appearances. `CtorDef.retIndices` is declared but never
+  written, and a constructor's return type is parsed and discarded, so today's
+  `Vec` carries a phantom index that no proof can mention. The work starts in the
+  parser, not the frontend. See [indexed-families.md](indexed-families.md).
 - **Richer tactic DSL** — `calc`, `apply`, `have`, and the rest of the built-ins
   the `.sroof` path exposes. `cases` and `rewrite` landed in v0.4.
 - **Induction hypotheses for non-final recursive fields** — the tactic engine

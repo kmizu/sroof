@@ -1,5 +1,46 @@
 # Changelog
 
+## Unreleased
+
+Groundwork for the two items v0.7 left outstanding. No behaviour changes.
+
+### Added
+- **Maven Central publishing is configured.** POM metadata (licence, SCM,
+  developers, homepage — all of which Central rejects an artifact for missing),
+  Sonatype wiring, `sbt-sonatype` and `sbt-pgp`, credentials read from the
+  environment for CI, and a `ci-release-sroof` alias. `docs/publishing.md` says
+  what to obtain and where to put it; `.github/workflows/release.yml` releases on
+  a pushed `v*` tag and skips green when the secrets are absent, so an
+  unconfigured repository or a fork is unaffected.
+
+  Verified by `publishLocal`: `sroof-scala-api`, `sroof-scala-frontend`, and
+  `sroof-scala-plugin` produce jar, sources, javadoc, and pom. Only credentials
+  are missing.
+
+  The groupId is `io.github.kmizu`, which Central verifies via the GitHub account
+  of the same name. `io.sroof` would additionally need DNS verification of
+  `sroof.io`; it is one value in `build.sbt`, and nothing is published yet, so
+  switching costs nothing today.
+
+### Documented
+- **Indexed families are not implemented, contrary to appearances.**
+  `docs/indexed-families.md` records the investigation. `IndDef.indices` is
+  populated, but `CtorDef.retIndices` is a field **nothing writes or reads**, and
+  a constructor's declared return type is parsed and discarded (`SCtor.retTpe`
+  has no readers anywhere). The parser cannot even express
+  `case vnil: Vec(A)(Nat.zero)`.
+
+  So `stdlib/Vec.sroof` writing the bare `Vec` is not a convention to follow —
+  it is the only thing that parses, and the `n: Nat` index is phantom:
+  `Vec.nil` and `Vec.cons(...)` have the same type, and nothing about lengths can
+  be stated. The file now says so.
+
+  v0.7's fix does not extend to this. A type parameter has the same value in
+  every constructor, so one uniform substitution sufficed; an index differs per
+  constructor, so the motive must abstract over it and each branch must
+  specialise it. The work starts in the parser and runs through the elaborator,
+  checker, and tactic engine before any frontend work is meaningful.
+
 ## [0.7.0] - 2026-08-06
 
 Lifts the limitation that had been recorded in `stdlib/PolyList.sroof` since the

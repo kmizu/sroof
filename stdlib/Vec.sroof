@@ -1,4 +1,12 @@
-// stdlib v1: Vec (indexed)
+// stdlib v1: Vec
+//
+// NOTE: the `n: Nat` below is a **phantom** index.  A constructor's declared
+// return type is parsed and discarded, and `CtorDef.retIndices` is never
+// populated, so `Vec.nil` and `Vec.cons(...)` have the same type as far as the
+// checker is concerned — nothing about lengths can be stated or proved yet.
+// The bare `Vec` in the signatures below is not a style choice: the parser
+// cannot express `Vec(A)(Nat.zero)` in a constructor's return type.
+// See docs/indexed-families.md for what real index support would require.
 
 inductive Nat {
   case zero: Nat

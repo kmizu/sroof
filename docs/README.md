@@ -13,6 +13,8 @@ Start here if you are not sure which document you need.
 | Integrate a tool with `check --json` | [json-schema.md](json-schema.md) |
 | Understand where effects are allowed and where they are not | [effects.md](effects.md) |
 | Reuse a named group of simplification lemmas | [lemma-bundles.md](lemma-bundles.md) |
+| Publish sroof to Maven Central | [publishing.md](publishing.md) |
+| Know where indexed families / GADTs actually stand | [indexed-families.md](indexed-families.md) |
 
 ## The two frontends
 
