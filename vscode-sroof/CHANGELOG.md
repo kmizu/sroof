@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.6.0] — 2026-08-06
+
+### Changed
+- Version bump for the v0.6 release. The extension is unchanged; v0.6 adds the
+  `have` tactic to the Scala 3 frontend.
+
 ## [0.5.0] — 2026-08-06
 
 ### Changed

@@ -92,6 +92,20 @@ object NatProofs:
       case Zero    => Zero
       case Succ(k) => alwaysZero(k, Succ(acc))
 
+  // `have` breaks a proof into steps: the intermediate claim is proved as a goal
+  // in its own right, then cited by name in the continuation.
+  @theorem
+  def plusZeroRightInSteps(n: Nat): Proof =
+    prove(plus(n, Zero) === n)(
+      induction(n) {
+        case Zero => trivial
+        case Succ(k) =>
+          have(plus(k, Zero) === k)(simplify(ih(k))) { step =>
+            simplify(step)
+          }
+      }
+    )
+
   @theorem
   def alwaysZeroIsZero(n: Nat, acc: Nat): Proof =
     prove(alwaysZero(n, acc) === Zero)(

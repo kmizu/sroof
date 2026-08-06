@@ -1,5 +1,45 @@
 # Changelog
 
+## [0.6.0] - 2026-08-06
+
+Adds `have`, so a proof can be written in steps, and converts another batch of
+documented-but-untested claims into tested ones.
+
+### Added
+- **`have(claim)(proof) { h => ... }`** — prove an intermediate equation, bind it
+  as `h`, and continue with it in scope. The claim becomes a goal in its own
+  right, so `have` cannot be used to assume something convenient: an unprovable
+  claim fails the theorem.
+
+### Tested, not merely claimed
+Two new suites compile constructs that were reachable by reading the extractor
+but exercised by nothing:
+
+- **Branch reordering.** `Term.Mat` matches branches to constructors *by
+  position*, so a wrong normalisation would have produced a proof about the wrong
+  branches rather than a failure. Out-of-order `match` and `induction` branches
+  are now pinned.
+- Two `@proofModule` objects in one file, a failure in the second still failing
+  the compilation, enums with more than two cases, transitive inlining across a
+  chain of definitions, `simplify` citing several verified theorems at once, and
+  deeply nested constructor expressions.
+
+All passed, so this release found no new defects there — unlike v0.5, where the
+same exercise uncovered two.
+
+### Documented
+- **A second blocker under generic enums.** v0.5 identified
+  `Builtins.buildFixCase` as the obstacle. Attempting the fix and running an
+  inductive proof over `PolyList` surfaced another one underneath: the *bare*
+  `Ind("PolyList")` written in stdlib definition signatures does not match the
+  *applied* `App(Ind("PolyList"), A)` that a constructor field carries.
+  Instantiating argument types does not reconcile those. `docs/scala3-frontend.md`
+  §11 now records the required order of work, and why steps 1–2 are shared-code
+  changes deserving their own milestone rather than a corner of a mixed release.
+
+### Unchanged
+- The trusted kernel, and the `.sroof` language path in its entirety.
+
 ## [0.5.0] - 2026-08-06
 
 Adds generalized induction — the first release to increase what the Scala path

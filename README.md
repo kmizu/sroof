@@ -113,12 +113,16 @@ python3 scripts/benchmark.py --runs 3 --thresholds benchmarks/thresholds.json --
 - compares workload medians against CI thresholds
 - writes a machine-readable report at `benchmarks/results.json`
 
-### v0.5 Release Notes
+### v0.6 Release Notes
 
 - changelog: [`CHANGELOG.md`](CHANGELOG.md)
-- release notes: [`RELEASE_NOTES_v0.5.md`](RELEASE_NOTES_v0.5.md)
-- release checklist: [`RELEASE_CHECKLIST_v0.5.md`](RELEASE_CHECKLIST_v0.5.md)
-- previous releases: [`RELEASE_NOTES_v0.4.md`](RELEASE_NOTES_v0.4.md), [`RELEASE_NOTES_v0.3.md`](RELEASE_NOTES_v0.3.md), [`RELEASE_NOTES_v0.2.md`](RELEASE_NOTES_v0.2.md)
+- release notes: [`RELEASE_NOTES_v0.6.md`](RELEASE_NOTES_v0.6.md)
+- release checklist: [`RELEASE_CHECKLIST_v0.6.md`](RELEASE_CHECKLIST_v0.6.md)
+- previous releases: [`RELEASE_NOTES_v0.5.md`](RELEASE_NOTES_v0.5.md), [`RELEASE_NOTES_v0.4.md`](RELEASE_NOTES_v0.4.md), [`RELEASE_NOTES_v0.3.md`](RELEASE_NOTES_v0.3.md), [`RELEASE_NOTES_v0.2.md`](RELEASE_NOTES_v0.2.md)
+
+### Migration Notes (v0.5 -> v0.6)
+
+- **Nothing breaks.** `have` is additive; every v0.5 program still verifies.
 
 ### Migration Notes (v0.4 -> v0.5)
 
@@ -374,7 +378,7 @@ non-generic enums, pure `def`s over those enums (curried parameter lists
 included), self-recursion accepted by the termination checker, exhaustive
 matches, runs of immutable local `val`s, parameterless definitions, equality
 goals, and the tactics `trivial`, `induction`, `inductionGeneralizing`, `cases`,
-`ih`, `exactIh`, `simplify`, and `rewrite`. Everything else — `var`, effects,
+`ih`, `exactIh`, `have`, `simplify`, and `rewrite`. Everything else — `var`, effects,
 exceptions, casts, closures, generics, mutual recursion, external calls — is
 **rejected with a diagnostic**, not approximated.
 

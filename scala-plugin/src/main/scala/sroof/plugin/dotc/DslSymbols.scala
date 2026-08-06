@@ -27,6 +27,7 @@ final class DslSymbols private (
   val inductionMethod:  Symbol,
   val inductionGenMethod: Symbol,
   val casesMethod:      Symbol,
+  val haveMethod:       Symbol,
   val ihMethod:         Symbol,
   val exactIhMethod:    Symbol,
   val simplifyMethod:   Symbol,
@@ -35,7 +36,7 @@ final class DslSymbols private (
   /** All DSL term symbols, for "did the user mean a sroof call?" diagnostics. */
   def dslTermSymbols: Set[Symbol] =
     Set(eqMethod, proveMethod, trivialMethod, inductionMethod, inductionGenMethod,
-        casesMethod, ihMethod, exactIhMethod, simplifyMethod, rewriteMethod)
+        casesMethod, haveMethod, ihMethod, exactIhMethod, simplifyMethod, rewriteMethod)
 
 object DslSymbols:
 
@@ -100,6 +101,7 @@ object DslSymbols:
       inductionMethod  = member(termName("induction")),
       inductionGenMethod = member(termName("inductionGeneralizing")),
       casesMethod      = member(termName("cases")),
+      haveMethod       = member(termName("have")),
       ihMethod         = member(termName("ih")),
       exactIhMethod    = member(termName("exactIh")),
       simplifyMethod   = member(termName("simplify")),

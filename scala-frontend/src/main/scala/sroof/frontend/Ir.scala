@@ -129,6 +129,9 @@ enum ResolvedLemmaRef extends Spanned:
   /** A previously verified `@theorem` in the same module. */
   case Theorem(id: SymbolId, name: String, span: SourceSpan)
 
+  /** A hypothesis bound by an enclosing `have`, named in the proof context. */
+  case LocalHypothesis(name: String, span: SourceSpan)
+
 /** A proof script.  Only the combinators actually implemented appear here. */
 enum ResolvedTactic extends Spanned:
   case Trivial(span: SourceSpan)
@@ -150,6 +153,11 @@ enum ResolvedTactic extends Spanned:
    *  usually instantiated at a *changed* value (`Succ(acc)`, `derive(r, c)`),
    *  which is the whole reason the quantification was needed. */
   case ExactIh(at: List[ResolvedExpr], span: SourceSpan)
+  /** Prove `lhs === rhs`, bind it as `name`, then run `continue` with it in scope.
+   *  The claim's sides are expressions in the proof context, so they are
+   *  translated there rather than in the theorem's parameter scope. */
+  case Have(lhs: ResolvedExpr, rhs: ResolvedExpr, name: String,
+            proof: ResolvedTactic, continue: ResolvedTactic, span: SourceSpan)
 
 /** One branch of an `induction`, in the inductive's constructor order.
  *

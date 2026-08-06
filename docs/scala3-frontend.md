@@ -115,6 +115,7 @@ compiles, and runs without the plugin — it simply proves nothing in that case.
 | `cases(x) { case ... }` | Constructor split with **no** induction hypothesis; `ih` is unavailable inside. |
 | `ih(k)` | The induction hypothesis for the recursive field binder `k`. |
 | `exactIh(k)(at...)` | Close the goal with that hypothesis, instantiated at the given values. The counterpart to `inductionGeneralizing`. |
+| `have(claim)(proof) { h => ... }` | Prove an intermediate equation, bind it as `h`, and continue with it in scope. |
 | `simplify(lemmas*)` | Rewrites with the given lemmas, then closes the goal. With no arguments, uses the `@simp` set. |
 | `rewrite(equations*)` | Applies the given equations as directed rewrites. |
 
@@ -148,7 +149,7 @@ Inside a `@proofModule`, this milestone supports:
 **Proof DSL**
 - equality goals built with sroof's `===`;
 - `prove`, `trivial`, `induction`, `inductionGeneralizing`, `cases`, `ih`,
-  `exactIh`, `simplify`, `rewrite`;
+  `exactIh`, `have`, `simplify`, `rewrite`;
 - `simplify`/`rewrite` citing a `@theorem` verified **earlier in the same
   module**, and bare `simplify()` drawing on the `@simp` set.
 
@@ -404,6 +405,20 @@ artifacts are published. `build.sbt` shows the shape such a mode would take.
   worse than an honest omission. The fix belongs in `Builtins` (instantiating
   `argTpes` against the scrutinee's type arguments before extending the context),
   benefits both frontends, and should land first.
+
+  **v0.6 finding: there is a second blocker underneath.** Attempting the
+  `Builtins` fix and running an inductive proof over `PolyList` produces
+  `expected: PolyList, actual: (PolyList #2)` — a mismatch between the *bare*
+  `Ind("PolyList")` that `stdlib/PolyList.sroof` writes in its definition
+  signatures and the *applied* `App(Ind("PolyList"), A)` that a constructor field
+  carries. Instantiating the argument types correctly does not resolve that; the
+  two spellings of the same type have to be reconciled first, which is a change
+  to how polymorphic types are modelled rather than a De Bruijn correction.
+
+  The order of work is therefore: (1) settle the bare-vs-applied convention for
+  parameterised inductives, (2) instantiate `argTpes` in `Builtins.buildFixCase`,
+  (3) add generic enums to the Scala frontend. Steps 1 and 2 are shared-code
+  changes with 580+ passing tests behind them and deserve their own milestone.
 - **Indexed families / GADTs** — `Vec`-style indexed types, as the `.sroof` path
   already supports.
 - **Richer tactic DSL** — `calc`, `apply`, `have`, and the rest of the built-ins

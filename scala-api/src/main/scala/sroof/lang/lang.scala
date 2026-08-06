@@ -74,6 +74,23 @@ def cases[A](value: A)(branches: PartialFunction[A, Tactic]): Tactic = ()
  */
 def ih[A](value: A): Proof = ()
 
+/** Prove an intermediate equation, then continue with it in scope.
+ *
+ *  Lets a proof be broken into steps instead of being forced through a single
+ *  tactic. The hypothesis is bound by the continuation's parameter and can be
+ *  cited like any other lemma:
+ *
+ *  {{{
+ *  have(plus(k, Zero) === k)(simplify(ih(k))) { step =>
+ *    simplify(step)
+ *  }
+ *  }}}
+ *
+ *  The intermediate claim is proved as a goal in its own right, so it is subject
+ *  to the same kernel check as everything else.
+ */
+def have(claim: => Prop)(proof: => Tactic)(continue: Proof => Tactic): Tactic = ()
+
 /** Close the goal with the induction hypothesis for `recursive`, instantiated at
  *  the given values.
  *

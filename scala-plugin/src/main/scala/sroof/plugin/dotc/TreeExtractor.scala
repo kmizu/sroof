@@ -489,7 +489,7 @@ final class TreeExtractor(dsl: DslSymbols)(using Context):
              if stripTypeApply(strip(prove)).symbol == dsl.proveMethod =>
           for
             goal   <- extractProp(goalTree, sig.binderScope, index, sigs, name)
-            tactic <- extractTactic(tacticTree, sig.binderScope, index, sigs, name, None)
+            tactic <- extractTactic(tacticTree, sig.binderScope, index, sigs, name, None, Map.empty)
           yield ResolvedTheorem(
             idOf(dd.symbol), name, sig.params, goal, tactic,
             isSimp = annotationsOf(dd.symbol).contains(dsl.simpAnnot), span)
@@ -537,6 +537,7 @@ final class TreeExtractor(dsl: DslSymbols)(using Context):
     sigs:    Map[Symbol, DefSignature],
     subject: String,
     branch:  Option[BranchContext],
+    haves:   Map[Symbol, String],
   ): Either[FrontendError, ResolvedTactic] =
     val span = spanOf(tree)
     strip(tree) match
@@ -544,11 +545,11 @@ final class TreeExtractor(dsl: DslSymbols)(using Context):
         Right(ResolvedTactic.Trivial(span))
 
       case Apply(fn, args) if stripTypeApply(strip(fn)).symbol == dsl.simplifyMethod =>
-        extractLemmas(args, subject, branch, span)
+        extractLemmas(args, subject, branch, haves, span)
           .map(ls => ResolvedTactic.Simplify(ls, span))
 
       case Apply(fn, args) if stripTypeApply(strip(fn)).symbol == dsl.rewriteMethod =>
-        extractLemmas(args, subject, branch, span)
+        extractLemmas(args, subject, branch, haves, span)
           .map(ls => ResolvedTactic.Rewrite(ls, span))
 
       case Apply(Apply(fn, List(target)), List(casesTree))
@@ -585,6 +586,10 @@ final class TreeExtractor(dsl: DslSymbols)(using Context):
                 }
         yield ResolvedTactic.ExactIh(at, span)
 
+      case Apply(Apply(Apply(fn, List(claimTree)), List(proofTree)), List(contTree))
+           if stripTypeApply(strip(fn)).symbol == dsl.haveMethod =>
+        extractHave(claimTree, proofTree, contTree, binders, index, sigs, subject, branch, haves, span)
+
       case Apply(fn, _) if stripTypeApply(strip(fn)).symbol == dsl.ihMethod =>
         Left(FrontendError.theoremError(subject,
           "ih(...) is a lemma, not a tactic; use simplify(ih(...))", span))
@@ -598,6 +603,7 @@ final class TreeExtractor(dsl: DslSymbols)(using Context):
     args:    List[Tree],
     subject: String,
     branch:  Option[BranchContext],
+    haves:   Map[Symbol, String],
     span:    SourceSpan,
   ): Either[FrontendError, List[ResolvedLemmaRef]] =
     // Varargs reach us as a SeqLiteral, usually inside a Typed wrapper.
@@ -612,7 +618,7 @@ final class TreeExtractor(dsl: DslSymbols)(using Context):
       es.foldLeft[Either[FrontendError, List[ResolvedLemmaRef]]](Right(Nil)) { (acc, e) =>
         for
           done <- acc
-          l    <- extractLemma(e, subject, branch)
+          l    <- extractLemma(e, subject, branch, haves)
         yield done :+ l
       }
     }
@@ -621,9 +627,13 @@ final class TreeExtractor(dsl: DslSymbols)(using Context):
     tree:    Tree,
     subject: String,
     branch:  Option[BranchContext],
+    haves:   Map[Symbol, String],
   ): Either[FrontendError, ResolvedLemmaRef] =
     val span = spanOf(tree)
     strip(tree) match
+      case t if haves.contains(t.symbol) =>
+        Right(ResolvedLemmaRef.LocalHypothesis(haves(t.symbol), span))
+
       case Apply(fn, List(arg)) if stripTypeApply(strip(fn)).symbol == dsl.ihMethod =>
         val argSym = strip(arg).symbol
         validateIhTarget(argSym, subject, branch, span)
@@ -727,6 +737,57 @@ final class TreeExtractor(dsl: DslSymbols)(using Context):
    *  looks them up by name in the proof context, so anything else — a call, a
    *  constructor, a pattern binder — has nothing to quantify over.
    */
+  /** Extract `have(claim)(proof)(hypothesis => continuation)`.
+   *
+   *  The continuation is an ordinary lambda, so its parameter symbol is the
+   *  hypothesis binder.  Its *name* is what matters downstream: the tactic engine
+   *  puts the proved claim into the proof context under that name, and resolves
+   *  citations of it there.
+   */
+  private def extractHave(
+    claimTree: Tree,
+    proofTree: Tree,
+    contTree:  Tree,
+    binders:   Map[Symbol, ResolvedBinder],
+    index:     InductiveIndex,
+    sigs:      Map[Symbol, DefSignature],
+    subject:   String,
+    branch:    Option[BranchContext],
+    haves:     Map[Symbol, String],
+    span:      SourceSpan,
+  ): Either[FrontendError, ResolvedTactic] =
+    for
+      claim <- strip(claimTree) match
+                 case Apply(Apply(eq, List(lhs)), List(rhs))
+                      if stripTypeApply(strip(eq)).symbol == dsl.eqMethod => Right((lhs, rhs))
+                 case other => Left(FrontendError.theoremError(subject,
+                   "a have claim must be an equality built with sroof's `===`", spanOf(other)))
+      (lhsTree, rhsTree) = claim
+      lhs   <- extractExpr(lhsTree, binders, index, sigs, subject)
+      rhs   <- extractExpr(rhsTree, binders, index, sigs, subject)
+      bound <- lambdaBinder(contTree, subject)
+      (hypSym, contBody) = bound
+      _     <- if hypSym.name.toString != ProofRunner.IhBinderName then Right(())
+               else Left(FrontendError.theoremError(subject,
+                 s"a have hypothesis may not be named '${ProofRunner.IhBinderName}': that name is " +
+                 "reserved for the generated induction hypothesis", spanOf(contTree)))
+      proof <- extractTactic(proofTree, binders, index, sigs, subject, branch, haves)
+      cont  <- extractTactic(contBody, binders, index, sigs, subject, branch,
+                 haves + (hypSym -> hypSym.name.toString))
+    yield ResolvedTactic.Have(lhs, rhs, hypSym.name.toString, proof, cont, span)
+
+  /** The parameter symbol and body of a single-argument lambda. */
+  private def lambdaBinder(tree: Tree, subject: String): Either[FrontendError, (Symbol, Tree)] =
+    strip(tree) match
+      case Block(List(dd: DefDef), _: Closure) =>
+        dd.termParamss.flatten match
+          case List(vd) => Right((vd.symbol, dd.rhs))
+          case _        => Left(FrontendError.theoremError(subject,
+            "the have continuation must take exactly one hypothesis", spanOf(tree)))
+      case other =>
+        Left(FrontendError.theoremError(subject,
+          "the have continuation must be written as `{ h => tactic }`", spanOf(other)))
+
   /** Unwrap a vararg argument list, which the typer presents as a `SeqLiteral`. */
   private def varargElements(args: List[Tree]): List[Tree] =
     args match
@@ -804,7 +865,8 @@ final class TreeExtractor(dsl: DslSymbols)(using Context):
                           symbolScope.collectFirst { case (sym, b) if b.id == last.id => sym }
                         }
       branch  = BranchContext(recursiveBinder, ctor.name, withHypothesis, hasRecursiveField)
-      tactic <- extractTactic(cd.body, binders ++ symbolScope, index, sigs, subject, Some(branch))
+      tactic <- extractTactic(cd.body, binders ++ symbolScope, index, sigs, subject, Some(branch),
+                  Map.empty)
     yield ResolvedTacticCase(
       ctor.id, ctor.name, fieldBinders, usesIh = mentionsIh(tactic), tactic, spanOf(cd))
 
@@ -823,3 +885,4 @@ final class TreeExtractor(dsl: DslSymbols)(using Context):
       // `exactIh` *is* a use of the hypothesis: without this, the binding count
       // would not request one and the branch would get no hypothesis at all.
       case ResolvedTactic.ExactIh(_, _) => true
+      case ResolvedTactic.Have(_, _, _, p, c, _) => mentionsIh(p) || mentionsIh(c)

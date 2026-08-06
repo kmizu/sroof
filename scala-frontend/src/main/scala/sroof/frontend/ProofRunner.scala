@@ -100,6 +100,12 @@ object ProofRunner:
       case ResolvedTactic.ExactIh(at, span) =>
         Right(exactIh(at, tenv, subject))
 
+      case ResolvedTactic.Have(lhs, rhs, name, proof, continue, _) =>
+        for
+          proofScript <- buildTactic(proof, tenv, subject, env)
+          contScript  <- buildTactic(continue, tenv, subject, env)
+        yield have(lhs, rhs, name, proofScript, contScript, tenv, subject)(using env)
+
       case ResolvedTactic.Cases(_, targetName, cases, _) =>
         // `cases` never requests a hypothesis, so the binding list is exactly the
         // constructor fields and `Builtins.cases` produces a plain `Mat`.
@@ -114,6 +120,51 @@ object ProofRunner:
    *  internally. The resulting term is a candidate like any other: if the
    *  hypothesis does not actually instantiate to the goal, the kernel rejects it.
    */
+  /** Prove an intermediate claim, bind it, and continue.
+   *
+   *  Mirrors the `.sroof` path's `have`: the claim becomes a goal in its own
+   *  right, its proof term is bound by a `Let`, and the continuation runs against
+   *  the original goal in the extended context.  The claim's sides are resolved
+   *  against the proof context, so `have` works inside an induction branch where
+   *  the interesting terms mention the branch's binders.
+   */
+  private def have(
+    lhsExpr: ResolvedExpr,
+    rhsExpr: ResolvedExpr,
+    name:    String,
+    proof:   TacticM[Unit],
+    continue: TacticM[Unit],
+    tenv:    CoreTranslator.TranslationEnv,
+    subject: String,
+  )(using GlobalEnv): TacticM[Unit] =
+    for
+      goalPair  <- TacticM.currentGoal
+      (mv, goal) = goalPair
+      lhs       <- liftTranslation(lhsExpr, goal.ctx, tenv, subject)
+      rhs       <- liftTranslation(rhsExpr, goal.ctx, tenv, subject)
+      claim      = sroof.tactic.Eq.mkPropType(lhs, rhs)
+      // Prove the claim as a separate goal, in the current context.
+      claimTerm <- TacticM.liftEither(
+                     TacticM.prove(goal.ctx, claim)(proof).left.map { err =>
+                       TacticError.Custom(s"have: could not prove ${claim.show}: ${err.getMessage}")
+                     })
+      newCtx     = goal.ctx.extend(name, claim)
+      newTarget  = sroof.core.Subst.shift(1, goal.target)
+      contMv    <- TacticM.addGoal(newCtx, newTarget)
+      _         <- TacticM.solveGoalWith(mv, Term.Let(name, claim, claimTerm, Term.Meta(contMv.id)))
+      _         <- continue
+    yield ()
+
+  private def liftTranslation(
+    e:       ResolvedExpr,
+    ctx:     Context,
+    tenv:    CoreTranslator.TranslationEnv,
+    subject: String,
+  ): TacticM[Term] =
+    CoreTranslator.translateInProofContext(e, ctx, tenv, subject) match
+      case Right(t)  => TacticM.pure(t)
+      case Left(err) => TacticM.fail[Term](TacticError.Custom(err.message))
+
   private def exactIh(
     at:      List[ResolvedExpr],
     tenv:    CoreTranslator.TranslationEnv,
@@ -188,6 +239,10 @@ object ProofRunner:
     lemma match
       case ResolvedLemmaRef.InductionHypothesis(_, _, _) =>
         Right(IhBinderName)
+      case ResolvedLemmaRef.LocalHypothesis(name, _) =>
+        // Bound by an enclosing `have`, so it lives in the proof context under
+        // this name; the tactic engine resolves it there.
+        Right(name)
       case ResolvedLemmaRef.Theorem(_, name, span) =>
         // Only theorems already accepted by the kernel are in `env`, so a
         // forward reference or an unproved theorem fails here rather than
