@@ -1,5 +1,34 @@
 # Changelog
 
+## [0.9.0] - 2026-08-07
+
+Fixes the first of the two obstacles v0.8 identified under indexed families.
+
+### Fixed
+- **`IndChecker.instantiateArgType` indexed its arguments backwards.** Its own
+  doc comment says `Var(0)` is the *most recent* previous constructor argument —
+  which is what the elaborator produces, since it prepends each argument name to
+  the scope — but the code read `prevArgs(abs)` while `checkArgsDependent` passes
+  the arguments in **declaration order**. So `Var(0)` resolved to the *first*
+  argument rather than the last.
+
+  This was latent for as long as it was unreachable: a constructor argument type
+  had to mention an earlier argument, and until v0.8 the parser could not express
+  such a type. v0.8's multi-group application change made
+  `case vcons(m: Nat, head: A, tail: Vec(A)(m))` writable, which reaches it
+  directly — `tail`'s type would have been checked against `Vec A head` instead of
+  `Vec A m`.
+
+  All 590 tests pass unchanged, which is expected rather than reassuring: no
+  existing declaration has a dependent constructor argument. A `.sroof` file that
+  does is now checked correctly.
+
+### Still outstanding
+The second obstacle stands: `extractParamValsFromArgs` is a documented heuristic
+("works for m=0 and simple m=1 cases") with no arguments to work from for a
+nullary constructor. Indexed families step 3 — making `inferCon` apply
+`retIndices` — needs that settled first. See `docs/indexed-families.md`.
+
 ## [0.8.0] - 2026-08-07
 
 Groundwork for the two items v0.7 left outstanding: publishing is ready but for

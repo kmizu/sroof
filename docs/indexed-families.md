@@ -137,12 +137,11 @@ Each step is useful on its own and testable before the next begins.
      documented as working "for m=0 and simple m=1 cases", and it has no
      arguments to work from for a nullary constructor like `vnil`. An index-aware
      `inferCon` cannot assume `paramVals` has the right length.
-   - **`instantiateArgType`'s ordering doc and its call site disagree.** The
-     comment says `Var(0)` is the *most recent* previous argument, while
-     `checkArgsDependent` passes `args.take(j)` in declaration order. That is
-     latent today because few constructor argument types reference earlier
-     arguments; an index expression like `Nat.succ(m)` references them routinely,
-     so this has to be settled first.
+   - ~~**`instantiateArgType`'s ordering doc and its call site disagree.**~~
+     ✅ **Fixed in v0.9.** The code read `prevArgs(abs)` while the call site
+     passes declaration order, so `Var(0)` resolved to the first argument rather
+     than the last. Reachable as of v0.8, which made
+     `case vcons(m: Nat, head: A, tail: Vec(A)(m))` writable.
 
    This step is inside the TCB for logical validity. It wants negative soundness
    tests of its own, and it should not be attempted as part of a release that is

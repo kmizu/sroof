@@ -113,7 +113,7 @@ python3 scripts/benchmark.py --runs 3 --thresholds benchmarks/thresholds.json --
 - compares workload medians against CI thresholds
 - writes a machine-readable report at `benchmarks/results.json`
 
-### v0.8 Release Notes
+### v0.9 Release Notes
 
 - changelog: [`CHANGELOG.md`](CHANGELOG.md)
 - release notes: [`RELEASE_NOTES_v0.8.md`](RELEASE_NOTES_v0.8.md)

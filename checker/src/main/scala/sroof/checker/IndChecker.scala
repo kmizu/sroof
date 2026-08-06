@@ -165,7 +165,10 @@ object IndChecker:
       case Term.Var(i) =>
         val abs = i - depth
         if abs < 0 then t  // bound by a binder inside rawTpe
-        else if abs < j then Subst.shift(depth, prevArgs(abs))
+        // `prevArgs` is in declaration order, but the elaborator prepends each
+        // argument name to the scope, so Var(0) is the *most recent* one.  The
+        // index therefore counts backwards from the end.
+        else if abs < j then Subst.shift(depth, prevArgs(j - 1 - abs))
         else if abs < j + m then
           val paramIdx = m - 1 - (abs - j)
           Subst.shift(depth, paramVals(paramIdx))
