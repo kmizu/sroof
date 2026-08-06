@@ -9,26 +9,79 @@ sroof is a dependently-typed theorem prover written in Scala 3. It aims to make 
 
 ---
 
-## Why sroof?
+## What sroof is
 
-Traditional proof assistants (Coq, Lean, Agda) haven't reached mainstream programmers — not just because dependent types are hard, but because **the syntax acts as an unnecessary barrier**.
-
-```coq
-(* Coq — readable without prior knowledge? *)
-Fixpoint plus (n m : nat) : nat :=
-  match n with
-  | O => m
-  | S n' => S (plus n' m)
-  end.
-
-Theorem plus_O_n : forall n : nat, 0 + n = n.
-Proof.
-  intros n. simpl. reflexivity.
-Qed.
-```
+**A Scala 3 verification system with an independent proof kernel.** You write
+ordinary `.scala` files; a standard Scala 3 compiler plugin proves the annotated
+theorems during compilation, and every proof is re-checked by a small trusted
+kernel.
 
 ```scala
-// sroof — readable if you know Scala/Java/Rust
+import sroof.annotation.*
+import sroof.lang.*
+
+@proofModule
+object Arithmetic:
+
+  enum Nat:
+    case Zero
+    case Succ(n: Nat)
+
+  import Nat.*
+
+  def plus(n: Nat, m: Nat): Nat =
+    n match
+      case Zero    => m
+      case Succ(k) => Succ(plus(k, m))
+
+  @theorem
+  def plusZeroRight(n: Nat): Proof =
+    prove(plus(n, Zero) === n)(
+      induction(n) {
+        case Zero    => trivial
+        case Succ(k) => simplify(ih(k))
+      }
+    )
+```
+
+Scala's own parser and typer process this file. `Nat` and `plus` are the real
+program — nothing is generated from proof terms, and the proofs erase to inert
+values at runtime. What the plugin adds is that `plusZeroRight` is proved at
+compile time. **If the theorem stopped holding, the file would stop compiling.**
+
+Worked examples of elementary mathematics live in `examples-scala3/`:
+[`Arithmetic.scala`](examples-scala3/src/main/scala/sroof/examples/scala3/Arithmetic.scala)
+proves the Peano addition and multiplication laws;
+[`Lists.scala`](examples-scala3/src/main/scala/sroof/examples/scala3/Lists.scala)
+proves the list laws over a generic list. Both are compiled with the plugin, so
+they are checked on every build.
+
+### Why this rather than a language of its own
+
+sroof began as a proof assistant with Scala-*like* syntax, on the premise that
+syntax is what keeps proof assistants away from working programmers. That solved
+the reading problem and left three others: a second language still needs its own
+IDE, build, and refactoring story; extraction runs the wrong way, so the verified
+artifact and the shipped artifact are different objects; and every language
+feature has to be re-invented for a language nobody writes anything else in.
+
+Embedding in Scala 3 inverts all three. The program *is* the Scala program, the
+Scala compiler does the parsing and typing, and sroof contributes exactly one
+thing: a proof obligation checked by an independent kernel.
+
+**This is a subset, not general Scala verification.** See
+[docs/scala3-frontend.md](docs/scala3-frontend.md) for exactly what is supported
+and what is rejected — and it *is* rejected, with a diagnostic, rather than
+approximated.
+
+### The `.sroof` language
+
+The original brace-syntax language is **still fully supported and not
+deprecated**. It has the mature toolchain: a CLI, a standard library, extraction
+to Scala 3, a native binary, and a VS Code extension. Several features reach it
+first, since both paths share one core and one kernel.
+
+```scala
 def plus(n: Nat, m: Nat): Nat {
   match n {
     case Nat.zero    => m
@@ -44,19 +97,7 @@ defspec plus_zero_right(n: Nat): plus(n, Nat.zero) = n {
 }
 ```
 
-> **Where sroof is heading.** The `.sroof` language above is the mature path and
-> is fully supported. Alongside it there is now a **Scala 3 frontend**: you write
-> ordinary `.scala` files, and a compiler plugin proves annotated theorems during
-> compilation. It currently supports a deliberately narrow subset — see
-> [Verifying ordinary Scala 3](#verifying-ordinary-scala-3-initial-subset).
-
-sroof's design principle: **keep only the essential complexity**.
-
-- **Learning cost = type theory concepts only** — syntax adds no extra burden
-- **Uniform brace `{ }` syntax** — familiar to anyone who knows Java, Rust, or Scala
-- **Full English tactic names** — `trivial`, `induction`, `simplify` (no cryptic abbreviations)
-- **Short aliases available** — `triv`, `simp`, `rw` (only self-evident abbreviations)
-- **Helpful error messages** — point to the next step, not internal jargon
+Its guide is the [Language Guide](#language-guide) below.
 
 ---
 
@@ -66,11 +107,10 @@ sroof's design principle: **keep only the essential complexity**.
 |--------------------|------------|--------------|-------------------------|
 | Implementation     | OCaml      | C++          | **Scala 3**             |
 | Type theory        | CIC        | CIC          | **Predicative CIC**     |
-| Syntax             | Math-first | Improved DSL | **Scala-like, braces**  |
-| Extraction target  | OCaml/Haskell | Lean itself | **Scala 3 (default)**  |
+| You write proofs in | a bespoke language | a bespoke language | **ordinary Scala 3**, or the `.sroof` language |
+| Verified at        | its own toolchain | its own toolchain | **`scalac`, as part of your build** |
+| Extraction target  | OCaml/Haskell | Lean itself | **Scala 3** (`.sroof` path) |
 | Native binary      | —          | —            | **Scala Native**        |
-| Reflexivity tactic | `rfl`      | `rfl`        | **`trivial`**           |
-| Intro tactic       | `intros`   | `intro`      | **`assume`**            |
 
 ---
 
@@ -171,7 +211,7 @@ python3 scripts/benchmark.py --runs 3 --thresholds benchmarks/thresholds.json --
 
 ---
 
-## Language Guide
+## Language Guide (the `.sroof` language)
 
 ### Inductive Types
 
@@ -255,7 +295,7 @@ defspec refl_intro(n: Nat): n = n {
 
 ---
 
-## Tactic Reference
+## Tactic Reference (the `.sroof` language)
 
 ### Closing a goal
 
@@ -349,70 +389,16 @@ def plus_zero_right(n: Nat): Unit = ()   // proof erased
 
 ---
 
-## Verifying ordinary Scala 3 (initial subset)
+## Supported Scala subset
 
-Instead of writing a `.sroof` file, you can write ordinary Scala and have the
-sroof compiler plugin prove theorems about it during compilation:
+See [docs/scala3-frontend.md](docs/scala3-frontend.md) for the exact supported
+and unsupported subsets, the translation rules, and the trust boundary.
 
-```scala
-import sroof.annotation.*
-import sroof.lang.*
-
-@proofModule
-object NatProofs:
-
-  enum Nat:
-    case Zero
-    case Succ(n: Nat)
-
-  import Nat.*
-
-  def plus(n: Nat, m: Nat): Nat =
-    n match
-      case Zero    => m
-      case Succ(k) => Succ(plus(k, m))
-
-  @theorem
-  def plusZeroRight(n: Nat): Proof =
-    prove(plus(n, Zero) === n)(
-      induction(n) {
-        case Zero    => trivial
-        case Succ(k) => simplify(ih(k))
-      }
-    )
-```
-
-Scala's own parser and typer process this file; `Nat` and `plus` stay the real
-program and are not regenerated. What the plugin adds is that `plusZeroRight` is
-proved at compile time and re-checked by the same trusted kernel the `.sroof`
-path uses. If the theorem stopped holding, the file would stop compiling.
-
-**This is a subset, not general Scala verification.** Today it covers: enums —
-**generic or not** — pure `def`s and theorems over them (curried and generic
-parameter lists included), self-recursion accepted by the termination checker,
-exhaustive matches, runs of immutable local `val`s, parameterless definitions,
-equality goals, and the tactics `trivial`, `induction`, `inductionGeneralizing`,
-`cases`, `ih`, `exactIh`, `have`, `simplify`, and `rewrite`. Everything else —
-`var`, effects, exceptions, casts, closures, GADTs, mutual recursion, external
-calls — is **rejected with a diagnostic**, not approximated.
-
-Worked examples of elementary mathematics live in `examples-scala3/`:
-[`Arithmetic.scala`](examples-scala3/src/main/scala/sroof/examples/scala3/Arithmetic.scala)
-proves the Peano addition and multiplication laws, and
-[`Lists.scala`](examples-scala3/src/main/scala/sroof/examples/scala3/Lists.scala)
-proves the list laws over a generic list. Both are compiled with the plugin, so
-they are checked on every build rather than merely illustrative.
-
-Verification only happens when the plugin is enabled by the build. The
-annotations alone do nothing:
+Enabling verification is a build decision — the annotations alone do nothing:
 
 ```scala
 Compile / scalacOptions += "-Xplugin:" + pluginClasspath   // see build.sbt
 ```
-
-Full details, including the exact supported and unsupported subsets and the
-translation rules, are in [docs/scala3-frontend.md](docs/scala3-frontend.md).
-A working example lives in `examples-scala3/`.
 
 ---
 

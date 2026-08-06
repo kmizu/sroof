@@ -9,34 +9,78 @@ sroof は Scala 3 で書かれた依存型定理証明系です。Scala・Java�
 
 ---
 
-## なぜ sroof？
+## sroof とは
 
-従来の証明支援系（Coq・Lean・Agda）が一般プログラマーに広まらなかった原因は、依存型の難しさだけではありません。**構文という UI が「プログラマーに使ってもらう気がない」設計**だったことも大きな原因です。
-
-```coq
-(* Coq — 初見で読める？ *)
-Fixpoint plus (n m : nat) : nat :=
-  match n with
-  | O => m
-  | S n' => S (plus n' m)
-  end.
-
-Theorem plus_O_n : forall n : nat, 0 + n = n.
-Proof.
-  intros n. simpl. reflexivity.
-Qed.
-```
+**独立した証明カーネルを持つ Scala 3 検証システム**です。書くのは普通の `.scala`
+ファイル。標準的な Scala 3 コンパイラプラグインが、注釈された定理をコンパイル時に
+証明し、そのすべてを小さな信頼済みカーネルが再検査します。
 
 ```scala
-// sroof — Scala/Java/Rust を知っていれば初見で読める
-def plus(n: Nat, m: Nat): Nat {
-  match n {
-    case Nat.zero    => m
-    case Nat.succ(k) => Nat.succ(plus(k, m))
-  }
-}
+import sroof.annotation.*
+import sroof.lang.*
 
-// defspec: 仕様（命題）に対して証明プログラムを与える
+@proofModule
+object Arithmetic:
+
+  enum Nat:
+    case Zero
+    case Succ(n: Nat)
+
+  import Nat.*
+
+  def plus(n: Nat, m: Nat): Nat =
+    n match
+      case Zero    => m
+      case Succ(k) => Succ(plus(k, m))
+
+  @theorem
+  def plusZeroRight(n: Nat): Proof =
+    prove(plus(n, Zero) === n)(
+      induction(n) {
+        case Zero    => trivial
+        case Succ(k) => simplify(ih(k))
+      }
+    )
+```
+
+このファイルは Scala 自身のパーサーと型検査器が処理します。`Nat` と `plus` は
+実プログラムそのもので、証明項から生成されるわけではありません（証明は実行時には
+不活性な値に消えます）。プラグインが加えるのは、`plusZeroRight` がコンパイル時に
+証明されるという一点です。**定理が成り立たなくなれば、そのファイルはコンパイルでき
+なくなります。**
+
+初等数学の証明例が `examples-scala3/` にあります。
+[`Arithmetic.scala`](examples-scala3/src/main/scala/sroof/examples/scala3/Arithmetic.scala)
+はペアノ流の加法・乗法の法則を、
+[`Lists.scala`](examples-scala3/src/main/scala/sroof/examples/scala3/Lists.scala)
+はジェネリックなリストの法則を証明します。どちらもプラグインを有効にして
+コンパイルされるので、ビルドのたびに検査されます。
+
+### なぜ独自言語ではなく Scala なのか
+
+sroof は当初、Scala **風**の構文を持つ証明支援系でした。「構文こそが証明支援系を
+現場のプログラマーから遠ざけている」という前提です。それは読みやすさの問題を解決
+しましたが、3つ残りました。第二の言語はやはり独自の IDE・ビルド・リファクタリングを
+必要とすること。extraction は向きが逆で、検証した成果物と出荷する成果物が別物に
+なること。そして、他に誰も何も書かない言語のために、あらゆる言語機能を再発明せねば
+ならないこと。
+
+Scala 3 への埋め込みは3つとも反転させます。プログラムが Scala プログラム**そのもの**
+であり、パースと型付けは Scala コンパイラが行い、sroof が足すのはただ一つ——
+独立したカーネルが検査する証明義務だけです。
+
+**これはサブセットであり、Scala 全般の検証ではありません。** 対応・非対応の正確な
+範囲は [docs/scala3-frontend.md](docs/scala3-frontend.md) にあります。範囲外は
+**近似せず、診断メッセージ付きで拒否**します。
+
+### `.sroof` 言語
+
+元のブレース構文の言語は**引き続き完全にサポートされており、非推奨ではありません**。
+成熟したツールチェーン（CLI、標準ライブラリ、Scala 3 への extraction、ネイティブ
+バイナリ、VS Code 拡張）はこちらにあります。両経路は一つのコアと一つのカーネルを
+共有するため、機能がこちらに先に入ることもあります。
+
+```scala
 defspec plus_zero_right(n: Nat): plus(n, Nat.zero) = n {
   by induction n {
     case zero      => trivial
@@ -45,27 +89,20 @@ defspec plus_zero_right(n: Nat): plus(n, Nat.zero) = n {
 }
 ```
 
-sroof が目指すのは「**本質的な難しさだけを残す**」こと。
-
-- **学習コスト = 型理論の概念のみ** — 構文は追加コストにしない
-- **ブレース `{ }` で統一** — Java/Rust/Scala を知る人が初見で読める
-- **フルスペルの英単語タクティク** — `trivial`, `induction`, `simplify`（暗号略語なし）
-- **省略形も提供** — `triv`, `induct`, `simp`（自明に略せるものだけ）
-- **丁寧なエラーメッセージ** — 内部用語ではなく、次のステップを示す
+構文の詳細は下の[構文ガイド](#構文ガイド)を参照してください。
 
 ---
 
 ## 比較表
 
-|                | Coq             | Lean 4         | sroof                        |
-|----------------|-----------------|----------------|-------------------------------|
-| 実装言語        | OCaml           | C++            | **Scala 3**                   |
-| 型理論          | CIC             | CIC            | **Predicative CIC**           |
-| 構文            | 数学者向け       | 改善されたが独自 | **Scala ライク、ブレース統一** |
-| Extraction 先   | OCaml / Haskell | Lean 自身       | **Scala 3（デフォルト）**     |
-| Native バイナリ | —               | —              | **Scala Native 対応**         |
-| 反射律タクティク | `rfl`           | `rfl`          | **`trivial`**                 |
-| 前提導入        | `intros`        | `intro`        | **`assume`**                  |
+|                     | Coq             | Lean 4         | sroof                                    |
+|---------------------|-----------------|----------------|------------------------------------------|
+| 実装言語             | OCaml           | C++            | **Scala 3**                              |
+| 型理論               | CIC             | CIC            | **Predicative CIC**                      |
+| 証明を書く言語        | 専用言語         | 専用言語        | **普通の Scala 3**、または `.sroof` 言語   |
+| 検証されるタイミング   | 専用ツールチェーン | 専用ツールチェーン | **`scalac`、つまり普段のビルドの一部**     |
+| Extraction 先        | OCaml / Haskell | Lean 自身       | **Scala 3**（`.sroof` 経路）              |
+| Native バイナリ      | —               | —              | **Scala Native 対応**                     |
 
 ---
 
@@ -139,7 +176,7 @@ OK: examples/nat.sroof — 1 inductive(s), 1 definition(s), 4 defspec(s)
 
 ---
 
-## 構文ガイド
+## 構文ガイド（`.sroof` 言語）
 
 ### 帰納型
 
@@ -223,7 +260,7 @@ defspec refl_intro(n: Nat): n = n {
 
 ---
 
-## タクティク一覧
+## タクティク一覧（`.sroof` 言語）
 
 ### ゴールを閉じる
 
@@ -317,71 +354,16 @@ def plus_zero_right(n: Nat): Unit = ()   // 証明は消去
 
 ---
 
-## 通常の Scala 3 を検証する（初期サブセット）
+## 対応する Scala サブセット
 
-`.sroof` ファイルを書く代わりに、**普通の Scala** を書いて、sroof コンパイラ
-プラグインにコンパイル時に定理を証明させることもできます。
+対応・非対応の正確な範囲、変換規則、信頼境界は
+[docs/scala3-frontend.md](docs/scala3-frontend.md) にあります。
 
-```scala
-import sroof.annotation.*
-import sroof.lang.*
-
-@proofModule
-object NatProofs:
-
-  enum Nat:
-    case Zero
-    case Succ(n: Nat)
-
-  import Nat.*
-
-  def plus(n: Nat, m: Nat): Nat =
-    n match
-      case Zero    => m
-      case Succ(k) => Succ(plus(k, m))
-
-  @theorem
-  def plusZeroRight(n: Nat): Proof =
-    prove(plus(n, Zero) === n)(
-      induction(n) {
-        case Zero    => trivial
-        case Succ(k) => simplify(ih(k))
-      }
-    )
-```
-
-このファイルは Scala 自身のパーサーと型検査器が処理します。`Nat` と `plus` は
-実プログラムのままで、sroof コアから再生成されるわけではありません。プラグインが
-加えるのは、`plusZeroRight` がコンパイル時に証明され、`.sroof` 経路と同じ信頼済み
-カーネルで再検査されるという一点だけです。定理が成り立たなくなれば、そのファイルは
-コンパイルできなくなります。
-
-**これはサブセットであり、Scala 全般の検証ではありません。** 現時点で対応して
-いるのは、enum（**ジェネリックなものも含む**）、その上の純粋な `def` と定理
-（カリー化・型パラメータ付きを含む）、停止性検査を通る自己再帰、網羅的な match、
-不変なローカル `val` の連続、引数なし定義、等式ゴール、そして `trivial` /
-`induction` / `inductionGeneralizing` / `cases` / `ih` / `exactIh` / `have` /
-`simplify` / `rewrite` のタクティクです。それ以外（`var`、副作用、例外、キャスト、
-クロージャ、部分適用、GADT、相互再帰、モジュール外呼び出しなど）は
-**近似せずに診断メッセージ付きで拒否**します。
-
-初等数学の証明例が `examples-scala3/` にあります。
-[`Arithmetic.scala`](examples-scala3/src/main/scala/sroof/examples/scala3/Arithmetic.scala)
-はペアノ流の加法・乗法の法則を、
-[`Lists.scala`](examples-scala3/src/main/scala/sroof/examples/scala3/Lists.scala)
-はジェネリックなリストに対する法則を証明します。どちらもプラグインを有効にして
-コンパイルされるので、ビルドのたびに検査されます（飾りではありません）。
-
-検証はビルドがプラグインを有効にしたときにだけ行われます。アノテーション単体では
-何も起こりません。
+検証を有効にするのはビルドの判断です（アノテーション単体では何も起きません）。
 
 ```scala
 Compile / scalacOptions += "-Xplugin:" + pluginClasspath   // build.sbt を参照
 ```
-
-対応・非対応サブセットの詳細と変換規則は
-[docs/scala3-frontend.md](docs/scala3-frontend.md) にあります。動く例は
-`examples-scala3/` です。
 
 ---
 
