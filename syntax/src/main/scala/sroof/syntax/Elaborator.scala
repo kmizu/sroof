@@ -233,14 +233,47 @@ object Elaborator:
     // nameEnv grows left-to-right: params/indices first, then each arg's name is prepended.
     val allParamNames = (params ++ indices).map(_.name).reverse
     val ctorDefs = ctors.map { ctor =>
-      val (_, argTpes) = ctor.argParams.foldLeft((allParamNames, List.empty[Term])) {
+      val (finalNameEnv, argTpes) = ctor.argParams.foldLeft((allParamNames, List.empty[Term])) {
         case ((nameEnv, acc), p) =>
           val tpe = elabType(p.tpe, envWithSelf, nameEnv).getOrElse(Term.Meta(-1))
           (p.name :: nameEnv, acc :+ tpe)
       }
-      CtorDef(ctor.name, argTpes)
+      // The declared return type supplies the constructor's index values, e.g.
+      // `case vcons(m: Nat, ...): Vec(A)(Nat.succ(m))` gives [Nat.succ(m)].
+      // They are elaborated in the scope the *last* argument type sees, so they
+      // may mention the constructor's own arguments.
+      val retIdx = elabRetIndices(
+        ctor.retTpe, name, elabParams.length, elabIndices.length, envWithSelf, finalNameEnv)
+      CtorDef(ctor.name, argTpes, retIdx)
     }
     IndDef(name, elabParams, ctorDefs, 0, elabIndices)
+
+  /** The index values in a constructor's declared return type.
+   *
+   *  Returns `Nil` unless the return type is an application of the inductive
+   *  being declared, carrying exactly one argument per parameter *and* index.
+   *  A bare `Vec` — which is all the parser could express before indices were
+   *  supported — therefore keeps its previous meaning of "no index information",
+   *  so existing declarations are unaffected.
+   */
+  private def elabRetIndices(
+    retTpe:     SType,
+    indName:    String,
+    paramCount: Int,
+    indexCount: Int,
+    env:        GlobalEnv,
+    nameEnv:    NameEnv,
+  ): List[Term] =
+    if indexCount == 0 then Nil
+    else
+      def peel(t: SType, acc: List[SType]): (SType, List[SType]) = t match
+        case SType.STApp(fn, arg) => peel(fn, arg :: acc)
+        case head                 => (head, acc)
+      val (head, args) = peel(retTpe, Nil)
+      head match
+        case SType.STVar(n) if n == indName && args.length == paramCount + indexCount =>
+          args.drop(paramCount).map(a => elabType(a, env, nameEnv).getOrElse(Term.Meta(-1)))
+        case _ => Nil
 
   // ---- Def elaboration ----
 

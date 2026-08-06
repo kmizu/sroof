@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.8.0] — 2026-08-07
+
+### Changed
+- Version bump for the v0.8 release. The extension is unchanged.
+
 ## [0.7.0] — 2026-08-06
 
 ### Changed

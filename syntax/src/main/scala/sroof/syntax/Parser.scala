@@ -169,13 +169,18 @@ object Parser:
       case other             => SType.STExpr(other)
     }
 
+  /** A type name applied to zero or more argument groups.
+   *
+   *  Several groups are accepted so that an indexed family can be written the
+   *  way it is declared: `Vec(A)(Nat.zero)` for `inductive Vec(A: Type)(n: Nat)`.
+   *  The groups are flattened, since `Vec(A)(n)` and `Vec(A, n)` denote the same
+   *  applied type — which of the arguments are parameters and which are indices
+   *  is decided by the inductive's declaration, not by where the parentheses are.
+   */
   private lazy val typeVarOrApp: Parsley[SType] =
     identifier.flatMap { name =>
-      option(parens(sepBy1(typeOrExprArg, op(",")))).map {
-        case Some(args) =>
-          args.foldLeft(SType.STVar(name): SType)((fn, arg) => SType.STApp(fn, arg))
-        case None =>
-          SType.STVar(name)
+      many(parens(sepBy1(typeOrExprArg, op(",")))).map { groups =>
+        groups.flatten.foldLeft(SType.STVar(name): SType)((fn, arg) => SType.STApp(fn, arg))
       }
     }
 

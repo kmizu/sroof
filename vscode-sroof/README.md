@@ -71,7 +71,7 @@ npm install
 npm run compile
 # Install vsce if needed: npm install -g @vscode/vsce
 vsce package
-code --install-extension vscode-sroof-0.7.0.vsix
+code --install-extension vscode-sroof-0.8.0.vsix
 ```
 
 ### Development (F5)

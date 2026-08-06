@@ -113,12 +113,20 @@ python3 scripts/benchmark.py --runs 3 --thresholds benchmarks/thresholds.json --
 - compares workload medians against CI thresholds
 - writes a machine-readable report at `benchmarks/results.json`
 
-### v0.7 Release Notes
+### v0.8 Release Notes
 
 - changelog: [`CHANGELOG.md`](CHANGELOG.md)
-- release notes: [`RELEASE_NOTES_v0.7.md`](RELEASE_NOTES_v0.7.md)
-- release checklist: [`RELEASE_CHECKLIST_v0.7.md`](RELEASE_CHECKLIST_v0.7.md)
-- previous releases: [`RELEASE_NOTES_v0.6.md`](RELEASE_NOTES_v0.6.md), [`RELEASE_NOTES_v0.5.md`](RELEASE_NOTES_v0.5.md), [`RELEASE_NOTES_v0.4.md`](RELEASE_NOTES_v0.4.md), [`RELEASE_NOTES_v0.3.md`](RELEASE_NOTES_v0.3.md)
+- release notes: [`RELEASE_NOTES_v0.8.md`](RELEASE_NOTES_v0.8.md)
+- release checklist: [`RELEASE_CHECKLIST_v0.8.md`](RELEASE_CHECKLIST_v0.8.md)
+- publishing setup: [`docs/publishing.md`](docs/publishing.md)
+- previous releases: [`RELEASE_NOTES_v0.7.md`](RELEASE_NOTES_v0.7.md), [`RELEASE_NOTES_v0.6.md`](RELEASE_NOTES_v0.6.md), [`RELEASE_NOTES_v0.5.md`](RELEASE_NOTES_v0.5.md), [`RELEASE_NOTES_v0.4.md`](RELEASE_NOTES_v0.4.md)
+
+### Migration Notes (v0.7 -> v0.8)
+
+- **Nothing breaks.** All 590 tests pass unchanged.
+- The parser accepts strictly more: a constructor's return type may carry index
+  arguments, as in `case vnil: Vec(A)(Nat.zero)`. Indices are recorded but not
+  yet read by the checker — see [`docs/indexed-families.md`](docs/indexed-families.md).
 
 ### Migration Notes (v0.6 -> v0.7)
 

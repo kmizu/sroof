@@ -87,12 +87,20 @@ sbt "cli/run check examples/nat.sroof"
 OK: examples/nat.sroof — 1 inductive(s), 1 definition(s), 4 defspec(s)
 ```
 
-### v0.7 リリース情報
+### v0.8 リリース情報
 
 - 変更履歴: [`CHANGELOG.md`](CHANGELOG.md)
-- リリースノート: [`RELEASE_NOTES_v0.7.md`](RELEASE_NOTES_v0.7.md)
-- リリースチェックリスト: [`RELEASE_CHECKLIST_v0.7.md`](RELEASE_CHECKLIST_v0.7.md)
+- リリースノート: [`RELEASE_NOTES_v0.8.md`](RELEASE_NOTES_v0.8.md)
+- リリースチェックリスト: [`RELEASE_CHECKLIST_v0.8.md`](RELEASE_CHECKLIST_v0.8.md)
+- 公開手順: [`docs/publishing.md`](docs/publishing.md)
 - 過去のリリース: [`RELEASE_NOTES_v0.5.md`](RELEASE_NOTES_v0.5.md), [`RELEASE_NOTES_v0.4.md`](RELEASE_NOTES_v0.4.md), [`RELEASE_NOTES_v0.3.md`](RELEASE_NOTES_v0.3.md)
+
+### 移行メモ（v0.7 → v0.8）
+
+- **壊れるものはありません。** 590件のテストがそのまま通ります。
+- パーサが受理する範囲が広がりました。コンストラクタの戻り型に添字を書けます
+  （`case vnil: Vec(A)(Nat.zero)`）。ただし添字は記録されるだけで、checker はまだ
+  読みません。詳細は [`docs/indexed-families.md`](docs/indexed-families.md)。
 
 ### 移行メモ（v0.6 → v0.7）
 

@@ -1,10 +1,44 @@
 # Changelog
 
-## Unreleased
+## [0.8.0] - 2026-08-07
 
-Groundwork for the two items v0.7 left outstanding. No behaviour changes.
+Groundwork for the two items v0.7 left outstanding: publishing is ready but for
+credentials, and indexed families now parse and are recorded.
 
-### Added
+### Added — indexed families, steps 1 and 2
+- **A constructor's return type may carry index arguments.**
+  `case vnil: Vec(A)(Nat.zero)` was a parse error until now: `typeVarOrApp`
+  accepted exactly one application group. It accepts any number and flattens
+  them, so `Vec(A)(n)` and `Vec(A, n)` denote the same applied type — which
+  arguments are parameters and which are indices is decided by the declaration,
+  not by where the parentheses fall.
+- **`CtorDef.retIndices` is populated.** It was a field nothing wrote. The
+  elaborator now fills it from the declared return type, in the scope the last
+  argument type sees, so an index may mention the constructor's own arguments.
+
+  Both are backward compatible: a return type that is not an application of the
+  inductive being declared, or that has the wrong argument count, yields `Nil` —
+  exactly the previous behaviour. Every existing declaration means what it meant,
+  and all 590 tests pass unchanged.
+
+  **Indices still carry no information.** Steps 1 and 2 record them; the checker
+  does not yet read them. `Vec.nil` and `Vec.cons(...)` still have the same type.
+  See below.
+
+### Attempted and reverted — indexed families, step 3
+`IndChecker.inferCon` was extended to apply a constructor's `retIndices`, which
+is what would finally make an index real. It passed all 590 tests — the change is
+inert while `retIndices` is empty, which it is everywhere today — but
+`#check Vec.vcons(...)` failed with `Unbound De Bruijn index 2`.
+
+It was reverted rather than shipped. `inferCon` is inside the TCB for logical
+validity, and an unvalidated change there is exactly what this project has
+declined to ship in v0.5 and v0.6. `docs/indexed-families.md` records the two
+obstacles the attempt uncovered — parameter inference is a documented heuristic
+with nothing to work from for a nullary constructor, and `instantiateArgType`'s
+ordering doc disagrees with its call site — so the next attempt starts informed.
+
+### Added — publishing
 - **Maven Central publishing is configured.** POM metadata (licence, SCM,
   developers, homepage — all of which Central rejects an artifact for missing),
   Sonatype wiring, `sbt-sonatype` and `sbt-pgp`, credentials read from the

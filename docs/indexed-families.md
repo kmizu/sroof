@@ -109,19 +109,44 @@ is dictated by each constructor's declaration.
 
 Each step is useful on its own and testable before the next begins.
 
-1. **Parser.** Let a constructor's return type carry index arguments —
-   `case vnil: Vec(A)(Nat.zero)`. `ctorDecl` needs a return-type parser that
-   accepts repeated application groups, not `typeExpr`.
+1. **Parser.** ✅ **Done in v0.8.** `typeVarOrApp` accepted exactly one
+   application group, so `Vec(A)(Nat.zero)` was a parse error. It now accepts
+   any number of groups and flattens them: `Vec(A)(n)` and `Vec(A, n)` denote the
+   same applied type, and which arguments are parameters and which are indices is
+   decided by the declaration rather than by where the parentheses fall.
 
-2. **Elaborator.** Populate `CtorDef.retIndices` from that return type, in the
-   same scope the argument types use. Reject a return type whose head is not the
-   inductive being declared, and one whose index count does not match
-   `IndDef.indices`.
+2. **Elaborator.** ✅ **Done in v0.8.** `CtorDef.retIndices` is populated from the
+   declared return type, elaborated in the scope the *last* argument type sees so
+   it may mention the constructor's own arguments. A return type that is not an
+   application of the inductive being declared, or that carries the wrong number
+   of arguments, yields `Nil` — which is exactly the previous behaviour, so every
+   declaration written before this still means what it meant.
 
-3. **Checker.** `IndChecker.inferCon` must produce the *applied* type
-   `Vec A <retIndices>` rather than the bare head, and `checkMat` must refine the
-   expected type per branch. Until this lands, indices still carry no
-   information — steps 1 and 2 alone change nothing observable.
+3. **Checker.** ⚠️ **Attempted in v0.8 and reverted.** `IndChecker.inferCon` must
+   produce the *applied* type `Vec A <retIndices>` rather than the bare head, and
+   `checkMat` must refine the expected type per branch. Until this lands, indices
+   still carry no information: steps 1 and 2 record them, and nothing reads them.
+
+   The v0.8 attempt substituted the constructor's arguments and parameters into
+   `retIndices` and applied the result. It passed all 590 existing tests — the
+   change is inert when `retIndices` is empty, which it is everywhere today — but
+   `#check Vec.vcons(...)` failed with `Unbound De Bruijn index 2 (env size 0)`.
+   Two things to know before the next attempt:
+
+   - **Parameter inference is a heuristic.** `extractParamValsFromArgs` is
+     documented as working "for m=0 and simple m=1 cases", and it has no
+     arguments to work from for a nullary constructor like `vnil`. An index-aware
+     `inferCon` cannot assume `paramVals` has the right length.
+   - **`instantiateArgType`'s ordering doc and its call site disagree.** The
+     comment says `Var(0)` is the *most recent* previous argument, while
+     `checkArgsDependent` passes `args.take(j)` in declaration order. That is
+     latent today because few constructor argument types reference earlier
+     arguments; an index expression like `Nat.succ(m)` references them routinely,
+     so this has to be settled first.
+
+   This step is inside the TCB for logical validity. It wants negative soundness
+   tests of its own, and it should not be attempted as part of a release that is
+   also doing other things.
 
 4. **Tactic engine.** `Builtins.buildFixCase` gains index abstraction and
    per-branch specialisation, mirroring `inductionWithIHGeneralized`.
