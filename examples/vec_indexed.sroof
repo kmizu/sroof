@@ -39,6 +39,31 @@ defspec two_elements_have_length_two: Vec(Nat)(Nat.succ(Nat.succ(Nat.zero))) {
     Vec.vcons(Nat.zero, Nat.zero, Vec.vnil))
 }
 
+// ---- Reasoning about an arbitrary vector ----
+//
+// `vlen` reads the length back off the constructor.  Since v0.12 an indexed
+// family may appear as a parameter type, so `v: Vec(A)(n)` is legal here.
+def vlen(A: Type, n: Nat, v: Vec(A)(n)): Nat {
+  match v {
+    case Vec.vnil           => Nat.zero
+    case Vec.vcons(m, h, t) => Nat.succ(m)
+  }
+}
+
+// The first theorem in this file about *every* vector rather than a particular
+// one — and the first that needs the index to mean something.
+//
+// It works because each branch learns its index: matching `vnil` out of a
+// `Vec(A)(n)` tells you `n` is `Nat.zero` there, so the goal becomes
+// `vlen(A, zero, vnil) = zero` rather than the unprovable `... = n`.
+// Likewise the `vcons` branch is asked for `succ(m) = succ(m)`.
+defspec vlen_matches_index(A: Type, n: Nat, v: Vec(A)(n)): vlen(A, n, v) = n {
+  by cases v {
+    case vnil        => trivial
+    case vcons m h t => trivial
+  }
+}
+
 // Each of the following is a type error.  They are kept here as comments
 // because an example file has to keep checking; `cli/.../IndexedFamilySuite.scala`
 // asserts that every one of them is rejected.
@@ -54,7 +79,11 @@ defspec two_elements_have_length_two: Vec(Nat)(Nat.succ(Nat.succ(Nat.zero))) {
 //
 // Before v0.10.0 both of them checked successfully.
 
-// What is NOT yet supported: induction over an indexed family.  A proof about
-// every `Vec(A)(n)` needs the motive to abstract over `n` and each branch to
-// specialise it, which the tactic engine does not do yet.  So this file states
-// facts about concrete vectors only.  See step 4 in docs/indexed-families.md.
+// What is NOT yet supported: induction with an induction *hypothesis*.  Case
+// analysis works (above), because a plain match needs no recursion.  A recursive
+// proof needs `_rec` to accept the tail, whose index differs from the scrutinee's
+// — so the `Fix` has to bind the index before the vector it describes, and today
+// it binds them the other way round.  See step 4 in docs/indexed-families.md.
+//
+// Concretely: this file can prove `vlen(A, n, v) = n` for the non-recursive
+// `vlen` above, but not for one defined by recursion on the tail.

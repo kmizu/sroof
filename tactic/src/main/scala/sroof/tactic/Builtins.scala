@@ -654,9 +654,28 @@ object Builtins:
     // (The args list is ordered left-to-right; the first arg is the outermost = Var(n-1).)
     val ctorArgVars = (0 until n).toList.map(i => Term.Var(n - 1 - i))
     val ctorTerm    = Term.Con(ctorDef.name, indDef.name, ctorArgVars)
+    // For an indexed family the branch also learns what the index *is*: matching
+    // `vnil` out of a `Vec A n` means `n` is `zero` there.  The checker applies the
+    // same refinement when it validates the resulting `Mat`, so the sub-goal handed
+    // to the user has to agree with it or the proof would be built against a
+    // proposition the kernel never asks for.
+    //
+    // The scrutinee's parameters are stated in `ctx`; the branch context is `ctx`
+    // with the induction variable dropped and n constructor binders added, which is
+    // exactly the coordinate change `specializeGoal` performs.  (The induction
+    // variable cannot occur in its own type, so reusing it here is safe.)
+    // `Context.lookup` shifts the stored type into `ctx`'s own coordinates; the raw
+    // entry is stated in the context *outside* itself and would be off by varIdx+1.
+    val varTpeOpt   = ctx.lookup(varIdx)
+    val idxSubst    = varTpeOpt.map { varTpe =>
+      val scrutSpine = IndChecker.extractIndParams(varTpe)
+      IndChecker.indexRefinement(
+        indDef, ctorDef, scrutSpine,
+        scrutSpine.map(t => specializeGoal(t, varIdx, ctorTerm, n)), n)
+    }.getOrElse(Map.empty)
     // Specialize the goal: replace Var(varIdx) with ctorTerm, adjusting all other variables
     // correctly for the n new ctor-arg bindings added to the context.
-    val specialGoal = specializeGoal(goal, varIdx, ctorTerm, n)
+    val specialGoal = specializeGoal(goal, varIdx, ctorTerm, n, idxSubst)
     // Build the extended context: ctx_minus + ctor args (foldLeft prepends each, so last arg = Var(0))
     // (Names are "_" here since generateCtorCase is called without user-provided binding names)
     val extCtx = ctorDef.argTpes.foldLeft(ctx_minus) { (c, argTpe) =>
@@ -701,14 +720,25 @@ object Builtins:
    *    - Var(i) where (i - depth) > varIdx   : these are "below" varIdx; net shift = n - 1
    *                                             (+n for new ctor bindings, -1 for removed var)
    */
-  private def specializeGoal(goal: Term, varIdx: Int, ctorTerm: Term, n: Int): Term =
+  private def specializeGoal(
+    goal:     Term,
+    varIdx:   Int,
+    ctorTerm: Term,
+    n:        Int,
+    idxSubst: Map[Int, Term] = Map.empty,
+  ): Term =
     def go(depth: Int, t: Term): Term = t match
       case Term.Var(i) =>
         val absI = i - depth
         if absI < 0 then Term.Var(i)                          // bound inside depth binders
         else if absI == varIdx then Subst.shift(depth, ctorTerm) // replace induction var
-        else if absI < varIdx then Term.Var(i + n)             // vars above varIdx: shift +n
-        else Term.Var(i - 1 + n)                               // vars below varIdx: shift +(n-1)
+        else idxSubst.get(absI) match
+          // An index this constructor determines.  The replacement is already
+          // stated in the branch context, so it only needs the depth shift.
+          case Some(idxVal) => Subst.shift(depth, idxVal)
+          case None =>
+            if absI < varIdx then Term.Var(i + n)              // vars above varIdx: shift +n
+            else Term.Var(i - 1 + n)                           // vars below varIdx: shift +(n-1)
       case Term.App(f, a)          => Term.App(go(depth, f), go(depth, a))
       case Term.Lam(x, tp, b)     => Term.Lam(x, go(depth, tp), go(depth + 1, b))
       case Term.Pi(x, d, c)       => Term.Pi(x, go(depth, d), go(depth + 1, c))

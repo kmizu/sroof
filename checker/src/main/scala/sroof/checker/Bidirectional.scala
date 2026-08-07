@@ -147,11 +147,21 @@ object Bidirectional:
       env.lookupInd(name) match
         case Some(indDef) =>
           // Parameterized inductives return a Pi type: List : Type → Type, etc.
+          //
+          // An indexed family also takes its indices before it is a type at all:
+          // `Vec : Type → Nat → Type`.  Without this, `Vec(A)(n)` in a binder
+          // position fails with "Expected function type, got Type", so a theorem
+          // could state an index but no definition could take one as an argument.
+          //
+          // Gated on `isIndexed` — a family that declares indices but whose
+          // constructors do not state them (the pre-v0.8 form, which is what
+          // `stdlib/Vec.sroof` still uses) keeps the shorter arity.  Widening it
+          // there would reject `tail: Vec(A)`, which is how those files are written.
+          val binders =
+            if IndChecker.isIndexedFamily(indDef) then indDef.params ++ indDef.indices
+            else indDef.params
           val base: Term = Term.Uni(indDef.universe)
-          val withParams = indDef.params.foldRight(base) { (p, acc) =>
-            Term.Pi(p.name, p.tpe, acc)
-          }
-          Right(withParams)
+          Right(binders.foldRight(base) { (p, acc) => Term.Pi(p.name, p.tpe, acc) })
         case None => Right(Term.Uni(0))  // fallback for anonymous/unknown Ind (e.g. Eq)
 
     case Term.Mat(scrutinee, cases, returnTpe) =>

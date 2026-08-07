@@ -178,6 +178,8 @@ object IndChecker:
    *  state their indices also means a half-annotated declaration is treated as
    *  un-indexed rather than silently deriving `Nil` for the annotated ones.
    */
+  def isIndexedFamily(indDef: IndDef): Boolean = isIndexed(indDef)
+
   private def isIndexed(indDef: IndDef): Boolean =
     indDef.indices.nonEmpty &&
     indDef.ctors.forall(_.retIndices.length == indDef.indices.length)
@@ -480,7 +482,12 @@ object IndChecker:
               //   replace Var(scrutineeIdx) with ctorApp, shift all other free vars by n.
               // If scrutinee is not a Var, fall back to plain shift (conservative).
               val specializedRetTpe = scrutinee match
-                case Term.Var(k) => specializeForCase(returnTpe, k, ctorApp, n)
+                case Term.Var(k) =>
+                  // The branch context here keeps the scrutinee's binding, so the
+                  // spine simply moves past the n new constructor binders.
+                  specializeForCase(returnTpe, k, ctorApp, n,
+                    indexRefinement(indDef, ctorDef, paramVals,
+                                    paramVals.map(Subst.shift(n, _)), n))
                 case _           => Subst.shift(n, returnTpe)
               Bidirectional.check(extCtx, mc.body, specializedRetTpe)
       }
@@ -495,14 +502,74 @@ object IndChecker:
    *  Unlike `specializeGoal` in Builtins, this does NOT remove the old binding;
    *  it only shifts other free variables up by `n`.
    */
-  private def specializeForCase(t: Term, varIdx: Int, ctorApp: Term, n: Int): Term =
+  /** What a match branch learns about the family's indices, as a substitution on
+   *  the context variables the scrutinee's type uses as its index arguments.
+   *
+   *  In the branch for constructor `c`, the scrutinee *is* `c(args)`, whose type is
+   *  `Ind params c-indices`.  It is also the scrutinee's type `Ind params n`.  So
+   *  within that branch `n ≡ c-indices`, and the return type may be refined
+   *  accordingly.  This is the ordinary dependent-match rule: refining is the same
+   *  as abstracting the return type into a motive over the index and applying that
+   *  motive at each constructor's index.
+   *
+   *  Deliberately narrow — an index argument is refined only when it is a plain
+   *  context **variable**:
+   *
+   *  - `v : Vec A n`         → `n := zero` in the `vnil` branch.
+   *  - `v : Vec A (succ k)`  → nothing. Deciding that `vnil` is unreachable, or
+   *    that `succ k ≡ succ m` gives `k ≡ m`, needs real unification. Skipping
+   *    leaves the branch stated at the unrefined type, which is strictly harder to
+   *    prove — a false negative, never an unsound acceptance.
+   *
+   *  Returns an empty map for every declaration that is not a fully indexed family,
+   *  which restores the pre-v0.12 behaviour exactly.
+   *
+  *  `scrutSpine` is read in the context the scrutinee lives in — that is where the
+  *  index variables being refined are named. `spineInBranch` carries the same values
+  *  moved into the branch context, which differs between callers: the checker keeps
+  *  the scrutinee's binding and the `induction`/`cases` tactics drop it. Keeping the
+  *  translation at the call site is what lets one rule serve both.
+  */
+  def indexRefinement(
+    indDef:        IndDef,
+    ctorDef:       CtorDef,
+    scrutSpine:    List[Term],
+    spineInBranch: List[Term],
+    n:             Int,
+  ): Map[Int, Term] =
+    val p = indDef.params.length
+    val q = indDef.indices.length
+    if !isIndexed(indDef) || scrutSpine.length != p + q then Map.empty
+    else
+      // The ctor args as they stand in the branch context: arg j is Var(n-1-j).
+      // `retIndices` numbers them the other way round (Var(0) = most recent), so the
+      // two conventions cancel and the ctor-argument half needs no adjustment.
+      val ctorArgVars = (0 until n).toList.map(j => Term.Var(n - 1 - j))
+      ctorIndexValues(indDef, ctorDef, ctorArgVars, spineInBranch) match
+        case Left(_)        => Map.empty   // malformed declaration; rejected elsewhere
+        case Right(idxVals) =>
+          scrutSpine.drop(p).zip(idxVals).collect {
+            case (Term.Var(k), idxVal) => k -> idxVal
+          }.toMap
+
+  private def specializeForCase(
+    t:        Term,
+    varIdx:   Int,
+    ctorApp:  Term,
+    n:        Int,
+    idxSubst: Map[Int, Term] = Map.empty,
+  ): Term =
     import sroof.core.{Param, Ctor}
     def go(depth: Int, t: Term): Term = t match
       case Term.Var(i) =>
         val absI = i - depth
         if absI < 0 then Term.Var(i)                           // bound inside depth binders
         else if absI == varIdx then Subst.shift(depth, ctorApp) // replace scrutinee
-        else Term.Var(i + n)                                    // other free vars: shift +n
+        else idxSubst.get(absI) match
+          // An index variable this constructor determines.  The replacement is
+          // already stated in the extended context, so it only needs the depth shift.
+          case Some(idxVal) => Subst.shift(depth, idxVal)
+          case None         => Term.Var(i + n)                  // other free vars: shift +n
       case Term.App(f, a)          => Term.App(go(depth, f), go(depth, a))
       case Term.Lam(x, tp, b)     => Term.Lam(x, go(depth, tp), go(depth + 1, b))
       case Term.Pi(x, d, c)       => Term.Pi(x, go(depth, d), go(depth + 1, c))

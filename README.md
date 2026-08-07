@@ -159,6 +159,19 @@ python3 scripts/benchmark.py --runs 3 --thresholds benchmarks/thresholds.json --
 - published releases: <https://github.com/kmizu/sroof/releases>
 - publishing setup: [`docs/publishing.md`](docs/publishing.md)
 
+### Migration Notes (v0.11 -> v0.12)
+
+- **Nothing breaks.** All 605 pre-existing tests pass unchanged; 611 in total.
+- `cases` and `induction`-without-an-IH over an indexed family now refine the
+  index per branch, so proofs about an arbitrary `Vec(A)(n)` are possible. See
+  [`examples/vec_indexed.sroof`](examples/vec_indexed.sroof).
+- An indexed family may now be used as a parameter type: `def f(A: Type, n: Nat,
+  v: Vec(A)(n))`. This previously failed with `Expected function type, got Type`.
+- Both changes are gated on the family stating an index on every constructor.
+  A phantom-index declaration such as `stdlib/Vec.sroof` is untouched.
+- Still unsupported: induction with an induction hypothesis over an indexed
+  family. See [`docs/indexed-families.md`](docs/indexed-families.md).
+
 ### Migration Notes (v0.10 -> v0.11)
 
 - **Nothing breaks.** 605 tests, no behaviour change to what is accepted or

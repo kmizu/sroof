@@ -134,6 +134,103 @@ class IndexedFamilySuite extends FunSuite:
     val result = Main.processSource(src, path)
     assert(result.isRight, s"example should check successfully: $path -> $result")
 
+  // ---- case analysis refines the index (v0.12) ----
+
+  /** `vlen` reads the length off the constructor, so no recursion and no IH. */
+  private val vlenDef =
+    """|def vlen(A: Type, n: Nat, v: Vec(A)(n)): Nat {
+       |  match v {
+       |    case Vec.vnil           => Nat.zero
+       |    case Vec.vcons(m, h, t) => Nat.succ(m)
+       |  }
+       |}
+       |""".stripMargin
+
+  test("cases on a Vec proves the length matches the index"):
+    // Only provable if each branch learns its index: `vnil` must be asked for
+    // `vlen A zero vnil = zero`, not `vlen A n vnil = n`.
+    val r = Main.processSource(
+      vec + vlenDef +
+        """|defspec vlen_matches(A: Type, n: Nat, v: Vec(A)(n)): vlen(A, n, v) = n {
+           |  by cases v { case vnil => trivial  case vcons m h t => trivial }
+           |}
+           |""".stripMargin,
+      "vlen.sroof",
+    )
+    assert(r.isRight, s"expected acceptance, got: $r")
+
+  test("induction without an IH refines the index the same way"):
+    // `induction` with no case requesting an IH goes through the same plain `Mat`
+    // path as `cases`, so it must agree.
+    val r = Main.processSource(
+      vec + vlenDef +
+        """|defspec vlen_matches2(A: Type, n: Nat, v: Vec(A)(n)): vlen(A, n, v) = n {
+           |  by induction v { case vnil => trivial  case vcons m h t => trivial }
+           |}
+           |""".stripMargin,
+      "vlen2.sroof",
+    )
+    assert(r.isRight, s"expected acceptance, got: $r")
+
+  test("SOUNDNESS: refinement does not make a false claim provable"):
+    // The `vnil` branch really does become `zero = zero` and closes. The point is
+    // that `vcons` becomes `succ m = zero` and does not — refining one branch must
+    // not excuse the others.
+    val r = Main.processSource(
+      vec +
+        """|defspec bad(A: Type, n: Nat, v: Vec(A)(n)): n = Nat.zero {
+           |  by cases v { case vnil => trivial  case vcons m h t => trivial }
+           |}
+           |""".stripMargin,
+      "bad.sroof",
+    )
+    assert(r.isLeft, s"`n = zero` is false and must be rejected, got: $r")
+    assert(
+      r.swap.toOption.get.contains("succ"),
+      s"it must fail in the vcons branch, on `succ m = zero`; got: ${r.swap.toOption.get}",
+    )
+
+  test("SOUNDNESS: an absurd equation is not provable by matching"):
+    val r = Main.processSource(
+      vec +
+        """|defspec bad(A: Type, n: Nat, v: Vec(A)(n)): Nat.zero = Nat.succ(Nat.zero) {
+           |  by cases v { case vnil => trivial  case vcons m h t => trivial }
+           |}
+           |""".stripMargin,
+      "absurd.sroof",
+    )
+    assert(r.isLeft, s"`zero = succ zero` must be rejected, got: $r")
+
+  test("a concrete index is left alone rather than unified"):
+    // `v : Vec A zero` gives the branches nothing to substitute — refining needs a
+    // variable. Deciding `vnil` is the only reachable branch would need real
+    // unification, so the goal stays unrefined and the proof fails. A false
+    // negative, deliberately: the alternative is guessing inside the TCB.
+    val r = Main.processSource(
+      vec + vlenDef +
+        """|defspec concrete(A: Type, v: Vec(A)(Nat.zero)): vlen(A, Nat.zero, v) = Nat.zero {
+           |  by cases v { case vnil => trivial  case vcons m h t => trivial }
+           |}
+           |""".stripMargin,
+      "concrete.sroof",
+    )
+    assert(r.isLeft, s"expected the documented false negative, got: $r")
+
+  test("an indexed family may be used as a parameter type"):
+    // `Bidirectional.infer` folded `Ind` over parameters only, so `Vec(A)(n)` in a
+    // binder position failed with "Expected function type, got Type" — a theorem
+    // could state an index but no definition could take one.
+    // The proposition must be kernel-checked for this to mean anything: a `def`
+    // body is not, so `vlenDef` alone would pass on any tree. A defspec's
+    // parameters become Pi binders in a proposition the kernel does check.
+    val r = Main.processSource(
+      vec +
+        """|defspec binder_ok(A: Type, n: Nat, v: Vec(A)(n)): n = n { by trivial }
+           |""".stripMargin,
+      "binder.sroof",
+    )
+    assert(r.isRight, s"`v: Vec(A)(n)` must be a legal parameter type, got: $r")
+
   // ---- backward compatibility ----
 
   test("a family whose constructors omit their indices is unchanged"):

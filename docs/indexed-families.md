@@ -1,9 +1,10 @@
 # Indexed families and GADTs
 
-Status as of v0.10.0: **constructors are indexed; elimination is not.** You can
-declare `Vec(A)(n)`, and the checker will reject `Vec.vnil` where a length-one
-vector was required. You cannot yet prove anything by induction over such a
-family. Steps 1–3 below are done; 4–6 are not.
+Status as of v0.12.0: **constructors are indexed, and case analysis eliminates
+them.** You can declare `Vec(A)(n)`, use it as a parameter type, have the checker
+reject `Vec.vnil` where a length-one vector was required, and prove things about
+an arbitrary vector by `cases`. What is still missing is the induction
+*hypothesis*. Steps 1–3 are done, step 4 is half done; 5–6 are not started.
 
 Everything under "What was actually there" describes the pre-v0.10 state and is
 kept because the field comments and the surrounding code still carry its
@@ -49,19 +50,16 @@ Two smaller things came with it:
   mismatch rendered as `expected: Vec Nat succ / actual: Vec Nat succ` and read
   like a checker bug.
 
-### What is deliberately still missing
+### What v0.10.0 deliberately left out
 
-`checkMat` does not refine the expected type per branch. This is a source of
-false negatives, not of unsoundness: `checkCoverage` still forces a branch for
-every constructor, and an unrefined return type is strictly harder to satisfy.
-It belongs with step 4, because the same index abstraction is what
-`Builtins.buildFixCase` needs.
+`checkMat` did not refine the expected type per branch — a source of false
+negatives rather than unsoundness. ✅ **Done in v0.12.0**; see step 4.
 
-`stdlib/Vec.sroof` was **not** rewritten to use real indices. Without step 4 it
-could declare a length and then prove nothing inductive about it, which is a
-worse state to ship than a phantom index that is honest about being one.
-`examples/vec_indexed.sroof` demonstrates the feature on concrete vectors
-instead.
+`stdlib/Vec.sroof` was **not** rewritten to use real indices, and still has not
+been: without the induction hypothesis it could declare a length and prove
+nothing recursive about it, which is a worse state to ship than a phantom index
+that is honest about being one. `examples/vec_indexed.sroof` demonstrates the
+feature instead.
 
 ## What was actually there (pre-v0.10)
 
@@ -208,11 +206,53 @@ Each step is useful on its own and testable before the next begins.
    constructor. Anything else — including every declaration in the repository at
    the time — takes the pre-v0.10 branch unchanged.
 
-4. **Tactic engine.** `Builtins.buildFixCase` gains index abstraction and
-   per-branch specialisation, mirroring `inductionWithIHGeneralized`.
+4. **Tactic engine.** ⚙️ **Half done in v0.12.0.**
 
-   **What it looks like today** (measured in v0.11, so the next attempt starts
-   from an observation rather than a guess). Given
+   **Case analysis refines the index.** Matching `vnil` out of a `Vec(A)(n)` now
+   tells the branch that `n` is `Nat.zero`, so `cases` and `induction`-without-an-IH
+   can prove things about an arbitrary vector:
+
+   ```scala
+   defspec vlen_matches_index(A: Type, n: Nat, v: Vec(A)(n)): vlen(A, n, v) = n {
+     by cases v { case vnil => trivial  case vcons m h t => trivial }
+   }
+   ```
+
+   The rule is the ordinary dependent-match one: within the branch for `c`, the
+   scrutinee *is* `c(args)`, so the scrutinee's index and `c`'s declared index are
+   the same thing. Refining is exactly abstracting the return type into a motive
+   over the index and applying it at each constructor's index. It lives in
+   `IndChecker.indexRefinement`, and both `checkCases` and `Builtins.specializeGoal`
+   use it so the sub-goal a user is shown is the one the kernel will ask for.
+
+   It fires only when the scrutinee's index argument is a plain **variable**.
+   `v : Vec A (succ k)` refines nothing: concluding that `vnil` is unreachable, or
+   that `succ k ≡ succ m` gives `k ≡ m`, needs real unification. Skipping leaves
+   the branch at the unrefined type, which is strictly harder to prove.
+
+   **`Bidirectional.infer` also had to learn the arity.** It folded `Ind` over
+   parameters only, so `Vec(A)(n)` in a *binder* position failed with
+   `Expected function type, got Type` — a theorem could state an index but no
+   definition could take one as an argument. `Vec : Type → Nat → Type` now, gated
+   on `isIndexed` so the phantom-index form keeps the shorter arity that
+   `stdlib/Vec.sroof` is written against.
+
+   **What is still missing: the induction hypothesis.** `_rec` must accept the
+   tail, whose index differs from the scrutinee's, so the `Fix` type has to bind
+   the index *before* the vector it describes:
+
+   ```text
+   needed:  Fix(_rec, Pi(i, Nat, Pi(_n, Vec A i, P(i)(_n))), …)
+   today:   Fix(_rec, Pi(_n, varTpe, genPiBody), …)   -- inductionWithIHGeneralized
+   ```
+
+   `inductionWithIHGeneralized` already generalises over *context variables*, but
+   it binds `_n` outermost, so `varTpe`'s mention of `n` still points at the outer
+   context. Reordering moves the Lam nesting, the `Mat` scrutinee position, the
+   application order, and every coordinate in `genSpecializeGoal` — its own piece
+   of work, and the remainder of step 4.
+
+   **What it looked like before v0.12** (measured in v0.11). Given
 
    ```scala
    def vlen(A: Type, n: Nat, v: Vec(A)(n)): Nat { ... }
@@ -229,10 +269,8 @@ Each step is useful on its own and testable before the next begins.
    ```
 
    The scrutinee was replaced by `vnil` but the **index was not**: the goal should
-   be `vlen A zero vnil = zero`. `n` is a context variable that the branch has to
-   specialise, exactly as `specializeGoalOver` already specialises the scrutinee.
-   `induction v generalizing n` does not help — generalising a context variable is
-   not the same as tying it to the constructor's declared index.
+   be `vlen A zero vnil = zero`. That half is fixed; the `vlen` above is recursive,
+   so it also needs the IH, which is the part that remains.
 
    Note that the proof state above is only legible because v0.11 fixed
    `ProofStatePretty.formatContext`; before that, `v` printed at type `Vec n v`.

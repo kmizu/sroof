@@ -5,6 +5,80 @@ All release detail lives here. Earlier releases also had per-version
 favour of this one file. The long-form notes for v0.3–v0.9 remain published on
 the [GitHub releases page](https://github.com/kmizu/sroof/releases).
 
+## [0.12.0] - 2026-08-07
+
+Half of step 4. Case analysis over an indexed family now **learns the index**, so
+this is provable — the first theorem in the project about an arbitrary vector
+rather than a particular one:
+
+```scala
+defspec vlen_matches_index(A: Type, n: Nat, v: Vec(A)(n)): vlen(A, n, v) = n {
+  by cases v { case vnil => trivial  case vcons m h t => trivial }
+}
+```
+
+Matching `vnil` out of a `Vec(A)(n)` tells the branch that `n` is `Nat.zero`, so
+the goal there becomes `vlen(A, zero, vnil) = zero` instead of the unprovable
+`vlen(A, n, vnil) = n`.
+
+### Added
+- **Per-branch index refinement** (`IndChecker.indexRefinement`). Within the
+  branch for constructor `c`, the scrutinee *is* `c(args)`, so the scrutinee's
+  index and `c`'s declared index are the same thing. Refining is exactly
+  abstracting the return type into a motive over the index and applying it at each
+  constructor's index — the ordinary dependent-match rule.
+
+  Both `IndChecker.checkCases` and `Builtins.specializeGoal` use the one rule, so
+  the sub-goal a user is shown is the one the kernel will ask for. Getting those
+  out of step would build proofs against a proposition the kernel never checks.
+
+  It fires only when the scrutinee's index argument is a plain **variable**.
+  `v : Vec A (succ k)` refines nothing: deciding `vnil` is unreachable, or that
+  `succ k ≡ succ m` gives `k ≡ m`, needs real unification, and guessing inside the
+  TCB is not worth a convenience. The unrefined branch is strictly harder to
+  prove, so the cost is a false negative.
+
+### Fixed
+- **`Bidirectional.infer` gave an indexed family the wrong arity.** It folded
+  `Ind` over parameters only, so `Vec(A)(n)` in a *binder* position failed with
+  `Expected function type, got Type for (Vec #1)`. A theorem could state an index
+  but no definition could take one as an argument — `def vlen(A, n, v: Vec(A)(n))`
+  was unstatable. `Vec : Type → Nat → Type` now.
+
+  Gated on `isIndexed`, so a family that declares indices without stating them on
+  its constructors keeps the shorter arity. `stdlib/Vec.sroof` writes
+  `tail: Vec(A)`, which the wider arity would reject.
+
+### Verification
+611 tests. Four of the new cases were run against the v0.11 tree and **fail**
+there: the two acceptance tests, the binder test, and the assertion that the
+false claim fails *in the `vcons` branch* specifically.
+
+That last one is the soundness test. `n = Nat.zero` is false, and refinement does
+make its `vnil` branch close — the check is that `vcons` becomes `succ m = zero`
+and does not. Refining one branch must not excuse the others. An absurd equation
+(`zero = succ zero`) and a concrete-index scrutinee are covered too.
+
+All 605 pre-existing tests pass unchanged.
+
+### Not in this release
+- **The induction hypothesis.** `_rec` has to accept the tail, whose index differs
+  from the scrutinee's, so the `Fix` must bind the index *before* the vector it
+  describes:
+
+  ```text
+  needed:  Fix(_rec, Pi(i, Nat, Pi(_n, Vec A i, P(i)(_n))), …)
+  today:   Fix(_rec, Pi(_n, varTpe, genPiBody), …)
+  ```
+
+  `inductionWithIHGeneralized` already generalises over context variables but
+  binds `_n` outermost, so `varTpe`'s mention of `n` still points at the outer
+  context. Reordering moves the Lam nesting, the `Mat` scrutinee position, the
+  application order, and every coordinate in `genSpecializeGoal`.
+
+- **`stdlib/Vec.sroof` still uses a phantom index**, for the same reason: it would
+  declare a length it could not prove anything recursive about.
+
 ## [0.11.0] - 2026-08-07
 
 Two things that were **written down wrong**: a proof state that misrendered every
