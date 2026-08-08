@@ -5,6 +5,89 @@ All release detail lives here. Earlier releases also had per-version
 favour of this one file. The long-form notes for v0.3–v0.9 remain published on
 the [GitHub releases page](https://github.com/kmizu/sroof/releases).
 
+## [0.13.0] - 2026-08-08
+
+Step 4 is finished. `induction` over an indexed family now carries a working
+induction hypothesis, so this is provable — and the `vlen` here is the recursive
+one, which is what makes the hypothesis necessary:
+
+```scala
+def vlenr(A: Type, n: Nat, v: Vec(A)(n)): Nat {
+  match v {
+    case Vec.vnil           => Nat.zero
+    case Vec.vcons(m, h, t) => Nat.succ(vlenr(A, m, t))
+  }
+}
+
+defspec vlenr_correct(A: Type, n: Nat, v: Vec(A)(n)): vlenr(A, n, v) = n {
+  by induction v { case vnil => trivial  case vcons m h t ih => simplify [ih] }
+}
+```
+
+### Added
+- **`Builtins.inductionIndexed`.** `_rec` has to accept the tail, whose index is
+  `m` and not the scrutinee's `n`, so the `Fix` binds the index *before* the vector
+  it describes:
+
+  ```text
+  Fix(_rec, Pi(_i, Nat, Pi(_n, Vec A _i, P(_i)(_n))),
+    Lam(_i, Nat, Lam(_n, Vec A _i, Mat(Var(0), cases, P))))
+    applied to (idx, scrutinee)
+  ```
+
+  Each branch specialises `_i` to that constructor's declared index, and the
+  hypothesis is `_rec` applied to the recursive argument's index and the argument.
+  In the `vcons` branch `ih` is `vlenr(A, m, t) = m` — about the tail, which is
+  what `simplify` can use.
+
+  A separate path rather than an extension of `inductionWithIHGeneralized`, which
+  binds `_n` outermost: there the scrutinee type's mention of the index would still
+  point at the outer context. Every existing induction shape is untouched.
+
+  Fires only when the scrutinee's index argument is a plain context variable, the
+  index type is closed, and there is exactly one index. Anything else takes the
+  ordinary path. Two indices would need the Pi chain built in intermediate
+  contexts, since the second index's type may mention the first.
+
+### The bug worth recording
+The first attempt built the motive with `computeGeneralizedMotiveBody`, which
+*removes* its pivots from the context. The kernel rejected it:
+
+```
+expected: Type
+actual:   ((Vec #3) #2)
+```
+
+The proof term is placed in `goal.ctx`, so a removed-variable context only agrees
+with it when every entry the branches mention is newer than what was removed —
+and `A` is declared before both the scrutinee and the index. This is exactly
+coordinate rule 2 from v0.7, rediscovered. Everything is now stated in `goal.ctx`.
+
+### Verification
+616 tests. The two acceptance cases were run against the v0.12 tree and **fail**
+there. Three soundness cases — `n = Nat.zero`, `n = Nat.succ(n)`, and
+`Nat.zero = Nat.succ(Nat.zero)` — are rejected on both trees; `n = succ n` earns
+its own case because a hypothesis wired to the wrong index would close it.
+
+All 611 pre-existing tests pass unchanged.
+
+### Step 5 is blocked, and no longer by the tactic engine
+A `def` body is not type-checked at all. Both of these are accepted today:
+
+```scala
+def f(n: Nat): Nat { Bool.tru }
+def vapp(A: Type, n: Nat, m: Nat, xs: Vec(A)(n), ys: Vec(A)(m)): Vec(A)(Nat.zero) { … }
+```
+
+Only a `defspec`'s proposition and proof reach `Kernel.verify`. A length-preserving
+`vapp` would therefore *declare* `Vec(A)(plus(n, m))` with nothing checking that it
+delivers one — a declaration promising a length no one verifies, which is worse
+than the phantom index it would replace. `stdlib/Vec.sroof` stays as it is.
+
+This is pre-existing and has nothing to do with indexed families; it simply becomes
+the binding constraint now that step 4 is done. Step 5 starts by kernel-checking
+`def` bodies.
+
 ## [0.12.0] - 2026-08-07
 
 Half of step 4. Case analysis over an indexed family now **learns the index**, so

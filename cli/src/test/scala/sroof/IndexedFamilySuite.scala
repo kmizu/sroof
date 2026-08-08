@@ -231,6 +231,83 @@ class IndexedFamilySuite extends FunSuite:
     )
     assert(r.isRight, s"`v: Vec(A)(n)` must be a legal parameter type, got: $r")
 
+  // ---- induction with a hypothesis (v0.13) ----
+
+  /** The recursive `vlen`: its `vcons` branch calls itself on the tail, so a proof
+    * about it needs an induction hypothesis stated at the *tail's* index. */
+  private val vlenRec =
+    """|def vlenr(A: Type, n: Nat, v: Vec(A)(n)): Nat {
+       |  match v {
+       |    case Vec.vnil           => Nat.zero
+       |    case Vec.vcons(m, h, t) => Nat.succ(vlenr(A, m, t))
+       |  }
+       |}
+       |""".stripMargin
+
+  test("induction with an IH proves the recursive length is the index"):
+    // The headline of v0.13. `_rec` has to accept the tail, whose index is `m` and
+    // not the scrutinee's `n`, so the `Fix` binds the index before the vector.
+    val r = Main.processSource(
+      vec + vlenRec +
+        """|defspec vlenr_correct(A: Type, n: Nat, v: Vec(A)(n)): vlenr(A, n, v) = n {
+           |  by induction v {
+           |    case vnil           => trivial
+           |    case vcons m h t ih => simplify [ih]
+           |  }
+           |}
+           |""".stripMargin,
+      "vlenr.sroof",
+    )
+    assert(r.isRight, s"expected acceptance, got: $r")
+
+  test("indexed induction works when the goal never mentions the index"):
+    // The abstraction over the index is then vacuous. It must still produce a
+    // well-typed Fix rather than mis-numbering the context.
+    val r = Main.processSource(
+      vec +
+        """|defspec ignores_index(A: Type, n: Nat, v: Vec(A)(n)): Nat.zero = Nat.zero {
+           |  by induction v { case vnil => trivial  case vcons m h t ih => trivial }
+           |}
+           |""".stripMargin,
+      "ignore.sroof",
+    )
+    assert(r.isRight, s"expected acceptance, got: $r")
+
+  test("SOUNDNESS: indexed induction does not prove n = zero"):
+    val r = Main.processSource(
+      vec +
+        """|defspec bad(A: Type, n: Nat, v: Vec(A)(n)): n = Nat.zero {
+           |  by induction v { case vnil => trivial  case vcons m h t ih => simplify [ih] }
+           |}
+           |""".stripMargin,
+      "bad_ih.sroof",
+    )
+    assert(r.isLeft, s"`n = zero` is false and must be rejected, got: $r")
+
+  test("SOUNDNESS: indexed induction does not prove n = succ n"):
+    // Worth its own case: the induction hypothesis is `t`'s length equals `m`, and
+    // a hypothesis wired to the wrong index could make this close.
+    val r = Main.processSource(
+      vec +
+        """|defspec bad(A: Type, n: Nat, v: Vec(A)(n)): n = Nat.succ(n) {
+           |  by induction v { case vnil => trivial  case vcons m h t ih => simplify [ih] }
+           |}
+           |""".stripMargin,
+      "bad_succ.sroof",
+    )
+    assert(r.isLeft, s"`n = succ n` is false and must be rejected, got: $r")
+
+  test("SOUNDNESS: an absurd equation resists indexed induction too"):
+    val r = Main.processSource(
+      vec +
+        """|defspec bad(A: Type, n: Nat, v: Vec(A)(n)): Nat.zero = Nat.succ(Nat.zero) {
+           |  by induction v { case vnil => trivial  case vcons m h t ih => simplify [ih] }
+           |}
+           |""".stripMargin,
+      "bad_absurd.sroof",
+    )
+    assert(r.isLeft, s"`zero = succ zero` must be rejected, got: $r")
+
   // ---- backward compatibility ----
 
   test("a family whose constructors omit their indices is unchanged"):

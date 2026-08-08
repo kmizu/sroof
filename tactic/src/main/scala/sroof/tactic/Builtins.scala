@@ -167,11 +167,23 @@ object Builtins:
                           }
                         }
                       }
-      _            <- (if needsIH && generalizing.nonEmpty
-                       then inductionWithIHGeneralized(mv, goal, varIdx, varTpe, indDef, caseSpecs, genVarInfo)
-                       else if needsIH
-                       then inductionWithIH(mv, goal, varIdx, varTpe, indDef, caseSpecs)
-                       else plainInduction(mv, goal, varIdx, indDef))
+      // An indexed family needs the index bound before the scrutinee so the
+      // hypothesis can be stated at the recursive argument's index.  Only when an
+      // IH is actually requested: without one the plain `Mat` path already refines
+      // each branch (v0.12) and needs no `Fix` at all.  An explicit `generalizing`
+      // keeps its existing meaning and takes precedence.
+      indexed       = if needsIH && generalizing.isEmpty
+                      then indexedInductionTarget(goal, varIdx, varTpe, indDef)
+                      else None
+      _            <- (indexed match
+                       case Some((idxVarIdx, idxTpe)) =>
+                         inductionIndexed(mv, goal, varIdx, varTpe, indDef, caseSpecs, idxVarIdx, idxTpe)
+                       case None =>
+                         if needsIH && generalizing.nonEmpty
+                         then inductionWithIHGeneralized(mv, goal, varIdx, varTpe, indDef, caseSpecs, genVarInfo)
+                         else if needsIH
+                         then inductionWithIH(mv, goal, varIdx, varTpe, indDef, caseSpecs)
+                         else plainInduction(mv, goal, varIdx, indDef))
     yield ()
 
   private def plainInduction(
@@ -236,6 +248,213 @@ object Builtins:
       proofTerm     = Term.App(fixTerm, Term.Var(varIdx))
       _            <- TacticM.solveGoalWith(mv, proofTerm)
     yield ()
+
+  // ---- induction over an indexed family ----
+
+  /** When `induction x` on `x : F params idx` can bind the index itself.
+   *
+   *  Requires a fully indexed family whose index argument in the scrutinee's type
+   *  is a plain context **variable** other than the scrutinee, and whose index type
+   *  is closed. Anything else returns `None` and the ordinary path runs unchanged.
+   *
+   *  Restricted to a single index for now: with two, the second index's *type* may
+   *  mention the first, so the Pi chain has to be built in intermediate contexts
+   *  rather than one fixed one. Nothing here depends on q = 1 being permanent.
+   */
+  private def indexedInductionTarget(
+    goal:   Goal,
+    varIdx: Int,
+    varTpe: Term,
+    indDef: IndDef,
+  ): Option[(Int, Term)] =
+    if !IndChecker.isIndexedFamily(indDef) || indDef.indices.length != 1 then None
+    else
+      val spine = IndChecker.extractIndParams(varTpe)
+      if spine.length != indDef.params.length + 1 then None
+      else
+        spine.last match
+          case Term.Var(k) if k != varIdx =>
+            goal.ctx.lookup(k).flatMap { idxTpe =>
+              // A closed index type keeps every shift below the identity.
+              val closed = (0 until goal.ctx.size).forall(j => !Term.freeIn(j, idxTpe))
+              if closed then Some((k, idxTpe)) else None
+            }
+          case _ => None
+
+  /** Induction over an indexed family, binding the index before the scrutinee.
+   *
+   *  The plain path builds `Fix(_rec, Pi(_n, F params idx, P(_n)), …)`, whose `_rec`
+   *  accepts only values at the scrutinee's own index. That is unusable here: the
+   *  recursive argument of `vcons(m, h, t)` is `t : Vec A m`, and `m` is not `n`.
+   *  So the index is bound first and the motive is stated over both:
+   *
+   *  {{{
+   *    Fix(_rec, Pi(_i, Nat, Pi(_n, Vec A _i, P(_i)(_n))),
+   *      Lam(_i, Nat, Lam(_n, Vec A _i, Mat(Var(0), cases, P))))
+   *      applied to (idx, scrutinee)
+   *  }}}
+   *
+   *  Each branch then specialises `_i` to that constructor's declared index, and the
+   *  induction hypothesis is `_rec` applied to the *recursive argument's* index and
+   *  the argument itself — which is what makes it usable.
+   *
+   *  Coordinates inside `Fix > Lam(_i) > Lam(_n) > Mat`, for a ctor with n args:
+   *  {{{
+   *    Var(0..n-1) = ctor args (last = Var(0))
+   *    Var(n)      = _n
+   *    Var(n+1)    = _i
+   *    Var(n+2)    = _rec
+   *    Var(n+3+)   = ctx_base  (goal.ctx minus the scrutinee and the index)
+   *  }}}
+   */
+  private def inductionIndexed(
+    mv:        MetaVar,
+    goal:      Goal,
+    varIdx:    Int,
+    varTpe:    Term,
+    indDef:    IndDef,
+    caseSpecs: List[(String, List[String])],
+    idxVarIdx: Int,
+    idxTpe:    Term,
+  )(using env: GlobalEnv): TacticM[Unit] =
+    // Everything is stated in `goal.ctx`, never in a context with the scrutinee or
+    // the index removed.  The proof term is placed in `goal.ctx`, and v0.7 paid for
+    // the lesson that a removed-variable context only agrees with it when every
+    // entry a branch mentions happens to be newer than the removed one — which is
+    // exactly not the case here, since `A` is declared before both.
+    //
+    // The scrutinee's type with its index pointing at the bound `_i`,
+    // stated in goal.ctx + [_i].
+    val varTpeAbs = Term.mapVar { (depth, i) =>
+      if i - depth == idxVarIdx + 1 then Term.Var(depth) else Term.Var(i)
+    }(Subst.shift(1, varTpe))
+
+    // The motive, stated in goal.ctx + [_i, _n]: Var(0) = _n, Var(1) = _i.
+    val gAbs = Term.mapVar { (depth, i) =>
+      val absI = i - depth
+      if absI == varIdx + 2 then Term.Var(depth)              // scrutinee → _n
+      else if absI == idxVarIdx + 2 then Term.Var(depth + 1)  // index     → _i
+      else Term.Var(i)
+    }(Subst.shift(2, goal.target))
+
+    val fixType = Term.Pi("_i", idxTpe, Term.Pi("_n", varTpeAbs, gAbs))
+    for
+      fixCasesData <- buildIndexedFixCases(goal.ctx, gAbs, varTpeAbs, idxTpe, indDef, caseSpecs)
+      fixCases      = fixCasesData.map(_._1)
+      // Inside the Fix binder everything from goal.ctx moves up one.
+      // gAbs holds it at Var(2+); varTpeAbs at Var(1+).  `idxTpe` is closed, so its
+      // own shift is the identity — that is why the guard requires it.
+      propForMat    = Subst.shiftFrom(2, 1, gAbs)
+      varTpeInBody  = Subst.shiftFrom(1, 1, varTpeAbs)
+      fixTerm       = Term.Fix("_rec", fixType,
+                        Term.Lam("_i", idxTpe,
+                          Term.Lam("_n", varTpeInBody,
+                            Term.Mat(Term.Var(0), fixCases, propForMat))))
+      proofTerm     = Term.App(Term.App(fixTerm, Term.Var(idxVarIdx)), Term.Var(varIdx))
+      _            <- TacticM.solveGoalWith(mv, proofTerm)
+    yield ()
+
+  private def buildIndexedFixCases(
+    ctxBase:   Context,
+    gAbs:      Term,
+    varTpeAbs: Term,
+    idxTpe:    Term,
+    indDef:    IndDef,
+    caseSpecs: List[(String, List[String])],
+  )(using env: GlobalEnv): TacticM[List[(MatchCase, Context, Term)]] =
+    indDef.ctors.foldLeft(TacticM.pure(List.empty[(MatchCase, Context, Term)])) { (acc, ctorDef) =>
+      acc.flatMap { cases =>
+        val extraBindings = caseSpecs
+          .collectFirst { case (name, bindings) if name == ctorDef.name => bindings }
+          .getOrElse(Nil)
+        val hasIH = extraBindings.length > ctorDef.argTpes.length
+        buildIndexedFixCase(
+          ctxBase, gAbs, varTpeAbs, idxTpe, indDef, ctorDef, hasIH, extraBindings
+        ).map(cases :+ _)
+      }
+    }
+
+  private def buildIndexedFixCase(
+    ctxBase:       Context,
+    gAbs:          Term,
+    varTpeAbs:     Term,
+    idxTpe:        Term,
+    indDef:        IndDef,
+    ctorDef:       CtorDef,
+    hasIH:         Boolean,
+    extraBindings: List[String],
+  )(using env: GlobalEnv): TacticM[(MatchCase, Context, Term)] =
+    val n           = ctorDef.argTpes.length
+    val p           = indDef.params.length
+    val ctorArgVars = (0 until n).toList.map(i => Term.Var(n - 1 - i))
+    val ctorTerm    = Term.Con(ctorDef.name, indDef.name, ctorArgVars)
+    val argNames    = extraBindings.take(n).padTo(n, "_")
+
+    // The branch context, built outwards: ctx_base + [_rec, _i, _n] + ctor args.
+    val recType     = fixTypeOf(idxTpe, varTpeAbs, gAbs)
+    val ctxWithRec  = ctxBase.extend("_rec", recType)
+    val ctxWithI    = ctxWithRec.extend("_i", Subst.shift(1, idxTpe))
+    // varTpeAbs is stated in ctx_base + [_i].  Here the context is
+    // ctx_base + [_rec, _i]: `_rec` went in *below* `_i`, so `_i` is still Var(0)
+    // and only ctx_base moves up.  This is the same term the Fix body binds `_n` at.
+    val varTpeAtN   = Subst.shiftFrom(1, 1, varTpeAbs)
+    val ctxWithN    = ctxWithI.extend("_n", varTpeAtN)
+    // Constructor argument types need the family's parameters, which `varTpeAtN`
+    // carries; `extendWithCtorArgs` reads them off it and applies the per-argument
+    // shift itself.
+    val ctorCtx     = extendWithCtorArgs(ctxWithN, ctorDef, argNames, Subst.shift(1, varTpeAtN))
+
+    // This constructor's declared index, in the branch context.
+    val spineInBranch = IndChecker.extractIndParams(Subst.shift(n + 1, varTpeAtN))
+    val ctorIdx       = IndChecker
+      .ctorIndicesInBranch(indDef, ctorDef, ctorArgVars, spineInBranch)
+      .headOption
+
+    // The branch goal: gAbs with _n := this constructor, _i := its declared index.
+    def instantiate(idxVal: Term, scrutVal: Term, base: Int): Term =
+      Term.mapVar { (depth, i) =>
+        val absI = i - depth
+        if absI < 0 then Term.Var(i)
+        else if absI == 0 then Subst.shift(depth, scrutVal)
+        else if absI == 1 then Subst.shift(depth, idxVal)
+        else Term.Var(i + base)
+      }(gAbs)
+
+    ctorIdx match
+      case None =>
+        TacticM.liftEither(Left(TacticError.Custom(
+          s"Constructor '${ctorDef.name}' of '${indDef.name}' declares no return index; " +
+          s"induction over an indexed family needs one on every constructor."
+        )))
+      case Some(idxVal) =>
+        // ctx_base sits at Var(2+) in gAbs and at Var(n+3+) in the branch: +n+1.
+        val specialGoal = instantiate(idxVal, ctorTerm, n + 1)
+        if !hasIH then
+          for mv <- TacticM.addGoal(ctorCtx, specialGoal)
+          yield (MatchCase(ctorDef.name, n, Term.Meta(mv.id)), ctorCtx, specialGoal)
+        else
+          // The recursive argument is the constructor's LAST field, at Var(0), and
+          // the hypothesis has to be stated at *its* index rather than the
+          // scrutinee's — that is the whole reason the index is bound at all.
+          val recArgTpe = ctorCtx.lookup(0).getOrElse(Term.Meta(-1))
+          val subIdx    = IndChecker.extractIndParams(recArgTpe).drop(p).headOption
+          subIdx match
+            case None =>
+              TacticM.liftEither(Left(TacticError.Custom(
+                s"Case '${ctorDef.name}' asks for an induction hypothesis, but its last " +
+                s"argument is not a '${indDef.name}'."
+              )))
+            case Some(sub) =>
+              val ihType = instantiate(sub, Term.Var(0), n + 1)
+              val ihDef  = Term.App(Term.App(Term.Var(n + 2), sub), Term.Var(0))
+              val subCtx = ctorCtx.extend("ih", Subst.shift(1, ihType))
+              for mv <- TacticM.addGoal(subCtx, Subst.shift(1, specialGoal))
+              yield
+                val letBody = Term.Let("ih", ihType, ihDef, Term.Meta(mv.id))
+                (MatchCase(ctorDef.name, n, letBody), subCtx, Subst.shift(1, specialGoal))
+
+  private def fixTypeOf(idxTpe: Term, varTpeAbs: Term, gAbs: Term): Term =
+    Term.Pi("_i", idxTpe, Term.Pi("_n", varTpeAbs, gAbs))
 
   // ---- generalized induction (induction x generalizing y z) ----
 

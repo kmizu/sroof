@@ -79,11 +79,34 @@ defspec vlen_matches_index(A: Type, n: Nat, v: Vec(A)(n)): vlen(A, n, v) = n {
 //
 // Before v0.10.0 both of them checked successfully.
 
-// What is NOT yet supported: induction with an induction *hypothesis*.  Case
-// analysis works (above), because a plain match needs no recursion.  A recursive
-// proof needs `_rec` to accept the tail, whose index differs from the scrutinee's
-// — so the `Fix` has to bind the index before the vector it describes, and today
-// it binds them the other way round.  See step 4 in docs/indexed-families.md.
+// ---- Induction, with a working induction hypothesis ----
 //
-// Concretely: this file can prove `vlen(A, n, v) = n` for the non-recursive
-// `vlen` above, but not for one defined by recursion on the tail.
+// `vlenr` is the same length function written by recursion on the tail, which is
+// what makes a proof about it need an induction hypothesis.
+def vlenr(A: Type, n: Nat, v: Vec(A)(n)): Nat {
+  match v {
+    case Vec.vnil           => Nat.zero
+    case Vec.vcons(m, h, t) => Nat.succ(vlenr(A, m, t))
+  }
+}
+
+// Since v0.13, `induction` over an indexed family binds the index before the
+// vector, so the hypothesis can be stated at the *tail's* index:
+//
+//   Fix(_rec, Pi(_i, Nat, Pi(_n, Vec A _i, P(_i)(_n))), ...)
+//
+// In the `vcons` branch `ih` is therefore `vlenr(A, m, t) = m` — about the tail,
+// not about the whole vector — which is exactly what `simplify` needs.
+defspec vlenr_correct(A: Type, n: Nat, v: Vec(A)(n)): vlenr(A, n, v) = n {
+  by induction v {
+    case vnil           => trivial
+    case vcons m h t ih => simplify [ih]
+  }
+}
+
+// What is still missing, and it is no longer the tactic engine: a `def` body is
+// not type-checked at all, so a dependently-typed definition's return index is
+// never verified.  `def vapp(...): Vec(A)(plus(n, m))` would be accepted whatever
+// it returned.  That is why `stdlib/Vec.sroof` has not been rewritten with real
+// indices — the declaration would promise a length nothing checks.
+// See step 5 in docs/indexed-families.md.

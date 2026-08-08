@@ -159,6 +159,18 @@ python3 scripts/benchmark.py --runs 3 --thresholds benchmarks/thresholds.json --
 - published releases: <https://github.com/kmizu/sroof/releases>
 - publishing setup: [`docs/publishing.md`](docs/publishing.md)
 
+### Migration Notes (v0.12 -> v0.13)
+
+- **Nothing breaks.** All 611 pre-existing tests pass unchanged; 616 in total.
+- `induction` over an indexed family now carries a working induction hypothesis,
+  stated at the recursive argument's index. See
+  [`examples/vec_indexed.sroof`](examples/vec_indexed.sroof).
+- It applies when the scrutinee's index is a plain context variable, the index
+  type is closed, and there is one index. Everything else takes the previous path.
+- Known limitation, pre-existing and now the binding one: a `def` body is not
+  type-checked, so a dependently-typed definition's return index is not verified.
+  See [`docs/indexed-families.md`](docs/indexed-families.md).
+
 ### Migration Notes (v0.11 -> v0.12)
 
 - **Nothing breaks.** All 605 pre-existing tests pass unchanged; 611 in total.

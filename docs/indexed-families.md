@@ -1,10 +1,11 @@
 # Indexed families and GADTs
 
-Status as of v0.12.0: **constructors are indexed, and case analysis eliminates
-them.** You can declare `Vec(A)(n)`, use it as a parameter type, have the checker
-reject `Vec.vnil` where a length-one vector was required, and prove things about
-an arbitrary vector by `cases`. What is still missing is the induction
-*hypothesis*. Steps 1–3 are done, step 4 is half done; 5–6 are not started.
+Status as of v0.13.0: **steps 1–4 are done.** You can declare `Vec(A)(n)`, use it
+as a parameter type, have the checker reject `Vec.vnil` where a length-one vector
+was required, and prove things about an arbitrary vector by `cases` *or* by
+`induction` with a working induction hypothesis.
+
+Step 5 is blocked, but no longer by anything on this list — see below.
 
 Everything under "What was actually there" describes the pre-v0.10 state and is
 kept because the field comments and the surrounding code still carry its
@@ -206,7 +207,7 @@ Each step is useful on its own and testable before the next begins.
    constructor. Anything else — including every declaration in the repository at
    the time — takes the pre-v0.10 branch unchanged.
 
-4. **Tactic engine.** ⚙️ **Half done in v0.12.0.**
+4. **Tactic engine.** ✅ **Done — case analysis in v0.12.0, induction in v0.13.0.**
 
    **Case analysis refines the index.** Matching `vnil` out of a `Vec(A)(n)` now
    tells the branch that `n` is `Nat.zero`, so `cases` and `induction`-without-an-IH
@@ -237,20 +238,34 @@ Each step is useful on its own and testable before the next begins.
    on `isIndexed` so the phantom-index form keeps the shorter arity that
    `stdlib/Vec.sroof` is written against.
 
-   **What is still missing: the induction hypothesis.** `_rec` must accept the
-   tail, whose index differs from the scrutinee's, so the `Fix` type has to bind
-   the index *before* the vector it describes:
+   **The induction hypothesis, added in v0.13.0.** `_rec` must accept the tail,
+   whose index differs from the scrutinee's, so the `Fix` binds the index *before*
+   the vector it describes:
 
    ```text
-   needed:  Fix(_rec, Pi(i, Nat, Pi(_n, Vec A i, P(i)(_n))), …)
-   today:   Fix(_rec, Pi(_n, varTpe, genPiBody), …)   -- inductionWithIHGeneralized
+   Fix(_rec, Pi(_i, Nat, Pi(_n, Vec A _i, P(_i)(_n))),
+     Lam(_i, Nat, Lam(_n, Vec A _i, Mat(Var(0), cases, P))))
+     applied to (idx, scrutinee)
    ```
 
-   `inductionWithIHGeneralized` already generalises over *context variables*, but
-   it binds `_n` outermost, so `varTpe`'s mention of `n` still points at the outer
-   context. Reordering moves the Lam nesting, the `Mat` scrutinee position, the
-   application order, and every coordinate in `genSpecializeGoal` — its own piece
-   of work, and the remainder of step 4.
+   Each branch specialises `_i` to that constructor's declared index, and the
+   hypothesis is `_rec` applied to the *recursive argument's* index and the
+   argument — which is what makes it usable. `Builtins.inductionIndexed`.
+
+   `inductionWithIHGeneralized` was not reused: it binds `_n` outermost, so
+   `varTpe`'s mention of the index would still point at the outer context.
+   A separate path also leaves every existing induction shape literally untouched.
+
+   **Everything is stated in `goal.ctx`**, never in a context with the scrutinee
+   and index removed. The first attempt used `computeGeneralizedMotiveBody`, which
+   removes its pivots, and the kernel rejected the result with
+   `expected: Type, actual: ((Vec #3) #2)` — `A` is declared *before* both removed
+   variables, which is precisely the case v0.7's coordinate rule 2 warns about.
+
+   Fires only when the scrutinee's index argument is a plain context variable, the
+   index type is closed, and there is exactly one index. Anything else takes the
+   ordinary path unchanged. Two indices would need the Pi chain built in
+   intermediate contexts, since the second index's type may mention the first.
 
    **What it looked like before v0.12** (measured in v0.11). Given
 
@@ -278,6 +293,23 @@ Each step is useful on its own and testable before the next begins.
 5. **`.sroof` validation.** Rewrite `stdlib/Vec.sroof` with real indices and
    prove something that needs them — `concat` preserving length is the obvious
    first target, and the file already defines `concat`.
+
+   ⚠️ **Blocked, and not by the tactic engine any more.** A `def` body is not
+   type-checked at all. Both of these are accepted today:
+
+   ```scala
+   def f(n: Nat): Nat { Bool.tru }
+   def vapp(A: Type, n: Nat, m: Nat, xs: Vec(A)(n), ys: Vec(A)(m)): Vec(A)(Nat.zero) { … }
+   ```
+
+   Only a `defspec`'s proposition and proof reach `Kernel.verify`. So a
+   length-preserving `vapp` would *declare* `Vec(A)(plus(n, m))` and nothing would
+   check that it delivers it — the declaration would promise a length no one
+   verifies, which is a worse state than the phantom index it replaced.
+
+   This is pre-existing and unrelated to indexed families; it simply becomes the
+   binding constraint once step 4 is out of the way. Step 5 therefore starts with
+   kernel-checking `def` bodies, not with rewriting the stdlib.
 
 6. **Scala frontend.** Scala has no indexed families; the equivalent is a GADT:
 

@@ -180,6 +180,22 @@ object IndChecker:
    */
   def isIndexedFamily(indDef: IndDef): Boolean = isIndexed(indDef)
 
+  /** A constructor's declared index values, stated in a branch context.
+   *
+   *  `args` must be the constructor's arguments as they stand in that context and
+   *  `spine` the family's parameters-then-indices in the same context. Returns
+   *  `Nil` for a declaration that states no indices, so callers can treat "no
+   *  refinement available" and "not an indexed family" alike.
+   */
+  def ctorIndicesInBranch(
+    indDef:  IndDef,
+    ctorDef: CtorDef,
+    args:    List[Term],
+    spine:   List[Term],
+  ): List[Term] =
+    if !isIndexed(indDef) then Nil
+    else ctorIndexValues(indDef, ctorDef, args, spine).getOrElse(Nil)
+
   private def isIndexed(indDef: IndDef): Boolean =
     indDef.indices.nonEmpty &&
     indDef.ctors.forall(_.retIndices.length == indDef.indices.length)
