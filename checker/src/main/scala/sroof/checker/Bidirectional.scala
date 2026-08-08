@@ -199,9 +199,19 @@ object Bidirectional:
             case _           => Left(TypeError.NotAType(t, ctx))
         }
 
-  /** Weak-head normal form via NbE round-trip. */
+  /** Weak-head normal form via NbE round-trip.
+   *
+   *  `Eval` throws on a term it cannot evaluate — an unbound index, a match with no
+   *  branch for the value's constructor, an application of a non-function.  Each of
+   *  those means the term is ill-typed, so the answer is a rejection, never a stack
+   *  trace escaping to the user.  Returning `t` unreduced is the rejection-safe
+   *  choice: callers `whnf` in order to *expose* a Pi or an inductive head, and an
+   *  unreduced term is strictly less likely to match, so nothing is accepted that
+   *  would not have been.
+   */
   def whnf(ctx: Context, t: Term): Term =
-    Quote.normalize(ctx.size, EnvBuilder.fromContext(ctx), t)
+    try Quote.normalize(ctx.size, EnvBuilder.fromContext(ctx), t)
+    catch case scala.util.control.NonFatal(_) => t
 
   /** Check definitional equality of `actual` and `expected` (with universe cumulativity). */
   private def convCheck(ctx: Context, actual: Term, expected: Term, term: Term): Either[TypeError, Unit] =
@@ -212,6 +222,10 @@ object Bidirectional:
     (normActual, normExpected) match
       case (Term.Uni(l1), Term.Uni(l2)) if l1 <= l2 => Right(())
       case _ =>
-        if Quote.convEqual(ctx.size, env, actual, expected) then Right(())
+        // A term that cannot be evaluated is not equal to anything.
+        val equal =
+          try Quote.convEqual(ctx.size, env, actual, expected)
+          catch case scala.util.control.NonFatal(_) => false
+        if equal then Right(())
         else Left(TypeError.TypeMismatch(expected, actual, term, ctx))
 

@@ -402,7 +402,7 @@ object Builtins:
     // Constructor argument types need the family's parameters, which `varTpeAtN`
     // carries; `extendWithCtorArgs` reads them off it and applies the per-argument
     // shift itself.
-    val ctorCtx     = extendWithCtorArgs(ctxWithN, ctorDef, argNames, Subst.shift(1, varTpeAtN))
+    val ctorCtx     = extendWithCtorArgs(ctxWithN, indDef, ctorDef, argNames, Subst.shift(1, varTpeAtN))
 
     // This constructor's declared index, in the branch context.
     val spineInBranch = IndChecker.extractIndParams(Subst.shift(n + 1, varTpeAtN))
@@ -753,7 +753,7 @@ object Builtins:
     val recType      = Term.Pi("_n", varTpe, propWithVar0)
     val ctxWithRec   = ctxBase.extend("_rec", recType)
     val ctxWithRecN  = ctxWithRec.extend("_n", Subst.shift(1, varTpe))
-    val ctorCtx      = extendWithCtorArgs(ctxWithRecN, ctorDef, argNames, Subst.shift(2, varTpe))
+    val ctorCtx      = extendWithCtorArgs(ctxWithRecN, indDef, ctorDef, argNames, Subst.shift(2, varTpe))
     if !hasIH then
       for mv <- TacticM.addGoal(ctorCtx, specialGoalAdjusted)
       yield (MatchCase(ctorDef.name, n, Term.Meta(mv.id)), ctorCtx, specialGoalAdjusted)
@@ -798,11 +798,15 @@ object Builtins:
    */
   private def extendWithCtorArgs(
     base:        Context,
+    indDef:      IndDef,
     ctorDef:     CtorDef,
     argNames:    List[String],
     varTpeInCtx: Term,
   ): Context =
-    val paramVals = IndChecker.extractIndParams(varTpeInCtx)
+    // Padded to the declaration's full binder width: `argTpes` is elaborated with
+    // params *and* indices in scope, so a p-wide spine substitutes into the wrong
+    // slots for any family that declares an index.  See `IndChecker.paddedSpine`.
+    val paramVals = IndChecker.paddedSpine(indDef, IndChecker.extractIndParams(varTpeInCtx))
     ctorDef.argTpes.zip(argNames).zipWithIndex.foldLeft(base) {
       case (ctx, ((rawTpe, name), j)) =>
         ctx.extend(name, IndChecker.instantiateCtorArgTpe(rawTpe, j, paramVals))

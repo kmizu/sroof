@@ -60,11 +60,16 @@ object IndChecker:
                 (spine.take(p) ++ idxVals)
                   .foldLeft(Term.Ind(indRef, Nil, Nil): Term)(Term.App.apply)
             else
-              // Infer param values from arg types (heuristic: works for m=0 and simple m=1 cases)
-              val paramVals = extractParamValsFromArgs(indDef, ctorDef, args, ctx, indDef.params.length)
-              checkArgsDependent(ctx, args, ctorDef.argTpes, paramVals).map { _ =>
-                // Return type: Ind applied to inferred param values
-                paramVals.foldLeft(Term.Ind(indRef, Nil, Nil): Term)(Term.App.apply)
+              // Infer param values from arg types (heuristic: works for m=0 and simple m=1 cases).
+              // Substitution uses the declaration's full binder width (see `paddedSpine`);
+              // the *inferred type* keeps only the parameters, so a phantom-index family
+              // still infers exactly what it inferred before.
+              val subst = paddedSpine(indDef,
+                extractParamValsFromArgs(indDef, ctorDef, args, ctx,
+                  indDef.params.length + indDef.indices.length))
+              checkArgsDependent(ctx, args, ctorDef.argTpes, subst).map { _ =>
+                subst.take(indDef.params.length)
+                  .foldLeft(Term.Ind(indRef, Nil, Nil): Term)(Term.App.apply)
               }
 
   // ---- Mat: match expression type checking ----
@@ -161,7 +166,9 @@ object IndChecker:
                   (paramVals.take(p) ++ idxVals)
                     .foldLeft(Term.Ind(indRef, Nil, Nil): Term)(Term.App.apply)
             else
-              checkArgsDependent(ctx, args, ctorDef.argTpes, paramVals).map { _ =>
+              // The spine must be as wide as the declaration's binders; the expected
+              // type of a phantom-index family supplies only its parameters.
+              checkArgsDependent(ctx, args, ctorDef.argTpes, paddedSpine(indDef, paramVals)).map { _ =>
                 // Return type: Ind applied to param values
                 paramVals.foldLeft(Term.Ind(indRef, Nil, Nil): Term)(Term.App.apply)
               }
@@ -178,6 +185,26 @@ object IndChecker:
    *  state their indices also means a half-annotated declaration is treated as
    *  un-indexed rather than silently deriving `Nil` for the annotated ones.
    */
+  /** Pad a spine of known values out to the width the declaration's binders occupy.
+   *
+   *  `Elaborator.elabInductive` puts `(params ++ indices)` in scope when it
+   *  elaborates constructor argument types — **unconditionally**, whether or not the
+   *  constructors go on to state their indices.  So `argTpes` always uses the p+q
+   *  layout, and substituting with a p-wide spine lands every parameter one slot per
+   *  index off: for `Vec(A)(n)` written the phantom way, `head: A` was left as a
+   *  dangling free variable while the index slot was overwritten with `A`.
+   *
+   *  Nothing noticed because `def` bodies were not kernel-checked, and the phantom
+   *  form is the only shape that reaches this — an `isIndexed` family always has a
+   *  full spine already.  Missing index values become `Uni(0)`: a phantom index is by
+   *  definition unreferenced, and if one ever were referenced the substitution would
+   *  produce a type that fails to check rather than one that wrongly passes.
+   */
+  def paddedSpine(indDef: IndDef, known: List[Term]): List[Term] =
+    val width = indDef.params.length + indDef.indices.length
+    if known.length >= width then known
+    else known ++ List.fill(width - known.length)(Term.Uni(0))
+
   def isIndexedFamily(indDef: IndDef): Boolean = isIndexed(indDef)
 
   /** A constructor's declared index values, stated in a branch context.
@@ -467,7 +494,7 @@ object IndChecker:
   )(using env: GlobalEnv): Either[TypeError, Unit] =
     // Extract type param values from the scrutinee's type.
     // e.g. scrutTpe = App(Ind("PolyList"), Nat) → paramVals = [Nat]
-    val paramVals = extractIndParams(scrutTpe)
+    val paramVals = paddedSpine(indDef, extractIndParams(scrutTpe))
     cases.foldLeft[Either[TypeError, Unit]](Right(())) { case (acc, mc) =>
       acc.flatMap { _ =>
         indDef.ctors.find(_.name == mc.ctor) match

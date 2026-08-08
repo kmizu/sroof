@@ -124,7 +124,11 @@ Note: in `build.sbt` the `eval` directory's project variable is named `nbe` (so 
 
 **Elaboration pipeline**: `.sroof` file → `Parser.scala` (Parsley combinators) → `SurfaceAst` → `Elaborator.scala` → core `Term`s + `GlobalEnv`. The `ElabResult` carries the `GlobalEnv` (inductives, defs, structures, operators, simpSet), elaborated def bodies, and `defspecs` (proposition + `SProof`).
 
-**Checker pipeline** (`cli/Checker.scala`): Two-phase. Phase 1 (`generateProofCandidates`) runs tactics to produce proof terms. Phase 2 (`finalizeProofCandidates`) passes every term through `Kernel.verify` — this is the trust boundary. Tactics are untrusted generators; the kernel is the sole arbiter.
+**Checker pipeline** (`cli/Checker.scala`): `checkDefBodies` (every `def` body against its declared type, via `Kernel.verify` — added in v0.14; before that a `def` could say one thing and mean another), then Phase 1 (`generateProofCandidates`) runs tactics to produce proof terms, then Phase 2 (`finalizeProofCandidates`) passes every term through `Kernel.verify`. Tactics are untrusted generators; the kernel is the sole arbiter.
+
+**`IndChecker` and `Bidirectional` are inside the TCB.** `Kernel.verify` delegates to `Bidirectional.check`, which calls straight into `IndChecker` — the kernel re-checks a proof *using* those rules, so it cannot catch a bug in them. `IndChecker`'s header used to claim the opposite. See `docs/trust-model.md`.
+
+**`Eval` throws on terms it cannot reduce; that must never reach the user.** `Bidirectional.whnf`, `convCheck`, `Kernel.check`, and `Checker.executeProof` each catch it and turn it into a rejection. Every catch is rejection-safe by construction — an exception can lose a proof, never manufacture one.
 
 **Incremental caching** (`Main.scala`): Three-level in-process caches (parse → elab → proof) keyed on MurmurHash3 of source/AST. Each cache layer is invalidated only when its upstream hash changes, enabling fast re-checks within the same JVM.
 
@@ -197,7 +201,11 @@ Five parallel GitHub Actions jobs (`.github/workflows/ci.yml`):
 - **Parser changes**: `syntax/Parser.scala` uses Parsley combinators. Changes there may require updating `Elaborator.scala` in tandem.
 - **Kernel trust boundary**: Tactics (`Builtins.scala`, `TacticM`) are NOT trusted. Every proof term must pass `Kernel.verify`; any shortcut that skips this check breaks soundness. This applies identically to both frontends.
 
-**`CtorDef.retIndices` is a stub — nothing writes it.** `IndDef.indices` is populated (the second parameter list of `inductive Vec(A: Type)(n: Nat)`) and its names are in scope for constructor argument types, but `Elaborator.elabInductive` ends with `CtorDef(ctor.name, argTpes)`, and `SCtor.retTpe` has **no readers anywhere**. The parser also cannot express `Vec(A)(Nat.zero)` as a constructor return type. So `Vec`'s index is phantom: `Vec.nil` and `Vec.cons(...)` have the same type. Do not read the field's doc comment as a description of behaviour. See `docs/indexed-families.md`.
+**Indexed families work (v0.8–v0.13); `stdlib/Vec.sroof` just does not use them.** `CtorDef.retIndices` is populated by `Elaborator.elabInductive` and read by `IndChecker`. A constructor may declare `case vnil: Vec(A)(Nat.zero)`, the index is enforced, an indexed family may be a parameter type, and both `cases` and `induction` refine the index per branch.
+
+Everything is gated on `IndChecker.isIndexedFamily` — indices declared **and** stated on every constructor. `stdlib/Vec.sroof` returns a bare `Vec`, so it keeps a phantom index and the pre-v0.10 behaviour; that is how it is written, not what the tool can do. `examples/vec_indexed.sroof` is the indexed form. See `docs/indexed-families.md`.
+
+**A family that declares indices uses a `p+q`-wide De Bruijn window in `argTpes`, phantom or not.** `Elaborator.elabInductive` puts `(params ++ indices)` in scope unconditionally, so substituting with a `p`-wide spine lands every parameter one slot per index off. Use `IndChecker.paddedSpine`. This was invisible until `def` bodies were checked.
 
 **Parameterised inductives: three coordinate rules (fixed in v0.7).** Each was invisible because it is the *identity* on a monomorphic type — so a passing monomorphic suite proves nothing about them.
 1. `Builtins.buildFixCase` must instantiate a constructor's `argTpes` at the scrutinee's type arguments before extending the branch context. Raw `argTpes` refer to type parameters via `Var(j..j+m-1)` (the progressive convention `IndChecker.instantiateArgType` defines), which are bound nowhere in a branch context.

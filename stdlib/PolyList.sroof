@@ -22,45 +22,48 @@ def plus(n: Nat, m: Nat): Nat {
   }
 }
 
-// Polymorphic list: structural recursion puts xs first (termination checker).
-// Type parameter A is passed explicitly as the last argument.
+// Polymorphic list.  The type parameter comes first and every occurrence of the
+// type is the applied `PolyList(A)`, so a constructor field's type and a
+// definition's parameter type agree.  Recursion is on `xs`; it does not have to
+// be the first parameter for the termination checker.
 inductive PolyList(A: Type) {
   case nil: PolyList
   case cons(head: A, tail: PolyList(A)): PolyList
 }
 
-def poly_length(xs: PolyList, A: Type): Nat {
+def poly_length(A: Type, xs: PolyList(A)): Nat {
   match xs {
     case PolyList.nil        => Nat.zero
-    case PolyList.cons(h, t) => Nat.succ(poly_length(t, A))
+    case PolyList.cons(h, t) => Nat.succ(poly_length(A, t))
   }
 }
 
-def poly_append(xs: PolyList, ys: PolyList, A: Type): PolyList {
+def poly_append(A: Type, xs: PolyList(A), ys: PolyList(A)): PolyList(A) {
   match xs {
     case PolyList.nil        => ys
-    case PolyList.cons(h, t) => PolyList.cons(h, poly_append(t, ys, A))
+    case PolyList.cons(h, t) => PolyList.cons(h, poly_append(A, t, ys))
   }
 }
 
-def poly_reverse(xs: PolyList, A: Type): PolyList {
+def poly_reverse(A: Type, xs: PolyList(A)): PolyList(A) {
   match xs {
     case PolyList.nil        => PolyList.nil
-    case PolyList.cons(h, t) => poly_append(poly_reverse(t, A), PolyList.cons(h, PolyList.nil), A)
+    case PolyList.cons(h, t) =>
+      poly_append(A, poly_reverse(A, t), PolyList.cons(h, PolyList.nil))
   }
 }
 
 // ---- Base-case defspecs (trivial) ----
 
-defspec poly_length_nil(A: Type): poly_length(PolyList.nil, A) = Nat.zero {
+defspec poly_length_nil(A: Type): poly_length(A, PolyList.nil) = Nat.zero {
   by trivial
 }
 
-defspec poly_append_nil_left(A: Type, ys: PolyList): poly_append(PolyList.nil, ys, A) = ys {
+defspec poly_append_nil_left(A: Type, ys: PolyList(A)): poly_append(A, PolyList.nil, ys) = ys {
   by trivial
 }
 
-defspec poly_reverse_nil(A: Type): poly_reverse(PolyList.nil, A) = PolyList.nil {
+defspec poly_reverse_nil(A: Type): poly_reverse(A, PolyList.nil) = PolyList.nil {
   by trivial
 }
 

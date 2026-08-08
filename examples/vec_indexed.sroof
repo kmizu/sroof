@@ -104,9 +104,34 @@ defspec vlenr_correct(A: Type, n: Nat, v: Vec(A)(n)): vlenr(A, n, v) = n {
   }
 }
 
-// What is still missing, and it is no longer the tactic engine: a `def` body is
-// not type-checked at all, so a dependently-typed definition's return index is
-// never verified.  `def vapp(...): Vec(A)(plus(n, m))` would be accepted whatever
-// it returned.  That is why `stdlib/Vec.sroof` has not been rewritten with real
-// indices — the declaration would promise a length nothing checks.
-// See step 5 in docs/indexed-families.md.
+// ---- A length that the type carries ----
+//
+// `vapp` declares that appending an n-vector to an m-vector gives a
+// `plus(n, m)`-vector.  Since v0.14 a `def` body is kernel-checked, so that is a
+// claim the tool verifies rather than a comment: change the return type to
+// `Vec(A)(Nat.zero)` and this file stops checking.
+//
+// No separate lemma is needed — the theorem *is* the type.
+def plus(a: Nat, b: Nat): Nat {
+  match a {
+    case Nat.zero    => b
+    case Nat.succ(k) => Nat.succ(plus(k, b))
+  }
+}
+
+def vapp(A: Type, n: Nat, m: Nat, xs: Vec(A)(n), ys: Vec(A)(m)): Vec(A)(plus(n, m)) {
+  match xs {
+    case Vec.vnil           => ys
+    case Vec.vcons(k, h, t) => Vec.vcons(plus(k, m), h, vapp(A, k, m, t, ys))
+  }
+}
+
+// Appending onto the empty vector is the identity, which follows by reduction
+// once the index bookkeeping above is accepted.
+defspec vapp_nil_left(A: Type, m: Nat, ys: Vec(A)(m)): vapp(A, Nat.zero, m, Vec.vnil, ys) = ys {
+  by trivial
+}
+
+// `stdlib/Vec.sroof` still uses the older phantom form.  That is now a matter of
+// not having converted it rather than of the tool being unable to: everything
+// this file does is available there too.  See docs/indexed-families.md.

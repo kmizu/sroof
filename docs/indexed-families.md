@@ -294,22 +294,28 @@ Each step is useful on its own and testable before the next begins.
    prove something that needs them — `concat` preserving length is the obvious
    first target, and the file already defines `concat`.
 
-   ⚠️ **Blocked, and not by the tactic engine any more.** A `def` body is not
-   type-checked at all. Both of these are accepted today:
+   ✅ **Unblocked in v0.14.0**, and demonstrated — though the stdlib file itself is
+   not converted yet.
+
+   The blocker was that a `def` body was not type-checked at all, so a
+   length-preserving `vapp` would *declare* `Vec(A)(plus(n, m))` with nothing
+   checking it delivered one. `Checker.checkDefBodies` now runs every body through
+   `Kernel.verify`, and `examples/vec_indexed.sroof` carries the result:
 
    ```scala
-   def f(n: Nat): Nat { Bool.tru }
-   def vapp(A: Type, n: Nat, m: Nat, xs: Vec(A)(n), ys: Vec(A)(m)): Vec(A)(Nat.zero) { … }
+   def vapp(A: Type, n: Nat, m: Nat, xs: Vec(A)(n), ys: Vec(A)(m)): Vec(A)(plus(n, m)) {
+     match xs {
+       case Vec.vnil           => ys
+       case Vec.vcons(k, h, t) => Vec.vcons(plus(k, m), h, vapp(A, k, m, t, ys))
+     }
+   }
    ```
 
-   Only a `defspec`'s proposition and proof reach `Kernel.verify`. So a
-   length-preserving `vapp` would *declare* `Vec(A)(plus(n, m))` and nothing would
-   check that it delivers it — the declaration would promise a length no one
-   verifies, which is a worse state than the phantom index it replaced.
+   There is no separate lemma: the theorem *is* the type. Changing the return type
+   to `Vec(A)(Nat.zero)` makes the file stop checking — verified, not asserted.
 
-   This is pre-existing and unrelated to indexed families; it simply becomes the
-   binding constraint once step 4 is out of the way. Step 5 therefore starts with
-   kernel-checking `def` bodies, not with rewriting the stdlib.
+   What remains is converting `stdlib/Vec.sroof` itself, which is now a matter of
+   rewriting a shipped signature rather than of the tool being unable to.
 
 6. **Scala frontend.** Scala has no indexed families; the equivalent is a GADT:
 

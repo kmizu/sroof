@@ -5,6 +5,77 @@ All release detail lives here. Earlier releases also had per-version
 favour of this one file. The long-form notes for v0.3–v0.9 remain published on
 the [GitHub releases page](https://github.com/kmizu/sroof/releases).
 
+## [0.14.0] - 2026-08-08
+
+A bug-hunting release. The headline is that **`def` bodies are now checked against
+their declared types** — until now nothing did, and this was accepted:
+
+```scala
+def f(n: Nat): Nat { Bool.tru }
+```
+
+Only a `defspec` reached the kernel, and every proposition is written in terms of
+definitions. Turning the check on immediately found five real defects in the
+shipped stdlib and examples, and closed a crash.
+
+### Fixed
+- **`def` bodies are kernel-checked** (`Checker.checkDefBodies`), before proofs: a
+  proposition built from a definition that does not type-check is not worth a proof
+  error about.
+
+- **Five broken definitions in the shipped corpus.** `stdlib/PolyList.sroof`'s
+  `poly_length`, `poly_append` and `poly_reverse`, plus `concat` in both
+  `stdlib/Vec.sroof` and `examples/vec.sroof`, declared their type parameter *last*.
+  That forces a bare `PolyList`/`Vec` in the signature where the value has the
+  applied type — the exact anti-pattern PolyList's own header warns against, and
+  which v0.7 worked around by adding a correct `PList` beside the broken originals
+  instead of fixing them. Their signatures now take the type parameter first.
+
+- **A `p`-wide substitution window for a family that declares indices.**
+  `Elaborator.elabInductive` puts `(params ++ indices)` in scope when it elaborates
+  constructor argument types — *unconditionally*, whether or not the constructors
+  state their indices. Substituting with a parameters-only spine therefore lands
+  every parameter one slot per index off: for the phantom `Vec(A)(n)`, `head: A` was
+  left dangling while the index slot was overwritten with `A`. `IndChecker.paddedSpine`.
+
+- **An evaluator failure crashed the CLI with a stack trace.** `Eval` throws on an
+  unbound index, a match with no branch for the value's constructor, or an
+  application of a non-function. Reaching users needed nothing exotic — passing
+  arguments in the wrong order did it, via
+  `RuntimeException: Non-exhaustive match: no case for constructor 'tru'`.
+
+  `Bidirectional.whnf`, `convCheck`, `Kernel.check` and `Checker.executeProof` now
+  each turn it into a rejection. Every catch is rejection-safe by construction: an
+  unreduced term is strictly less likely to match, and a term the evaluator cannot
+  reduce is equal to nothing. An exception can lose a proof, never manufacture one.
+
+### Step 5 is unblocked
+A dependently-typed definition's return index is now verified, so this is a checked
+claim rather than a comment:
+
+```scala
+def vapp(A: Type, n: Nat, m: Nat, xs: Vec(A)(n), ys: Vec(A)(m)): Vec(A)(plus(n, m)) { … }
+```
+
+There is no separate lemma — the theorem *is* the type. It is in
+`examples/vec_indexed.sroof`, and changing the return type to `Vec(A)(Nat.zero)`
+makes that file stop checking (verified, not asserted). Converting
+`stdlib/Vec.sroof` itself is now a matter of rewriting a shipped signature.
+
+### Verification
+623 tests. Five of the seven new cases were run against the v0.13 tree and **fail**
+there — and the crash case fails by actually throwing
+`java.lang.RuntimeException`, which is the clearest form the evidence could take.
+
+A corpus test checks every shipped `.sroof` file, so the five definitions cannot
+regress. All 616 pre-existing tests pass unchanged.
+
+### Also corrected
+`CLAUDE.md` still described `CtorDef.retIndices` as "a stub — nothing writes it",
+which stopped being true in v0.8 and stopped being harmless in v0.10. The
+`stdlib/Vec.sroof` header still described the parser as unable to express an
+indexed return type. Both now say what the code does.
+
 ## [0.13.0] - 2026-08-08
 
 Step 4 is finished. `induction` over an indexed family now carries a working

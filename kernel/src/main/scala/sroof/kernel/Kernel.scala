@@ -45,8 +45,12 @@ object Kernel:
         val (tpe, lhs, rhs) = triple
         val env = EnvBuilder.fromContext(ctx)
         // refl(a) : Eq T a a  iff  a ≡ lhs ≡ rhs (definitionally)
-        if Quote.convEqual(ctx.size, env, a, lhs) &&
-           Quote.convEqual(ctx.size, env, lhs, rhs) then
+        // A term the evaluator cannot reduce is not equal to anything: an
+        // evaluator exception is a rejection, never an escape.
+        val reflOk =
+          try Quote.convEqual(ctx.size, env, a, lhs) && Quote.convEqual(ctx.size, env, lhs, rhs)
+          catch case scala.util.control.NonFatal(_) => false
+        if reflOk then
           // Also verify a : T, but skip when T is Meta(-1) (unknown, from 2-arg Eq form).
           // In that case, a was already type-checked by the bidirectional checker.
           tpe match

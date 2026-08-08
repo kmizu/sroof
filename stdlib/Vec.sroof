@@ -1,12 +1,16 @@
 // stdlib v1: Vec
 //
-// NOTE: the `n: Nat` below is a **phantom** index.  A constructor's declared
-// return type is parsed and discarded, and `CtorDef.retIndices` is never
-// populated, so `Vec.nil` and `Vec.cons(...)` have the same type as far as the
-// checker is concerned — nothing about lengths can be stated or proved yet.
-// The bare `Vec` in the signatures below is not a style choice: the parser
-// cannot express `Vec(A)(Nat.zero)` in a constructor's return type.
-// See docs/indexed-families.md for what real index support would require.
+// NOTE: the `n: Nat` below is a **phantom** index — in this file only.  A
+// constructor here returns the bare `Vec`, so `CtorDef.retIndices` stays empty
+// and `Vec.nil` and `Vec.cons(...)` have the same type as far as the checker is
+// concerned.  Nothing about lengths can be stated or proved from this
+// declaration.
+//
+// That is a property of how it is written, not a limitation of the tool: since
+// v0.8 a constructor may declare `Vec(A)(Nat.zero)`, and since v0.13 such a
+// family supports case analysis and induction.  See
+// `examples/vec_indexed.sroof` for the indexed form, and
+// `docs/indexed-families.md` for why this file has not been converted.
 
 inductive Nat {
   case zero: Nat
@@ -25,15 +29,19 @@ inductive Vec(A: Type)(n: Nat) {
   case cons(m: Nat, head: A, tail: Vec(A)): Vec
 }
 
-def concat(xs: Vec, ys: Vec, A: Type, n: Nat, m: Nat): Vec {
+// The type parameter comes first so that a constructor field's type and a
+// definition's parameter type are both the applied `Vec(A)`.  Written the other
+// way round the signature needs a bare `Vec`, which does not match — and until
+// def bodies were kernel-checked, nothing said so.
+def concat(A: Type, n: Nat, m: Nat, xs: Vec(A), ys: Vec(A)): Vec(A) {
   match xs {
     case Vec.nil           => ys
-    case Vec.cons(k, h, t) => Vec.cons(plus(k, m), h, concat(t, ys, A, k, m))
+    case Vec.cons(k, h, t) => Vec.cons(plus(k, m), h, concat(A, k, m, t, ys))
   }
 }
 
 // length consistency baseline lemma for nil branch
 
-defspec concat_nil(A: Type, ys: Vec): concat(Vec.nil, ys, A, Nat.zero, Nat.zero) = ys {
+defspec concat_nil(A: Type, ys: Vec(A)): concat(A, Nat.zero, Nat.zero, Vec.nil, ys) = ys {
   by trivial
 }

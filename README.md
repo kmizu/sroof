@@ -159,6 +159,21 @@ python3 scripts/benchmark.py --runs 3 --thresholds benchmarks/thresholds.json --
 - published releases: <https://github.com/kmizu/sroof/releases>
 - publishing setup: [`docs/publishing.md`](docs/publishing.md)
 
+### Migration Notes (v0.13 -> v0.14)
+
+- **`def` bodies are now type-checked.** A definition whose body does not match its
+  declared type is rejected. This was previously accepted, so a file that checked
+  before may now fail — correctly. Five such definitions were found in this
+  repository's own stdlib and examples.
+- **Breaking:** `poly_length`, `poly_append`, `poly_reverse` and both `concat`s now
+  take the type parameter **first**, e.g. `poly_length(A, xs)` and
+  `concat(A, n, m, xs, ys)`. The previous signatures did not type-check.
+- Evaluator failures are diagnostics rather than stack traces. If you caught
+  `RuntimeException` from the API, you now get a `Left` instead.
+- A dependently-typed definition's return index is verified, so
+  `def vapp(...): Vec(A)(plus(n, m))` is a checked claim. See
+  [`examples/vec_indexed.sroof`](examples/vec_indexed.sroof).
+
 ### Migration Notes (v0.12 -> v0.13)
 
 - **Nothing breaks.** All 611 pre-existing tests pass unchanged; 616 in total.

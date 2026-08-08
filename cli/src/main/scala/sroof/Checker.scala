@@ -95,10 +95,40 @@ object Checker:
       }
     }
 
+  /** Check every `def` body against its declared type.
+   *
+   *  Until v0.14 nothing did, so `def f(n: Nat): Nat { Bool.tru }` was accepted and a
+   *  definition could say one thing and mean another.  Only a `defspec` reached the
+   *  kernel, and every proposition is written in terms of these definitions.
+   *
+   *  Finding it also fixed five real defects: `stdlib/PolyList.sroof`'s three
+   *  polymorphic functions and the two `concat`s declared their type parameter last,
+   *  which forces a bare `PolyList`/`Vec` in the signature where the value has the
+   *  applied type — the exact anti-pattern the files' own header warns about.
+   *
+   *  Runs before proofs: a proposition built from a definition that does not
+   *  type-check is not worth a proof error about.
+   */
+  def checkDefBodies(result: ElabResult)(using env: GlobalEnv): Either[String, Unit] =
+    // `defs` is a Map, so sort for a deterministic first message.  Order is otherwise
+    // irrelevant: a definition can only refer to ones already declared.
+    result.defs.toList.sortBy(_._1).foldLeft[Either[String, Unit]](Right(())) {
+      case (acc, (name, body)) =>
+        acc.flatMap { _ =>
+          env.lookupDef(name) match
+            case None      => Right(())   // not registered; nothing to check against
+            case Some(entry) =>
+              Kernel.verify(Context.empty, body, entry.tpe) match
+                case Right(())  => Right(())
+                case Left(err)  => Left(s"Definition '$name' does not match its declared type: ${err.message}")
+        }
+    }
+
   /** Like checkAll but also returns sorry warnings. */
   def checkAllWithWarnings(result: ElabResult): Either[String, (GlobalEnv, List[String])] =
     given GlobalEnv = result.env
     for
+      _ <- checkDefBodies(result)
       generated <- generateProofCandidates(result)
       (candidates, warnings) = generated
       _ <- finalizeProofCandidates(candidates)
@@ -192,6 +222,18 @@ object Checker:
     * @return either an error string or the core proof term
     */
   def executeProof(ctx: Context, prop: Term, proof: SProof)(using env: GlobalEnv): Either[String, Term] =
+    // Last line of defence.  Tactics are untrusted proof-term generators and the
+    // evaluator throws on terms it cannot reduce; neither is a reason to hand the
+    // user a stack trace.  Anything that escapes becomes a failed proof, which is
+    // the safe direction — a thrown exception can only ever lose a proof, not
+    // manufacture one, because the kernel still has to accept whatever comes back.
+    try executeProofUnguarded(ctx, prop, proof)
+    catch
+      case scala.util.control.NonFatal(e) =>
+        Left(s"Internal error while running the proof: ${e.getMessage}. " +
+             "This is a bug in sroof — the proof is rejected rather than accepted.")
+
+  private def executeProofUnguarded(ctx: Context, prop: Term, proof: SProof)(using env: GlobalEnv): Either[String, Term] =
     proof match
       case SProof.SBy(tactic) =>
         val t = tacticFromSurface(tactic)
