@@ -73,3 +73,18 @@ class StdlibSuite extends FunSuite:
     assert(doc.contains("stdlib/String.sroof"))
     assert(doc.contains("stdlib/Sigma.sroof"))
     assert(doc.contains("stdlib/Regex.sroof"))
+
+  test("stdlib/Vec carries its length in the type"):
+    // Converted from a phantom index in v0.15.  `concat`'s return type is the
+    // length theorem and there is no separate lemma; breaking it must break the
+    // file, or the type is decoration.
+    val src = java.nio.file.Files.readString(java.nio.file.Paths.get("stdlib/Vec.sroof"))
+    assert(
+      src.contains("Vec(A)(plus(n, m))"),
+      "concat must declare the summed length",
+    )
+    assert(Main.processSource(src, "stdlib/Vec.sroof").isRight, "the honest version must check")
+    val broken = src.replace("): Vec(A)(plus(n, m)) {", "): Vec(A)(Nat.zero) {")
+    assert(broken != src, "the substitution must have applied")
+    val r = Main.processSource(broken, "broken.sroof")
+    assert(r.isLeft, s"a concat claiming length zero must be rejected, got: $r")

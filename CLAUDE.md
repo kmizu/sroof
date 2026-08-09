@@ -175,7 +175,7 @@ Additional language features:
 - `structure Name { field: Type ... }` — record types (desugared to inductive + field accessor defs)
 - `instance name: StructName { field = expr ... }` — record values with named field bindings (typeclass-style; see `examples/typeclass.sroof`)
 - `@[simp] def ...` — marks a def as a default simplification lemma
-- `#check expr` — type-checks an expression inline (results appear in `--json` output under `checks`)
+- `#check expr` — type-checks an expression inline. Printed by the CLI and reported under `checks` in `--json`; a `#check` that does not elaborate or type-check **fails the file** (v0.15 — before that it was computed and discarded)
 - `import "stdlib/Nat.sroof"` — imports a stdlib file; stdlib lives in `stdlib/` at repo root (Nat, Bool, Char, String, List, PolyList, Vec, Option, Either, Pair, Sigma, Dictionary, Relation, Regex, Effect)
 - Operator overloading via `operator (x: T1) + (y: T2): T3 = body` syntax, registered in `GlobalEnv.operators`
 - `stdlib/bundles/*.bundle` — lemma-bundle manifests (docs/lemma-bundles.md). Documentation-level convention only; not parsed by the tool

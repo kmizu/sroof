@@ -159,6 +159,18 @@ python3 scripts/benchmark.py --runs 3 --thresholds benchmarks/thresholds.json --
 - published releases: <https://github.com/kmizu/sroof/releases>
 - publishing setup: [`docs/publishing.md`](docs/publishing.md)
 
+### Migration Notes (v0.14 -> v0.15)
+
+- **`stdlib/Vec.sroof` uses real indices.** `Vec.nil` is a `Vec(A)(Nat.zero)`, and
+  `concat(A, n, m, xs, ys)` returns a `Vec(A)(plus(n, m))`. Code written against the
+  phantom form needs the index supplied; `examples/stdlib/vec_usage.sroof` shows the
+  shape.
+- **A `#check` that does not type-check now fails the file** instead of passing
+  silently, and successful ones print their type. `--json` reports `ok:false` at the
+  top level to match.
+- **`simplify` rejects an unknown lemma name** rather than ignoring it. A file that
+  passed with a typo'd name will now say so.
+
 ### Migration Notes (v0.13 -> v0.14)
 
 - **`def` bodies are now type-checked.** A definition whose body does not match its

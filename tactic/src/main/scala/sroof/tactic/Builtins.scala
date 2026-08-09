@@ -1006,8 +1006,40 @@ object Builtins:
         for
           goalPair  <- TacticM.currentGoal
           (mv, goal) = goalPair
+          _         <- TacticM.liftEither(checkLemmaNames(goal, orderedSpecs, lemmas.nonEmpty))
           result    <- trySimplifySpecs(mv, goal, orderedSpecs)
         yield result
+
+  /** Reject a `simplify` lemma name that resolves to nothing.
+   *
+   *  `tryGlobalLemmaAsIH` falls back to `trivial` when a name is not found, so a typo
+   *  used to be silent: it closed anyway on a goal `trivial` could handle, and on one
+   *  it could not, the error pointed at the goal rather than at the name.  Both are
+   *  bad, and the second is worse — it sends you to debug the wrong thing.
+   *
+   *  A name resolves if it is a hypothesis in the goal context or a global definition.
+   *  Proven `defspec`s are registered as definitions (`Checker` adds each one to the
+   *  environment as it is proved), so lemmas are covered by the same lookup.
+   *
+   *  Only checked for names the user wrote.  The default `simpSet` comes from
+   *  `@[simp]` annotations on definitions that exist by construction.
+   */
+  private def checkLemmaNames(
+    goal:      Goal,
+    specs:     List[SimpRewriteDb.RuleSpec],
+    userGiven: Boolean,
+  )(using env: GlobalEnv): Either[TacticError, Unit] =
+    if !userGiven then Right(())
+    else
+      specs.map(_.lemmaName).find { name =>
+        findVarByName(goal.ctx, name).isLeft && env.lookupDef(name).isEmpty
+      } match
+        case None       => Right(())
+        case Some(name) =>
+          Left(TacticError.Custom(
+            s"simplify: unknown lemma '$name' — not a hypothesis in scope and not a " +
+            s"definition or proved lemma. Check the spelling."
+          ))
 
   private def trySimplifySpecs(
     mv: MetaVar,

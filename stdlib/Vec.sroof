@@ -1,16 +1,16 @@
-// stdlib v1: Vec
+// stdlib v2: Vec — a list whose length is in its type.
 //
-// NOTE: the `n: Nat` below is a **phantom** index — in this file only.  A
-// constructor here returns the bare `Vec`, so `CtorDef.retIndices` stays empty
-// and `Vec.nil` and `Vec.cons(...)` have the same type as far as the checker is
-// concerned.  Nothing about lengths can be stated or proved from this
-// declaration.
+// The `n: Nat` is a real index, not a phantom one: each constructor declares
+// the length of the value it builds, and the checker derives that length rather
+// than taking a caller's word for it.  `Vec.nil` is a `Vec(A)(Nat.zero)` and
+// nothing else.
 //
-// That is a property of how it is written, not a limitation of the tool: since
-// v0.8 a constructor may declare `Vec(A)(Nat.zero)`, and since v0.13 such a
-// family supports case analysis and induction.  See
-// `examples/vec_indexed.sroof` for the indexed form, and
-// `docs/indexed-families.md` for why this file has not been converted.
+// `concat`'s return type is therefore the length theorem, and there is no
+// separate lemma to prove: appending an n-vector to an m-vector yields a
+// `plus(n, m)`-vector, and since v0.14 a `def` body is kernel-checked, so that
+// claim is verified.  Change it and this file stops checking.
+//
+// Converted from the phantom form in v0.15; see docs/indexed-families.md.
 
 inductive Nat {
   case zero: Nat
@@ -25,23 +25,38 @@ def plus(n: Nat, m: Nat): Nat {
 }
 
 inductive Vec(A: Type)(n: Nat) {
-  case nil: Vec
-  case cons(m: Nat, head: A, tail: Vec(A)): Vec
+  case nil: Vec(A)(Nat.zero)
+  case cons(m: Nat, head: A, tail: Vec(A)(m)): Vec(A)(Nat.succ(m))
 }
 
-// The type parameter comes first so that a constructor field's type and a
-// definition's parameter type are both the applied `Vec(A)`.  Written the other
-// way round the signature needs a bare `Vec`, which does not match — and until
-// def bodies were kernel-checked, nothing said so.
-def concat(A: Type, n: Nat, m: Nat, xs: Vec(A), ys: Vec(A)): Vec(A) {
+// The length theorem, carried by the type.  The type parameter comes first so a
+// constructor field's type and a definition's parameter type are both the
+// applied form.
+def concat(A: Type, n: Nat, m: Nat, xs: Vec(A)(n), ys: Vec(A)(m)): Vec(A)(plus(n, m)) {
   match xs {
     case Vec.nil           => ys
     case Vec.cons(k, h, t) => Vec.cons(plus(k, m), h, concat(A, k, m, t, ys))
   }
 }
 
-// length consistency baseline lemma for nil branch
-
-defspec concat_nil(A: Type, ys: Vec(A)): concat(A, Nat.zero, Nat.zero, Vec.nil, ys) = ys {
+// Appending onto the empty vector is the identity — by reduction, once the
+// index bookkeeping above is accepted.
+defspec concat_nil(A: Type, m: Nat, ys: Vec(A)(m)): concat(A, Nat.zero, m, Vec.nil, ys) = ys {
   by trivial
+}
+
+// `vlen` reads the length back out, and it agrees with the index for every
+// vector — proved by induction, which needs the hypothesis at the tail's index.
+def vlen(A: Type, n: Nat, v: Vec(A)(n)): Nat {
+  match v {
+    case Vec.nil           => Nat.zero
+    case Vec.cons(m, h, t) => Nat.succ(vlen(A, m, t))
+  }
+}
+
+defspec vlen_is_index(A: Type, n: Nat, v: Vec(A)(n)): vlen(A, n, v) = n {
+  by induction v {
+    case nil            => trivial
+    case cons m h t ih  => simplify [ih]
+  }
 }

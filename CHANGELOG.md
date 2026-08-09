@@ -5,6 +5,68 @@ All release detail lives here. Earlier releases also had per-version
 favour of this one file. The long-form notes for v0.3–v0.9 remain published on
 the [GitHub releases page](https://github.com/kmizu/sroof/releases).
 
+## [0.15.0] - 2026-08-10
+
+Step 5, and three failures that were being swallowed.
+
+**`stdlib/Vec.sroof` now carries its length in the type.** `concat`'s return type
+is the theorem, and there is no separate lemma to prove:
+
+```scala
+def concat(A: Type, n: Nat, m: Nat, xs: Vec(A)(n), ys: Vec(A)(m)): Vec(A)(plus(n, m))
+```
+
+Since v0.14 a `def` body is kernel-checked, so that is verified rather than
+declared. `StdlibSuite` asserts that replacing it with `Vec(A)(Nat.zero)` makes the
+file stop checking — the only way to know the type is load-bearing. The file also
+proves `vlen_is_index` by induction, exercising the v0.13 machinery on shipped code.
+
+That completes steps 1–5 of `docs/indexed-families.md`. Only the Scala frontend
+(GADTs) remains.
+
+### Fixed
+- **A `#check` that does not type-check no longer reports OK.** The error string was
+  computed, the plain CLI never printed it, and the file passed — so
+  `#check Nat.succ(Bool.tru)` was completely silent. A `#check` is an assertion the
+  author wrote: it now fails the file, and successful ones print their type.
+
+- **The JSON path disagreed with the CLI about the same file.** It flagged the
+  individual check as `ok:false` while the document still said `ok:true`, so tooling
+  and the exit code gave different answers. One shared `Checker.evalChecks` now
+  backs both; the per-check flags stay, since that detail is what the JSON is for.
+
+- **`simplify` ignored an unknown lemma name.** `tryGlobalLemmaAsIH` fell back to
+  `trivial`, so a typo was silent whenever the goal closed anyway — and on a goal it
+  could not close, the error pointed at the *goal*, sending you to debug the proof
+  instead of the spelling. Unknown names are now named:
+
+  ```
+  simplify: unknown lemma 'ih_typo' — not a hypothesis in scope and not a
+  definition or proved lemma. Check the spelling.
+  ```
+
+  Only names the author wrote are checked; the default `simpSet` comes from
+  `@[simp]` annotations on definitions that exist by construction.
+
+None of the three was unsound — the kernel always had the final say. They were bad
+in a different way: each sent you to look at the wrong thing.
+
+### Verification
+631 tests. Five of the seven new cases fail on the v0.14 tree, plus the new
+`StdlibSuite` case.
+
+The JSON test asserts on the document's *opening* rather than using `contains`: the
+first version matched the per-check `"ok":false` inside the checks array and passed
+on the very tree it was meant to reject.
+
+All 623 pre-existing tests pass unchanged.
+
+### Probed and found correct
+Strict positivity rejects `inductive Bad { case mk(f: Bad -> Bad): Bad }`; the
+termination checker rejects a non-structural recursive call; `have`, `exact` and
+`rewrite` all reject what they should. `structure`/`instance` field mismatches are
+now caught too — as a side effect of v0.14, since an `instance` desugars to a `def`.
+
 ## [0.14.0] - 2026-08-08
 
 A bug-hunting release. The headline is that **`def` bodies are now checked against

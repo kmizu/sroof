@@ -210,13 +210,15 @@ object Main:
           System.err.println(s"Error reading file: ${e.getMessage}")
           sys.exit(1)
 
-    processSourceDetailed(source, filePath) match
+    processSourceDetailedWithChecks(source, filePath) match
       case Left(failure) =>
         System.err.println(s"Error: ${failure.error}")
         if failure.diagnostics.nonEmpty then
           System.err.println(Diagnostics.formatForCli(failure.diagnostics))
         sys.exit(1)
-      case Right((env, specCount, warnings)) =>
+      case Right((env, specCount, warnings, checkResults)) =>
+        // `#check` results were computed and thrown away here before v0.15.
+        checkResults.foreach { (expr, tpe) => println(s"#check $expr : $tpe") }
         warnings.foreach(w => System.err.println(w))
         if failOnSorry && warnings.nonEmpty then
           System.err.println("Error: sorry policy violation (use of sorry is disallowed in this mode)")
@@ -334,19 +336,8 @@ object Main:
       decls  <- Parser.parseProgram(source).left.map(e => s"Parse error in $fileName:\n$e")
       result <- Elaborator.elaborate(decls).left.map(e => s"Elaboration error in $fileName: ${e.message}")
       env    <- Checker.checkAll(result)
-    yield
-      given GlobalEnv = env
-      val checkResults = result.checks.map { sexpr =>
-        val exprStr = sexpr.toString
-        Elaborator.elabExprPublic(sexpr, env, Nil) match
-          case Left(err) =>
-            (exprStr, s"error: ${err.message}")
-          case Right(term) =>
-            Bidirectional.infer(Context.empty, term) match
-              case Left(err)  => (exprStr, s"error: ${err.getMessage}")
-              case Right(tpe) => (term.show, tpe.show)
-      }
-      (env, result.defspecs.size, checkResults)
+      checkResults <- Checker.evalChecks(result)(using env)
+    yield (env, result.defspecs.size, checkResults)
 
   /** processSource returning stable JSON schema v2.
     *
@@ -436,7 +427,15 @@ object Main:
                         case Right(tpe) =>
                           s"""{"expr":"${esc(term.show)}","ok":true,"type":"${esc(tpe.show)}","error":null}"""
                 }.mkString("[", ",", "]")
-                if failOnSorry && warnings.nonEmpty then
+                // The per-check `ok` flags stay — that detail is what the JSON is
+                // for — but the top-level `ok` has to agree with the exit code the
+                // plain path produces, or tooling and the CLI disagree about the
+                // same file.
+                val badCheck = Checker.evalChecks(result)(using env).left.toOption
+                if badCheck.isDefined then
+                  val msg = badCheck.get
+                  s"""{"schemaVersion":2,"ok":false,"phase":"check","file":"${esc(fileName)}","result":{"inductives":$indCount,"defs":$defCount,"defspecs":$specCount},"warnings":$warnJson,"sorryDiagnostics":$sorryDiagJson,"diagnostics":[${policyDiagnosticJson(msg)}],"checks":$checkJson,"error":"${esc(msg)}"}"""
+                else if failOnSorry && warnings.nonEmpty then
                   val msg = "sorry policy violation (use of sorry is disallowed in this mode)"
                   val policyDiagJson = policyDiagnosticJson(msg)
                   s"""{"schemaVersion":2,"ok":false,"phase":"policy","file":"${esc(fileName)}","result":{"inductives":$indCount,"defs":$defCount,"defspecs":$specCount},"warnings":$warnJson,"sorryDiagnostics":$sorryDiagJson,"diagnostics":[$policyDiagJson],"checks":$checkJson,"error":"$msg"}"""
@@ -447,6 +446,12 @@ object Main:
     source: String,
     fileName: String,
   ): Either[CheckFailure, (GlobalEnv, Int, List[String])] =
+    processSourceDetailedWithChecks(source, fileName).map { case (e, n, w, _) => (e, n, w) }
+
+  private def processSourceDetailedWithChecks(
+    source: String,
+    fileName: String,
+  ): Either[CheckFailure, (GlobalEnv, Int, List[String], List[(String, String)])] =
     Parser.parseProgram(source) match
       case Left(parseErr) =>
         val raw = parseErr.toString
@@ -464,7 +469,13 @@ object Main:
                 val message = proofErr
                 Left(CheckFailure("proof", message, Diagnostics.fromFailure(source, "proof", proofErr)))
               case Right((env, warnings)) =>
-                Right((env, result.defspecs.size, warnings))
+                given GlobalEnv = env
+                Checker.evalChecks(result) match
+                  case Left(checkErr) =>
+                    Left(CheckFailure("check", checkErr,
+                      Diagnostics.fromFailure(source, "check", checkErr)))
+                  case Right(checkResults) =>
+                    Right((env, result.defspecs.size, warnings, checkResults))
 
   private def hashString(value: String): String =
     // Keep hashing portable across JVM and Scala Native (avoid java.security APIs).

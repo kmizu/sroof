@@ -1,5 +1,8 @@
 # Indexed families and GADTs
 
+Status as of v0.15.0: **steps 1–5 are done.** `stdlib/Vec.sroof` carries its length
+in the type. Only step 6 (the Scala frontend / GADTs) remains.
+
 Status as of v0.13.0: **steps 1–4 are done.** You can declare `Vec(A)(n)`, use it
 as a parameter type, have the checker reject `Vec.vnil` where a length-one vector
 was required, and prove things about an arbitrary vector by `cases` *or* by
@@ -290,32 +293,24 @@ Each step is useful on its own and testable before the next begins.
    Note that the proof state above is only legible because v0.11 fixed
    `ProofStatePretty.formatContext`; before that, `v` printed at type `Vec n v`.
 
-5. **`.sroof` validation.** Rewrite `stdlib/Vec.sroof` with real indices and
-   prove something that needs them — `concat` preserving length is the obvious
-   first target, and the file already defines `concat`.
-
-   ✅ **Unblocked in v0.14.0**, and demonstrated — though the stdlib file itself is
-   not converted yet.
-
-   The blocker was that a `def` body was not type-checked at all, so a
-   length-preserving `vapp` would *declare* `Vec(A)(plus(n, m))` with nothing
-   checking it delivered one. `Checker.checkDefBodies` now runs every body through
-   `Kernel.verify`, and `examples/vec_indexed.sroof` carries the result:
+5. **`.sroof` validation.** ✅ **Done in v0.15.0.** `stdlib/Vec.sroof` uses real
+   indices, and `concat` carries the length theorem in its type:
 
    ```scala
-   def vapp(A: Type, n: Nat, m: Nat, xs: Vec(A)(n), ys: Vec(A)(m)): Vec(A)(plus(n, m)) {
-     match xs {
-       case Vec.vnil           => ys
-       case Vec.vcons(k, h, t) => Vec.vcons(plus(k, m), h, vapp(A, k, m, t, ys))
-     }
-   }
+   def concat(A: Type, n: Nat, m: Nat, xs: Vec(A)(n), ys: Vec(A)(m)): Vec(A)(plus(n, m))
    ```
 
-   There is no separate lemma: the theorem *is* the type. Changing the return type
-   to `Vec(A)(Nat.zero)` makes the file stop checking — verified, not asserted.
+   There is no separate lemma to prove — the return type *is* the statement, and
+   since v0.14 a `def` body is kernel-checked, so it is verified rather than
+   declared. `StdlibSuite` asserts that replacing it with `Vec(A)(Nat.zero)` makes
+   the file stop checking, which is the only way to know the type is load-bearing.
 
-   What remains is converting `stdlib/Vec.sroof` itself, which is now a matter of
-   rewriting a shipped signature rather than of the tool being unable to.
+   The file also proves `vlen_is_index` by induction, which needs the hypothesis at
+   the tail's index — the v0.13 machinery, exercised on shipped code rather than on
+   an example.
+
+   The blocker was never the tactic engine in the end: it was that `def` bodies were
+   not type-checked at all, so any length a definition declared was decoration.
 
 6. **Scala frontend.** Scala has no indexed families; the equivalent is a GADT:
 

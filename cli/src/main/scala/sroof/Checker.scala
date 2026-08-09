@@ -124,6 +124,29 @@ object Checker:
         }
     }
 
+  /** Evaluate the file's `#check` declarations.
+   *
+   *  A `#check` is an assertion the author wrote, so one that does not elaborate or
+   *  does not type-check is a failure of the file — not a note filed somewhere the
+   *  plain CLI never prints. Before v0.15 the result was computed, discarded by the
+   *  non-JSON path, and the file still reported OK, so `#check Nat.succ(Bool.tru)`
+   *  was completely silent.
+   */
+  def evalChecks(result: ElabResult)(using env: GlobalEnv): Either[String, List[(String, String)]] =
+    import sroof.checker.Bidirectional
+    import sroof.syntax.Elaborator
+    result.checks.foldLeft[Either[String, List[(String, String)]]](Right(Nil)) { (acc, sexpr) =>
+      acc.flatMap { done =>
+        Elaborator.elabExprPublic(sexpr, env, Nil) match
+          case Left(err) =>
+            Left(s"#check ${sexpr.toString} failed to elaborate: ${err.message}")
+          case Right(term) =>
+            Bidirectional.infer(Context.empty, term) match
+              case Left(err)  => Left(s"#check ${term.show} does not type-check: ${err.getMessage}")
+              case Right(tpe) => Right(done :+ (term.show, tpe.show))
+      }
+    }
+
   /** Like checkAll but also returns sorry warnings. */
   def checkAllWithWarnings(result: ElabResult): Either[String, (GlobalEnv, List[String])] =
     given GlobalEnv = result.env

@@ -9,7 +9,7 @@ import scala.scalanative.build._
 // nothing has been published yet, so the coordinates are still free to choose.
 //
 // Whatever this says is what users will write:
-//   libraryDependencies += "io.github.kmizu" %% "sroof-scala-api" % "0.14.0"
+//   libraryDependencies += "io.github.kmizu" %% "sroof-scala-api" % "0.15.0"
 val publishOrganization = "io.github.kmizu"
 
 val scala3Version  = "3.3.6"
@@ -21,7 +21,7 @@ val munitVersion   = "1.0.2"
 
 val commonSettings = Seq(
   scalaVersion := scala3Version,
-  version := "0.14.0",
+  version := "0.15.0",
   organization := "io.sroof",
   libraryDependencies ++= Seq(
     "org.typelevel" %% "cats-core" % catsVersion,
@@ -99,7 +99,7 @@ addCommandAlias("ci-release-sroof", "; publishSigned; sonatypeBundleRelease")
 // so that user projects pick up nothing but the marker types.  No cats.
 val apiSettings = Seq(
   scalaVersion := scala3Version,
-  version := "0.14.0",
+  version := "0.15.0",
   organization := "io.sroof",
   libraryDependencies += "org.scalameta" %% "munit" % munitVersion % Test,
   testFrameworks += new TestFramework("munit.Framework"),
@@ -120,7 +120,7 @@ lazy val sroofPluginClasspath = taskKey[String]("-Xplugin: classpath for the sro
 // Uses %%% so cats-core and munit resolve as native artifacts.
 val nativeCommonSettings = Seq(
   scalaVersion := scala3Version,
-  version := "0.14.0",
+  version := "0.15.0",
   organization := "io.sroof",
   libraryDependencies ++= Seq(
     "org.typelevel" %%% "cats-core" % catsVersion,
