@@ -226,6 +226,30 @@ Three things make this work, and each is a place where the coordinates matter:
 
 `examples-scala3/Lists.scala` proves the usual list laws this way.
 
+### GADTs are rejected, not approximated
+
+A case that fixes one of the enum's type arguments in its `extends` clause —
+
+```scala
+enum Vec[A, N]:
+  case VNil[A]()                       extends Vec[A, Zero.type]
+  case VCons[A, M](h: A, t: Vec[A, M]) extends Vec[A, Succ]
+```
+
+— is rejected with a diagnostic naming the fixed argument.
+
+Instantiating every case at the enum's own type parameters, as described above, is
+what makes ordinary generic enums work; it is also what makes a GADT unreadable.
+Both cases would come out as constructors of a uniform `Vec[A, N]` and the index
+would silently mean nothing. Since v0.16 the extractor detects a parent type
+argument that is not one of the case's own type parameters and refuses.
+
+The core is not the limitation: indexed families work on the `.sroof` path, up to
+induction with a hypothesis at the sub-term's index (see
+[indexed-families.md](indexed-families.md)). What is missing is a reading for a
+*type-level* index — Scala's `N` is a type where the core's is a value — and that
+is a design question rather than a translation gap.
+
 ## 5. Explicitly unsupported
 
 Rejected with a targeted diagnostic rather than approximated:

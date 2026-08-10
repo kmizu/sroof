@@ -6,7 +6,7 @@ import dotty.tools.dotc.core.Flags
 import dotty.tools.dotc.core.NameOps.stripModuleClassSuffix
 import dotty.tools.dotc.core.StdNames.nme
 import dotty.tools.dotc.core.Symbols.Symbol
-import dotty.tools.dotc.core.Types.{MethodType, PolyType, Type}
+import dotty.tools.dotc.core.Types.{MethodType, PolyType, Type, TypeRef}
 
 import sroof.frontend.*
 
@@ -131,6 +131,40 @@ object InductiveExtractor:
     else
       val cls    = child.asClass
       val module = cls.companionModule
+
+      // A GADT case fixes some of the enum's type arguments — `case VNil[A]()
+      // extends Vec[A, Zero.type]` — and that is information the reading below
+      // cannot carry: `valueParams` instantiates every case at the *enum's* own
+      // type parameters, so `VNil` and `VCons` would both come out as
+      // constructors of a uniform `Vec[A, N]` and the index would silently mean
+      // nothing.
+      //
+      // Silently is the problem. The core supports indexed families (see
+      // docs/indexed-families.md), so this is a gap in the bridge rather than in
+      // the theory — and the bridge's rule is to reject what it cannot translate
+      // rather than approximate it, because nothing downstream can notice.
+      //
+      // An ordinary generic case is fine: dotc gives it its own type parameters
+      // and `extends Box[A']` where `A'` is one of them. Only a parent argument
+      // that is *not* one of the case's type parameters fixes anything.
+      def gadtIndex: Option[Type] =
+        val ownParamSyms: Set[Symbol] = cls.typeParams.map(tp => tp: Symbol).toSet
+        cls.typeRef.baseType(enumClass).argInfos.find {
+          case tr: TypeRef => !ownParamSyms.contains(tr.symbol)
+          case _           => true
+        }
+
+      gadtIndex match
+        case Some(fixed) =>
+          return Left(FrontendError.enumError(
+            enumName,
+            s"case '$name' fixes a type argument ('${fixed.show}') in its `extends` clause. " +
+            s"GADT-style indices are not supported by the Scala frontend yet; the index " +
+            s"would be dropped rather than checked. The `.sroof` frontend does support " +
+            s"them — see docs/indexed-families.md.",
+            span,
+          ))
+        case None => ()
       // A generic case class has a `PolyType` constructor wrapping the value
       // parameters.  Peeling it naively leaves the field types referring to the
       // PolyType's own binders, which have no symbol to look up — so instantiate

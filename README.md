@@ -159,6 +159,15 @@ python3 scripts/benchmark.py --runs 3 --thresholds benchmarks/thresholds.json --
 - published releases: <https://github.com/kmizu/sroof/releases>
 - publishing setup: [`docs/publishing.md`](docs/publishing.md)
 
+### Migration Notes (v0.15 -> v0.16)
+
+- **Nothing breaks** for supported code; 632 tests, all 631 pre-existing ones pass.
+- **A GADT-shaped `enum` is now rejected** by the Scala frontend instead of being
+  accepted with its index silently dropped. If you wrote one expecting the index to
+  mean something, it never did — use the `.sroof` path, which supports indexed
+  families. See [`docs/scala3-frontend.md`](docs/scala3-frontend.md).
+- Ordinary generic enums are unaffected.
+
 ### Migration Notes (v0.14 -> v0.15)
 
 - **`stdlib/Vec.sroof` uses real indices.** `Vec.nil` is a `Vec(A)(Nat.zero)`, and

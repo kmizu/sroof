@@ -5,6 +5,66 @@ All release detail lives here. Earlier releases also had per-version
 favour of this one file. The long-form notes for v0.3–v0.9 remain published on
 the [GitHub releases page](https://github.com/kmizu/sroof/releases).
 
+## [0.16.0] - 2026-08-11
+
+A release about the **trusted bridge** — the part of sroof the kernel cannot check.
+`CoreTranslator` and `TreeExtractor` decide what core proposition a Scala theorem
+is about, so a bug there hands the kernel a valid proof of a different statement
+and nothing downstream notices.
+
+One defect found, and the rest of the bridge probed and confirmed faithful.
+
+### Fixed
+- **A GADT-shaped enum was accepted with its index silently dropped.**
+
+  ```scala
+  enum Vec[A, N]:
+    case VNil[A]()                       extends Vec[A, Zero.type]
+    case VCons[A, M](h: A, t: Vec[A, M]) extends Vec[A, Succ]
+  ```
+
+  `InductiveExtractor` instantiates every case's constructor at the *enum's* own
+  type parameters — which is what makes ordinary generic enums work — so both cases
+  came out as constructors of a uniform `Vec[A, N]`.
+
+  Not unsound: Scala's typer still enforces the indices on the Scala side, and the
+  core reading is the weaker parametric one, so the failure mode is a rejected proof
+  rather than a false one. But the bridge's stated rule is to refuse what it cannot
+  carry, precisely because nothing downstream can notice, and dropping an index is
+  an approximation. It now refuses, naming the fixed type argument and pointing at
+  the `.sroof` path, which does support indexed families.
+
+### Added
+- **`scala-it/BridgeFidelitySuite`** — nine cases asserting the bridge means what
+  the Scala says. Each is a **false** statement built out of one construct: if the
+  construct is translated faithfully the statement stays false and compilation
+  fails; if it is mistranslated the statement may become true and compile. Every
+  false case is paired with a true control, since a bridge that rejected everything
+  would pass the false half on its own.
+
+  Covered: argument order (via a deliberately asymmetric `sub`), nested
+  application, `val` bindings, default arguments both omitted and explicit, and the
+  refusal of lambdas, side effects and `if`/`else`.
+
+### Probed and found correct
+Argument order is preserved. `val` bindings keep their definitions. A default
+argument supplies the declared default, omitted or not. Lambdas, `println` and
+`if`/`else` are refused rather than approximated — `if`/`else` in **both**
+directions, which is the point: an unsupported construct is refused, not
+approximated into something that happens to agree on the example at hand.
+
+No mistranslation was found. Eight of the nine new cases pass on the v0.15 tree
+too, which is the honest reading: they document that the bridge was already
+faithful, and they are worth keeping because nothing else guards it.
+
+### Verification
+632 tests. The GADT case fails on the v0.15 tree; the other eight are fidelity
+guards rather than evidence of the change.
+
+All 631 pre-existing tests pass unchanged, including the generic-enum suites — the
+control asserting an ordinary `enum Box[A]` is still accepted exists because a
+check that rejected every generic enum would have passed the GADT case.
+
 ## [0.15.0] - 2026-08-10
 
 Step 5, and three failures that were being swallowed.

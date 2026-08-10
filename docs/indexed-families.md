@@ -312,7 +312,8 @@ Each step is useful on its own and testable before the next begins.
    The blocker was never the tactic engine in the end: it was that `def` bodies were
    not type-checked at all, so any length a definition declared was decoration.
 
-6. **Scala frontend.** Scala has no indexed families; the equivalent is a GADT:
+6. **Scala frontend.** ⚠️ **Rejected rather than approximated, as of v0.16.**
+   Scala has no indexed families; the equivalent is a GADT:
 
    ```scala
    enum Vec[A, N]:
@@ -320,11 +321,23 @@ Each step is useful on its own and testable before the next begins.
      case VCons[A, M](h: A, t: Vec[A, M])   extends Vec[A, Succ[M]]
    ```
 
-   Extraction would read each case's `extends` arguments —
-   `child.typeRef.baseType(enumClass).argInfos` — as its `retIndices`. How a
-   type-level `Nat` maps onto a core index is a design question of its own, and
-   should not be started before step 5 demonstrates the core actually supports
-   what is being extracted *to*.
+   Until v0.16 such a declaration was **accepted with its index silently dropped**.
+   `InductiveExtractor` instantiates every case's constructor at the enum's own
+   type parameters — the thing that makes ordinary generic enums work — so both
+   cases came out as constructors of a uniform `Vec[A, N]`.
+
+   Not unsound: Scala's own typer still enforces the indices on the Scala side, and
+   the core reading is the weaker parametric one, so the failure mode is a
+   *rejected* proof rather than a false one. But the bridge's rule is to refuse
+   what it cannot carry, precisely because nothing downstream can notice, and
+   dropping an index is an approximation. It now refuses, naming the fixed
+   argument.
+
+   Supporting it needs a reading for a **type-level** index: Scala's `N` is a type
+   where the core's is a value. `child.typeRef.baseType(enumClass).argInfos` gives
+   the declared arguments — the extraction side is the easy half. Mapping a
+   type-level `Nat` onto a core index is the design question, and it is the whole
+   of the remaining work.
 
 **Steps 1–5 are shared code that both frontends gain; step 6 is inside the
 trusted Scala-to-core bridge.** As in v0.5–v0.7, the shared work goes first: a
