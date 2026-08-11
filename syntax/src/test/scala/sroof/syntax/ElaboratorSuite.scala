@@ -6,7 +6,7 @@ import sroof.core.*
 class ElaboratorSuite extends FunSuite:
 
   private def parseAndElab(input: String): Either[ElabError, ElabResult] =
-    Parser.parseProgram(input).left.map(e => ElabError(e)).flatMap(Elaborator.elaborate)
+    Parser.parseProgram(input).left.map(e => ElabError(e)).flatMap(ds => Elaborator.elaborate(ds))
 
   // ===== Inductive type elaboration =====
 

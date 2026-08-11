@@ -545,31 +545,45 @@ object Main:
          |""".stripMargin
     )
 
-  def runRepl()(using env: GlobalEnv): Unit =
+  /** @param nextLine reads one line given a prompt, or returns `null` at end of input
+    * @param out       where session output goes
+    */
+  def runRepl(
+    nextLine: String => String = p => StdIn.readLine(p),
+    out:      String => Unit   = println,
+  )(using env: GlobalEnv): Unit =
     var globalEnv = env
-    println("sroof REPL — type :help for help, :quit to exit")
+    out("sroof REPL — type :help for help, :quit to exit")
 
     var running = true
     while running do
-      val input = readMultiLine("sroof> ")
-      input.trim match
-        case ":quit" | ":exit" | "quit" | "exit" =>
+      // `None` is end of input, which is not the same as a blank line. Treating the
+      // two alike is why `sroof repl < script.sroof` never returned: every read past
+      // the end produced "", "" is ignored as blank, and the loop printed a prompt
+      // and read again, forever.
+      readMultiLine("sroof> ", nextLine) match
+        case None =>
           running = false
-          println("Goodbye.")
+          out("Goodbye.")
 
-        case ":help" | "help" =>
-          printHelp()
+        case Some(input) => input.trim match
+          case ":quit" | ":exit" | "quit" | "exit" =>
+            running = false
+            out("Goodbye.")
 
-        case "" =>
-          () // ignore blank input
+          case ":help" | "help" =>
+            printHelp()
 
-        case decl =>
-          processDeclaration(decl, globalEnv) match
-            case Left(err) =>
-              println(s"Error: $err")
-            case Right((newEnv, msg)) =>
-              globalEnv = newEnv
-              println(msg)
+          case "" =>
+            () // ignore blank input
+
+          case decl =>
+            processDeclaration(decl, globalEnv) match
+              case Left(err) =>
+                out(s"Error: $err")
+              case Right((newEnv, msg)) =>
+                globalEnv = newEnv
+                out(msg)
 
   /** Process a single declaration string in the REPL context.
     *
@@ -581,7 +595,7 @@ object Main:
     given GlobalEnv = globalEnv
     for
       decls  <- Parser.parseProgram(input).left.map(e => s"Parse error:\n$e")
-      result <- Elaborator.elaborate(decls).left.map(e => s"Elaboration error: ${e.message}")
+      result <- Elaborator.elaborate(decls, globalEnv).left.map(e => s"Elaboration error: ${e.message}")
       newEnv <- Checker.checkAll(result)
     yield
       val indNames   = newEnv.inductives.keys.toList.sorted
@@ -607,32 +621,36 @@ object Main:
     * A line containing only whitespace after the brace balance reaches zero
     * terminates the input.
     *
-    * @param prompt the primary prompt to show (continuation uses "     | ")
-    * @return the accumulated input string
+    * @param prompt   the primary prompt to show (continuation uses "     | ")
+    * @param nextLine  reads one line given a prompt, or returns `null` at end of input
+    * @return the accumulated input, or `None` once the input has ended
     */
-  def readMultiLine(prompt: String): String =
+  def readMultiLine(
+    prompt:   String,
+    nextLine: String => String = p => StdIn.readLine(p),
+  ): Option[String] =
     val sb       = new StringBuilder
     var depth    = 0
     var first    = true
     var continue = true
+    var sawLine  = false
 
     while continue do
-      val line = StdIn.readLine(if first then prompt else "     | ")
+      val line = nextLine(if first then prompt else "     | ")
       if line == null then
-        // EOF (Ctrl-D)
+        // End of input (Ctrl-D, or a redirected file that ran out).
         continue = false
       else
+        sawLine = true
         // Update brace depth
         depth += line.count(_ == '{') - line.count(_ == '}')
         sb.append(line).append('\n')
         first = false
-        // Stop when braces are balanced (or went negative) and line is not blank
-        if depth <= 0 && line.trim.nonEmpty then
-          continue = false
-        else if depth <= 0 && line.trim.isEmpty && !first then
+        // Stop when braces are balanced (or went negative), blank line or not.
+        if depth <= 0 then
           continue = false
 
-    sb.toString
+    if sawLine then Some(sb.toString) else None
 
   private def printUsage(): Unit =
     println(

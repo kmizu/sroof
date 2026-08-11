@@ -141,11 +141,14 @@ class MainSuite extends FunSuite:
     assert(checkResult.isRight, s"result with only inductive should pass: $checkResult")
   }
 
-  // ---- readMultiLine tests ----
+  // ---- single-declaration pipeline ----
 
-  test("readMultiLine: single-line input terminates after one non-empty line") {
-    // We can't easily test stdin-reading, but we can test the logic indirectly
-    // by testing processSource which exercises the pipeline end-to-end.
+  test("a single-line inductive goes through the pipeline") {
+    // This case used to be called "readMultiLine: single-line input terminates
+    // after one non-empty line" and said in its body that stdin could not be
+    // tested. It never touched the reader. `ReplSuite` tests the reader and the
+    // loop directly, by driving them from a script; what is left here is the
+    // pipeline check the body was actually doing.
     val source = "inductive Unit { case unit: Unit }"
     val result = Main.processSource(source)
     assert(result.isRight, s"single-line inductive should parse: $result")

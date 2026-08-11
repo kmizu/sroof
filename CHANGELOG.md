@@ -5,6 +5,39 @@ All release detail lives here. Earlier releases also had per-version
 favour of this one file. The long-form notes for v0.3–v0.9 remain published on
 the [GitHub releases page](https://github.com/kmizu/sroof/releases).
 
+## [0.21.0] - 2026-08-11
+
+The REPL, which had no tests, and the proof agent, which had one.
+
+### Fixed
+- **`sroof repl` never returned at end of input.** `readMultiLine` reported both a
+  blank line and end of input as `""`, and the loop ignores blank input — so
+  `sroof repl < script.sroof`, or any closed stdin, printed a prompt and read again,
+  forever, at about a megabyte of prompts a second. The reader now returns
+  `Option[String]` and `None` ends the session.
+- **The REPL's accumulated environment was never seen by elaboration.**
+  `processDeclaration` threaded a `GlobalEnv` from entry to entry, but
+  `Elaborator.elaborate` always started from `GlobalEnv.empty`, so a `def` could not
+  mention an `inductive` declared one line earlier — `Unknown inductive type or
+  struct variable: Nat`. `elaborate` now takes the environment to start from; a file
+  still starts from nothing.
+
+### Added
+- `cli/ReplSuite` — the reader and the loop, driven from a script instead of a
+  terminal. Every fake reader fails the test rather than returning `null` forever, so
+  a regression to the loop above shows up as a failure and not a hung build.
+- `cli/agent/FileRepairerSuite` — what `sroof agent` writes back: that the repaired
+  file parses and verifies, that a false statement is left as `sorry` rather than
+  "repaired", and that a partial repair keeps exactly the sorries it could not close.
+  These pass on the previous tree; the agent was correct, and this is the coverage it
+  did not have.
+
+### Changed
+- `MainSuite`'s "readMultiLine: single-line input terminates after one non-empty
+  line" said in its own body that stdin could not be tested, and called
+  `processSource` instead. It never touched the reader. Renamed to what it does; the
+  reader is now tested for real in `ReplSuite`.
+
 ## [0.20.0] - 2026-08-11
 
 Extraction. v0.19 measured the gap — 8 of the 26 shipped `.sroof` files extracted

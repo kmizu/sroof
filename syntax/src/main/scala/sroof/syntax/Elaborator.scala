@@ -36,8 +36,17 @@ object Elaborator:
   /** Maps variable name to struct name (for dot-notation field access). */
   private type TypeAnns = Map[String, String]
 
-  def elaborate(decls: List[SDecl]): Either[ElabError, ElabResult] =
-    var env      = GlobalEnv.empty
+  /** @param initialEnv what is already in scope. A file starts from nothing; the
+    *                    REPL starts from everything typed so far. Without this the
+    *                    REPL threaded an accumulated `GlobalEnv` that elaboration
+    *                    never saw, so a `def` could not mention an `inductive`
+    *                    declared one line earlier.
+    */
+  def elaborate(
+    decls:      List[SDecl],
+    initialEnv: GlobalEnv = GlobalEnv.empty,
+  ): Either[ElabError, ElabResult] =
+    var env      = initialEnv
     var defs     = Map.empty[String, Term]
     var defspecs = Map.empty[String, (List[(String, Term)], Term, SProof)]
     var defspecOrder = List.empty[String]
