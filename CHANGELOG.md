@@ -5,6 +5,40 @@ All release detail lives here. Earlier releases also had per-version
 favour of this one file. The long-form notes for v0.3–v0.9 remain published on
 the [GitHub releases page](https://github.com/kmizu/sroof/releases).
 
+## [0.24.0] - 2026-08-12
+
+`docs/json-schema.md` is the contract tooling reads. Nothing tested it, and the
+producer had drifted from it in three ways.
+
+### Fixed
+- **`result` was an object alongside `"ok":false`** for the two failures that happen
+  late — a `#check` that does not type-check, and `--fail-on-sorry`. The document
+  says `result` is `null` on failure, and the parse/elab/proof branches already did
+  that, so a consumer testing `result === null` for failure got the wrong answer for
+  exactly those two. `result` is now `null` whenever `ok` is `false`.
+- **A `#check` type error was reported as `"phase":"policy"`.** The branch reused the
+  nearest diagnostic helper, so the response said `"phase":"check"` at the top level
+  and `"phase":"policy"` in its own diagnostic. Diagnostics now carry the phase and a
+  `check_error` code.
+
+### Added
+- `cli/JsonSchemaContractSuite` — the invariants the document states, over every
+  phase the producer can reach: `schemaVersion` is 2; `result` is null exactly when
+  `ok` is false; `error` is a string exactly when `ok` is false; a failure carries a
+  diagnostic and a success does not; every diagnostic agrees with the top-level
+  phase. Its last case reads `docs/json-schema.md` and fails if the producer emits a
+  phase, code, or field the document does not mention — which is how the `policy`
+  phase and the `sorryDiagnostics` field had gone unlisted.
+
+### Changed
+- `docs/json-schema.md` now lists the `policy` phase, the `check_error` and
+  `policy_error` codes, the `sorryDiagnostics` field, and the two invariants above.
+
+### Note for consumers
+`result` on a failed response was previously an object for `check` and `policy`
+failures and is now `null`, matching the documented contract and the other three
+failure phases. Consumers reading `ok` are unaffected.
+
 ## [0.23.0] - 2026-08-12
 
 The third time the same defect shipped, and the test that should stop a fourth.

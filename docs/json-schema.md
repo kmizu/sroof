@@ -25,6 +25,7 @@ All responses include the same keys:
   "file": "examples/nat.sroof",
   "result": { "inductives": 1, "defs": 1, "defspecs": 4 },
   "warnings": [],
+  "sorryDiagnostics": [],
   "diagnostics": [],
   "checks": [],
   "error": null
@@ -35,13 +36,22 @@ Fields:
 
 - `schemaVersion`: number, currently `2`
 - `ok`: boolean
-- `phase`: `"parse" | "elab" | "proof" | "check"`
+- `phase`: `"parse" | "elab" | "proof" | "check" | "policy"` — how far checking got
 - `file`: input filename
-- `result`: object on success, `null` on failure
+- `result`: object when `ok` is `true`, `null` when it is `false`
 - `warnings`: warning objects (for example sorry-related warnings)
-- `diagnostics`: structured error diagnostics
+- `sorryDiagnostics`: per-theorem `sorry` detail, with occurrence counts
+- `diagnostics`: structured error diagnostics — empty on success, non-empty on failure
 - `checks`: per-`#check` results
 - `error`: string on failure, `null` on success
+
+Two invariants hold across every response, and `cli/JsonSchemaContractSuite` pins
+them:
+
+- `result` is `null` **exactly** when `ok` is `false`. Consumers may branch on
+  either.
+- Every `diagnostics[].phase` equals the top-level `phase`. One response never
+  disagrees with itself about where the failure was.
 
 ## `warnings[]`
 
@@ -75,8 +85,8 @@ Failure responses include at least one diagnostic:
 
 Fields:
 
-- `phase`: `"parse" | "elab" | "proof"` — where the error occurred
-- `code`: `"parse_error" | "type_mismatch" | "unknown_variable" | "unknown_type" | "proof_error" | "error"`
+- `phase`: `"parse" | "elab" | "proof" | "check" | "policy"` — where the error occurred
+- `code`: `"parse_error" | "type_mismatch" | "unknown_variable" | "unknown_type" | "proof_error" | "check_error" | "policy_error" | "error"`
 - `message`: short human-readable summary
 - `range`: source location (`null` if unavailable)
 - `expected` / `actual`: type mismatch details (`null` if not applicable)
@@ -103,6 +113,17 @@ Example:
   "error": null
 }
 ```
+
+## Late failures
+
+Two failures happen after checking has already produced counts:
+
+- `phase: "check"`, `code: "check_error"` — a `#check` did not type-check. The
+  offending entry in `checks[]` carries `ok: false` and its own `error`.
+- `phase: "policy"`, `code: "policy_error"` — `--fail-on-sorry` was given and the
+  file uses `sorry`. `warnings[]` and `sorryDiagnostics[]` say where.
+
+Both set `result` to `null`, like every other failure.
 
 ## Compatibility Policy
 

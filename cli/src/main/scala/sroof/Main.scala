@@ -401,8 +401,14 @@ object Main:
       val diagJson = diagnostics.map(diagnosticToJson).mkString("[", ",", "]")
       s"""{"schemaVersion":2,"ok":false,"phase":"${esc(phase)}","file":"${esc(fileName)}","result":null,"warnings":[],"sorryDiagnostics":[],"diagnostics":$diagJson,"checks":[],"error":"${esc(message)}"}"""
 
-    def policyDiagnosticJson(message: String): String =
-      s"""{"phase":"policy","code":"policy_error","message":"${esc(message)}","range":null,"expected":null,"actual":null,"hint":null}"""
+    /** A diagnostic for a failure with no source range: the phase names what failed.
+      *
+      * The `#check` branch below used to reuse the policy diagnostic verbatim, so a
+      * type error inside a `#check` was reported as `"phase":"policy"` while the
+      * document said `"phase":"check"` — one response disagreeing with itself.
+      */
+    def flatDiagnosticJson(phase: String, code: String, message: String): String =
+      s"""{"phase":"$phase","code":"$code","message":"${esc(message)}","range":null,"expected":null,"actual":null,"hint":null}"""
 
     Parser.parseProgram(source) match
       case Left(parseErr) =>
@@ -442,13 +448,18 @@ object Main:
                 // plain path produces, or tooling and the CLI disagree about the
                 // same file.
                 val badCheck = Checker.evalChecks(result)(using env).left.toOption
+                // `result` is null whenever `ok` is false — the contract the schema
+                // document states and the parse/elab/proof branches already keep.
+                // These two branches used to report counts alongside `ok:false`, so a
+                // consumer testing `result === null` for failure got the wrong answer
+                // for exactly the two failures that happen late.
                 if badCheck.isDefined then
                   val msg = badCheck.get
-                  s"""{"schemaVersion":2,"ok":false,"phase":"check","file":"${esc(fileName)}","result":{"inductives":$indCount,"defs":$defCount,"defspecs":$specCount},"warnings":$warnJson,"sorryDiagnostics":$sorryDiagJson,"diagnostics":[${policyDiagnosticJson(msg)}],"checks":$checkJson,"error":"${esc(msg)}"}"""
+                  s"""{"schemaVersion":2,"ok":false,"phase":"check","file":"${esc(fileName)}","result":null,"warnings":$warnJson,"sorryDiagnostics":$sorryDiagJson,"diagnostics":[${flatDiagnosticJson("check", "check_error", msg)}],"checks":$checkJson,"error":"${esc(msg)}"}"""
                 else if failOnSorry && warnings.nonEmpty then
                   val msg = "sorry policy violation (use of sorry is disallowed in this mode)"
-                  val policyDiagJson = policyDiagnosticJson(msg)
-                  s"""{"schemaVersion":2,"ok":false,"phase":"policy","file":"${esc(fileName)}","result":{"inductives":$indCount,"defs":$defCount,"defspecs":$specCount},"warnings":$warnJson,"sorryDiagnostics":$sorryDiagJson,"diagnostics":[$policyDiagJson],"checks":$checkJson,"error":"$msg"}"""
+                  val policyDiagJson = flatDiagnosticJson("policy", "policy_error", msg)
+                  s"""{"schemaVersion":2,"ok":false,"phase":"policy","file":"${esc(fileName)}","result":null,"warnings":$warnJson,"sorryDiagnostics":$sorryDiagJson,"diagnostics":[$policyDiagJson],"checks":$checkJson,"error":"$msg"}"""
                 else
                   s"""{"schemaVersion":2,"ok":true,"phase":"check","file":"${esc(fileName)}","result":{"inductives":$indCount,"defs":$defCount,"defspecs":$specCount},"warnings":$warnJson,"sorryDiagnostics":$sorryDiagJson,"diagnostics":[],"checks":$checkJson,"error":null}"""
 
