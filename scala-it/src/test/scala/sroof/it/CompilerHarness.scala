@@ -80,6 +80,42 @@ object CompilerHarness:
       )
     finally deleteRecursively(dir)
 
+  /** Compile, then call a no-argument method on the compiled classes.
+   *
+   *  Compiling proves the extractor emits Scala. Running proves it emits the *same*
+   *  program: an extractor that swapped a constructor's arguments, or dropped a
+   *  branch, would still compile.
+   */
+  def compileAndInvoke(source: String, className: String, method: String): (Result, Option[Any]) =
+    val dir = Files.createTempDirectory("sroof-run")
+    val out = Files.createDirectory(dir.resolve("classes"))
+    try
+      val f = dir.resolve("E.scala")
+      Files.writeString(f, source)
+      val reporter = Collecting()
+      Main.process(
+        Array(
+          "-classpath", compileClasspath,
+          "-d", out.toAbsolutePath.toString,
+          "-usejavacp:false",
+        ) :+ f.toAbsolutePath.toString,
+        reporter,
+      )
+      import dotty.tools.dotc.interfaces.Diagnostic as IDiagnostic
+      val messages = reporter.diagnostics.toList
+      val result = Result(
+        errors   = messages.filter(_.level >= IDiagnostic.ERROR).map(render),
+        warnings = messages.filter(_.level == IDiagnostic.WARNING).map(render),
+      )
+      if result.failed then (result, None)
+      else
+        val urls = (out.toUri.toURL +: compileClasspath.split(java.io.File.pathSeparator)
+          .filter(_.nonEmpty).map(p => Path.of(p).toUri.toURL).toVector).toArray
+        val loader = java.net.URLClassLoader(urls, getClass.getClassLoader)
+        val value  = loader.loadClass(className).getMethod(method).invoke(null)
+        (result, Some(value))
+    finally deleteRecursively(dir)
+
   /** Compile a proof module wrapped in the standard preamble. */
   def compileModule(body: String, fileName: String = "Fixture.scala"): Result =
     compile(fileName ->

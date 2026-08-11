@@ -57,20 +57,31 @@ Each file is self-contained and checker-runnable by itself.
 
 ## Extraction status
 
-Extraction produces Scala that compiles for **8 of the 26** shipped `.sroof` files
-(`scala-it/ExtractionCorpusSuite` pins both halves).
+Extraction produces Scala that compiles for **all 26** shipped `.sroof` files, and
+`scala-it/ExtractionCorpusSuite` keeps it that way — its exception list is empty.
+`scala-it/ExtractionRuntimeSuite` goes further and *runs* three of them, because a
+back end that swapped a constructor's arguments would compile just as happily.
 
-The 18 that do not fail for one dominant reason: a `.sroof` definition takes its
-type parameter as an ordinary `Type`-valued parameter — `def poly_length(A: Type,
-xs: PolyList(A))` — and `Extractor.termToScalaType` renders the resulting
-unresolved `Var(i)` as the literal name `T0`, `T1`, …, which is never declared:
+This is new in v0.20. v0.19 measured 8 of 26 and named one cause; sweeping the
+corpus for real turned up five independent defects, and the one v0.19 named was not
+the largest of them:
 
-```
-E.scala:21: Missing type parameter for [A] =>> PList[<error Not found: type T0>]
-```
+| Defect | Symptom |
+|---|---|
+| A recursive def was inlined at every use site | `{ def plus … ; plus }(x)(y)` — does not parse |
+| A `Fix`-shaped body peeled no parameters | `def concat: [A <: Any] =>> …` — a type lambda where a term type belongs |
+| `Type`-valued parameters stayed value parameters | `Not found: type T0` |
+| Index arguments were erased from `enum` cases but not from use sites | `Wrong number of argument patterns` |
+| A parameterless case in an invariant generic enum | `cannot determine type argument for enum parent class` |
 
-The fix is to promote `Type`-valued parameters to Scala type parameters, so that
-`poly_length` extracts as `def polyLength[A](xs: PList[A]): Nat`. Until then every
-polymorphic definition — and every file containing one — is lost in extraction.
+Two decisions inside that work are worth knowing about:
+
+- **Indices are data.** A length index looks erasable, since the `enum` header drops
+  the index *parameter*, but the value a `Cons` stores is exactly what gets passed to
+  every function taking the length as an argument. Only proofs are erased.
+- **`Int` is claimed by the extractor** as Scala's `Int`. A program that declares its
+  own `Int` and actually builds or matches one gets its own `enum` instead; a program
+  that only mentions the type (as `stdlib/Effect.sroof` does, whose IO runtime needs
+  a real `Int`) keeps the mapping.
 
 Proof checking is unaffected; this is the extraction back end only.

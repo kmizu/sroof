@@ -5,6 +5,73 @@ All release detail lives here. Earlier releases also had per-version
 favour of this one file. The long-form notes for v0.3–v0.9 remain published on
 the [GitHub releases page](https://github.com/kmizu/sroof/releases).
 
+## [0.20.0] - 2026-08-11
+
+Extraction. v0.19 measured the gap — 8 of the 26 shipped `.sroof` files extracted
+to Scala that compiles — and named one cause. Sweeping the corpus properly turned
+up **five** independent defects, and the one v0.19 named was not the largest.
+
+**All 26 files now extract to Scala that compiles**, and three of them are compiled
+*and run* against expected answers.
+
+### Fixed
+- **A recursive def was pasted in at every use site.** The core has no node for
+  "reference to a global definition" — the elaborator inlines the body — so
+  extraction emitted a full copy of `plus` inside every function that called it, in
+  expression position, as `{ def plus … ; plus }(x)(y)`. That does not parse. Bodies
+  are now matched back to their definitions and emitted by name.
+- **A `Fix`-shaped body peeled no parameters.** `peelLambdas` stops at a `Fix`, so a
+  recursive def stayed a *value* whose type was rendered as a type lambda:
+  `def concat: [A <: Any] =>> [n <: Nat] =>> …`. Unwrapping the `Fix` first puts the
+  parameters back in the signature.
+- **`Type`-valued parameters stayed value parameters** — the defect v0.19 named.
+  `def poly_length(A: Type, xs: PolyList(A))` now extracts as
+  `def poly_length[A](xs: PolyList[A]): Nat`, including at recursive call sites,
+  which apply the `Fix` binder rather than anything the global map would recognise.
+- **Index arguments were erased from `enum` cases but not from constructor
+  applications or match patterns**, so a declaration taking two arguments was used
+  with three. They are no longer erased at all: an index is ordinary runtime data,
+  and it is what a length-taking function is passed. Only *proofs* are erased, and
+  now consistently in all three places.
+- **A parameterless case in an invariant generic enum** cannot fix its type argument
+  (`cannot determine type argument for enum parent class`). Generic enums are emitted
+  covariant when no constructor field is a function type.
+- **An unresolved `Var` rendered as `T0`.** A name that is declared nowhere fails
+  with `Not found`; it is now `Any`, which is at worst too weak.
+- **A proof-carrying record emitted its proof field**, naming types that do not exist
+  in the extracted program (`arg1: Eq[isValidCodepoint, Bool]`). Proof fields are
+  dropped — which is the erasure the extractor always claimed to do.
+- **Two records may both call their constructor `mk`**, and both wildcard imports are
+  in scope: `Reference to Mk is ambiguous`. A pattern now names its inductive, taken
+  from the scrutinee's type.
+- **`Int.pos(n)` became `n + 1` regardless of what `n` was.** In `examples/int.sroof`
+  the payload is a `Nat`, so the match bound an `Int` for a branch expecting a `Nat`.
+  The arithmetic mapping now applies only when the program does not build or take
+  apart values of that type — which keeps `stdlib/Effect.sroof`, whose IO runtime
+  needs a real `Int`, working exactly as before.
+
+### Added
+- `scala-it/ExtractionRuntimeSuite` — compiles the extracted Scala **and runs it**.
+  Addition, polymorphic list append/reverse/length, and vector concatenation are
+  checked against expected values. Compiling is a weak bar: an extractor that
+  swapped a constructor's two arguments would compile just as happily. Two of the
+  three cases fail on the v0.19 tree.
+- `CompilerHarness.compileAndInvoke`, which loads the compiled classes and calls
+  into them.
+
+### Changed
+- `ExtractionCorpusSuite` now asserts that *every* shipped file compiles; its
+  exception list is empty, and a second case fails if that list ever names a file
+  that is not in the corpus.
+- `ExtractorSuite`'s hand-built `Vec` fixture used the wrong De Bruijn convention: it
+  omitted the constructor's own preceding arguments from the scope of a later
+  argument's type. The extractor omitted them too, so the two agreed and the tests
+  passed. `stdlib/Vec.sroof` shows the real shape, and the fixture now matches it.
+
+### Not fixed
+- Extraction is still whole-program and per-file; there is no module system, so a
+  file that imports another re-extracts everything it imported.
+
 ## [0.19.0] - 2026-08-11
 
 A measurement. v0.18 fixed two defects that made *every* extraction invalid;

@@ -277,26 +277,34 @@ class ExtractorSuite extends FunSuite:
    */
   val vecInd: Term = Term.Ind("Vec", Nil, Nil)  // simplified Vec type reference
 
-  // allParamNames for elaboration = (params ++ indices).map(_.name).reverse = ["n", "A"]
-  // So: Var(0) = "n" (index), Var(1) = "A" (type param)
+  // Inside `argTpes(j)` the scope is the constructor's own earlier arguments first,
+  // then `(params ++ indices).reverse` — the layout `Elaborator.elabInductive` builds.
+  // So in `cons`, whose args are (m, head, tail):
+  //   head's type   (j = 1): Var(0) = m,       Var(1) = n, Var(2) = A
+  //   tail's type   (j = 2): Var(0) = head,    Var(1) = m, Var(2) = n, Var(3) = A
+  // This fixture used to omit the constructor's own arguments, which agreed with an
+  // extractor that also omitted them; both were wrong, and `stdlib/Vec.sroof` shows
+  // the real shape.
   val vecDef: IndDef = IndDef(
     name     = "Vec",
     params   = List(Param("A", Term.Uni(0))),        // A: Type  → Scala type param [A]
     ctors    = List(
       CtorDef("nil", Nil),                           // nil: Vec(A, zero) — no args
       CtorDef("cons", List(
-        natInd,                                      // m: Nat (index witness → erase)
-        Term.Var(1),                                 // head: A  (Var(1) = A in allParamNames)
-        Term.App(vecInd, Term.Var(1)),               // tail: Vec[A]  (Var(1) = A)
+        natInd,                                      // m: Nat — the length, ordinary data
+        Term.Var(2),                                 // head: A
+        Term.App(vecInd, Term.Var(3)),               // tail: Vec[A]
       )),
     ),
     universe = 0,
     indices  = List(Param("n", natInd)),             // n: Nat — index param
   )
 
-  test("extract Vec enum produces type-parameterized header") {
+  test("extract Vec enum produces a covariant type-parameterized header") {
+    // Covariant, because `case Nil` in an invariant generic enum has no way to fix
+    // its type argument and dotc rejects the declaration outright.
     val result = Extractor.extractInductive(vecDef)
-    assert(result.contains("enum Vec[A]:"), s"expected 'enum Vec[A]:', got:\n$result")
+    assert(result.contains("enum Vec[+A]:"), s"expected 'enum Vec[+A]:', got:\n$result")
   }
 
   test("extract Vec nil produces case Nil with no args") {
@@ -304,15 +312,14 @@ class ExtractorSuite extends FunSuite:
     assert(result.contains("case Nil"), s"expected 'case Nil', got:\n$result")
   }
 
-  test("extract Vec cons erases index arg m: Nat and keeps data args") {
+  test("extract Vec cons keeps the length as data and resolves the type parameter") {
+    // The length argument is *not* erased. It looks erasable, because the `enum`
+    // header drops the index parameter, but the value a `Cons` stores is what gets
+    // passed to every function that takes the length as an argument; dropping it
+    // left those calls with nothing to pass (`Not found: _erased0`).
     val result = Extractor.extractInductive(vecDef)
-    assert(result.contains("case Cons"),     s"expected 'case Cons', got:\n$result")
-    // index arg (m: Nat) must be erased — no plain ": Nat" in Cons args
-    assert(!result.contains("arg0: Nat"),    s"index arg m: Nat should be erased, got:\n$result")
-    // head: A must appear
-    assert(result.contains(": A"),           s"head: A should be present, got:\n$result")
-    // tail: Vec[A] must appear
-    assert(result.contains("Vec[A]"),        s"tail: Vec[A] should be present, got:\n$result")
+    assert(result.contains("case Cons(arg0: Nat, arg1: A, arg2: Vec[A])"),
+      s"expected the full data shape, got:\n$result")
   }
 
   test("termToScalaType resolves Var against param names") {
