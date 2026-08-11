@@ -81,8 +81,11 @@ object Extractor:
       val typeParamStr = if typeParams.isEmpty then "" else s"[${typeParams.mkString(", ")}]"
       val header = s"enum $name$typeParamStr:"
       val ctors  = indDef.ctors.map(c => extractCtor(indDef, c, typeParams))
-      if ctors.isEmpty then s"$header\n  case Empty"
-      else ctors.map(c => s"  $c").mkString(s"$header\n", "\n", "")
+      // The wildcard import is what makes an unqualified `case Zero =>` pattern
+      // resolve in the definitions below.
+      val importLine = s"\nimport $name.*"
+      if ctors.isEmpty then s"$header\n  case Empty$importLine"
+      else ctors.map(c => s"  $c").mkString(s"$header\n", "\n", importLine)
 
   /** Extract a function definition.
    *
@@ -190,11 +193,13 @@ object Extractor:
         case Some(ind) => extractBuiltinMatch(scrutinee, cases, ind, ctx)
         case None      => extractMatch(scrutinee, cases, ctx)
 
-    case Term.Fix(name, _, body) =>
-      // Fix point: render as a local recursive def
+    case Term.Fix(name, fixTpe, body) =>
+      // Fix point: render as a local recursive def.  Its type has to be the one
+      // the Fix declares: emitted as `Any`, the recursive call inside the body is
+      // an application of an `Any` and the result does not compile.
       val safe = sanitizeName(name)
       val bodyStr = termToScalaExpr(body, safe :: ctx)
-      s"{ def $safe: Any = $bodyStr; $safe }"
+      s"{ def $safe: ${termToScalaType(fixTpe)} = $bodyStr; $safe }"
 
     case Term.Meta(id) => s"???"  // unsolved metavariable
 
@@ -280,10 +285,13 @@ object Extractor:
         val extCtx    = bindNames.reverse ++ ctx
         val bodyStr   = termToScalaExpr(mc.body, extCtx)
         val ctorName  = pascalCase(mc.ctor)
+        // `case _.Zero` is not Scala: `_` is not a stable identifier.  The
+        // constructors are brought into scope by the `import <Enum>.*` that
+        // `extractProgram` emits after each enum, so the bare name resolves.
         if bindNames.isEmpty then
-          s"    case _.$ctorName => $bodyStr"
+          s"    case $ctorName => $bodyStr"
         else
-          s"    case _.$ctorName(${bindNames.mkString(", ")}) => $bodyStr"
+          s"    case $ctorName(${bindNames.mkString(", ")}) => $bodyStr"
       }
       s"($sStr match {\n${caseStrs.mkString("\n")}\n  })"
 

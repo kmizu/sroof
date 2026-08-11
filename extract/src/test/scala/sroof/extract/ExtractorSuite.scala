@@ -119,8 +119,12 @@ class ExtractorSuite extends FunSuite:
     val mat    = Term.Mat(Term.Var(0), cases, natInd)
     val result = Extractor.termToScalaExpr(mat, List("n"))
     assert(result.contains("n match"), s"expected 'n match', got:\n$result")
-    assert(result.contains("case _.Zero"),  s"expected 'case _.Zero', got:\n$result")
-    assert(result.contains("case _.Succ"), s"expected 'case _.Succ', got:\n$result")
+    // This used to require `case _.Zero`, pinning output that is not valid Scala:
+    // `_` is not a stable identifier. The constructors come into scope through the
+    // `import <Enum>.*` that `extractProgram` emits, so the bare name is right.
+    assert(result.contains("case Zero"), s"expected 'case Zero', got:\n$result")
+    assert(result.contains("case Succ"), s"expected 'case Succ', got:\n$result")
+    assert(!result.contains("case _."), s"`_.` is not a valid pattern prefix:\n$result")
   }
 
   // ---- extractDef ----

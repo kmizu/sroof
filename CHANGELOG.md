@@ -5,6 +5,41 @@ All release detail lives here. Earlier releases also had per-version
 favour of this one file. The long-form notes for v0.3–v0.9 remain published on
 the [GitHub releases page](https://github.com/kmizu/sroof/releases).
 
+## [0.18.0] - 2026-08-11
+
+**Extracted Scala did not compile.** `sbt "cli/run extract ..."` is a documented
+command and a headline claim — the verified artifact and the shipped artifact are
+meant to be the same object — and its output had not been valid Scala for a long
+time.
+
+### Fixed
+- **Match patterns were emitted as `case _.Zero`.** `_` is not a stable
+  identifier, so every extracted `match` was a syntax error. `extractProgram` now
+  emits `import <Enum>.*` after each enum and the patterns use the bare
+  constructor name.
+- **A `Fix` was rendered as `def f: Any = …`.** `termToScalaExpr` destructured
+  `Term.Fix(name, _, body)`, discarding the declared type, so the recursive call
+  inside the body was an application of an `Any` and did not typecheck. The
+  declared type is now used.
+
+### The reason it shipped
+`ExtractorSuite` asserts on **substrings** — `contains("enum Nat:")`,
+`contains("case _.Zero")`. Nothing ever handed the result to a compiler, and one
+test was actively pinning the broken output.
+
+`ExtractionCompilesSuite` now extracts from real `.sroof` source, compiles the
+result with dotc, and **runs** it. Its `sub` is deliberately asymmetric — it
+matches on its second argument and returns its first — so an extraction that
+swapped them would still compile and the runtime assertion would catch it.
+
+The substring test that required `case _.Zero` now requires the opposite, and
+asserts `_.` appears nowhere.
+
+### Verification
+649 tests. Both new cases fail on the v0.17 tree. `scalaIt` gains a test-scoped
+dependency on `extract` and `syntax` so the suite can call the extractor rather
+than pin a golden string that would rot.
+
 ## [0.17.0] - 2026-08-11
 
 Multi-step `calc` never worked. That is the headline; the rest of the release is

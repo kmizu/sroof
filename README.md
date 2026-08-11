@@ -159,6 +159,13 @@ python3 scripts/benchmark.py --runs 3 --thresholds benchmarks/thresholds.json --
 - published releases: <https://github.com/kmizu/sroof/releases>
 - publishing setup: [`docs/publishing.md`](docs/publishing.md)
 
+### Migration Notes (v0.17 -> v0.18)
+
+- **Extracted Scala now compiles.** It previously emitted `case _.Zero` patterns
+  and `def f: Any` for recursive definitions, neither of which is valid. If you
+  had given up on `cli/run extract`, it works now.
+- Nothing changes about what is accepted as a proof. 649 tests.
+
 ### Migration Notes (v0.16 -> v0.17)
 
 - **`calc` chains of more than one step now work.** They were always rejected; if
