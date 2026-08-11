@@ -198,10 +198,10 @@ object Main:
       try Source.fromFile(filePath).mkString
       catch
         case e: java.io.FileNotFoundException =>
-          println(s"""{"ok":false,"error":"File not found: $filePath","phase":"io"}""")
+          println(ioErrorJson(filePath, s"File not found: $filePath"))
           sys.exit(1)
         case e: Exception =>
-          println(s"""{"ok":false,"error":"${e.getMessage}","phase":"io"}""")
+          println(ioErrorJson(filePath, e.getMessage))
           sys.exit(1)
     val json = processSourceJson(source, filePath, failOnSorry = failOnSorry)
     println(json)
@@ -222,6 +222,21 @@ object Main:
     */
   private[sroof] def jsonExitCode(json: String): Int =
     if json.startsWith("""{"schemaVersion":2,"ok":false""") then 1 else 0
+
+  /** The `--json` document for a file that could not be read.
+    *
+    * This branch used to emit `{"ok":false,"error":"…","phase":"io"}` — no
+    * `schemaVersion`, and none of the keys the schema says every response carries, so
+    * a consumer written against v2 could not parse the one response it gets when the
+    * path is wrong.
+    */
+  private[sroof] def ioErrorJson(fileName: String, message: String): String =
+    val esc = (s: String) => s.replace("\\", "\\\\").replace("\"", "\\\"").replace("\n", "\\n")
+    val diag =
+      s"""{"phase":"io","code":"io_error","message":"${esc(message)}","range":null,""" +
+      s""""expected":null,"actual":null,"hint":null}"""
+    s"""{"schemaVersion":2,"ok":false,"phase":"io","file":"${esc(fileName)}","result":null,""" +
+    s""""warnings":[],"sorryDiagnostics":[],"diagnostics":[$diag],"checks":[],"error":"${esc(message)}"}"""
 
   // ---- Extract command ----
 

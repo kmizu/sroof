@@ -56,6 +56,19 @@ class JsonSchemaContractSuite extends FunSuite:
     "\"diagnostics\":\\[(.*?)\\],\"checks\"".r.findFirstMatchIn(js)
       .map(m => if m.group(1).isEmpty then 0 else m.group(1).count(_ == '{')).getOrElse(-1)
 
+  test("a file that cannot be read is still a v2 document"):
+    // This branch used to emit `{"ok":false,"error":"…","phase":"io"}`: no
+    // schemaVersion and none of the keys every response is supposed to carry, so a
+    // consumer written against v2 could not parse the one response it gets when the
+    // path is wrong.
+    val js = Main.ioErrorJson("nope.sroof", "File not found: nope.sroof")
+    assertEquals(topLevel(js, "schemaVersion"), "2")
+    assertEquals(topLevel(js, "ok"), "false")
+    assertEquals(topLevel(js, "result"), "null")
+    assertEquals(phases(js).distinct, List("io"))
+    assertEquals(diagnosticCount(js), 1)
+    assertEquals(Main.jsonExitCode(js), 1)
+
   test("schemaVersion is 2 in every response"):
     cases.foreach((label, src, f) => assertEquals(topLevel(json(src, f), "schemaVersion"), "2", label))
 
@@ -95,8 +108,9 @@ class JsonSchemaContractSuite extends FunSuite:
 
   test("the document lists every phase and code the producer emits"):
     val doc = Files.readString(Paths.get("docs/json-schema.md"))
-    val emittedPhases = cases.flatMap((_, src, f) => phases(json(src, f))).distinct.sorted
-    val emittedCodes  = cases.flatMap((_, src, f) => codes(json(src, f))).distinct.sorted
+    val io = Main.ioErrorJson("nope.sroof", "File not found: nope.sroof")
+    val emittedPhases = (cases.flatMap((_, src, f) => phases(json(src, f))) ++ phases(io)).distinct.sorted
+    val emittedCodes  = (cases.flatMap((_, src, f) => codes(json(src, f))) ++ codes(io)).distinct.sorted
     val missingPhases = emittedPhases.filterNot(p => doc.contains(s""""$p"""))
     val missingCodes  = emittedCodes.filterNot(c => doc.contains(s""""$c""""))
     assert(missingPhases.isEmpty, s"phases emitted but undocumented: $missingPhases")

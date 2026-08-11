@@ -36,7 +36,7 @@ Fields:
 
 - `schemaVersion`: number, currently `2`
 - `ok`: boolean
-- `phase`: `"parse" | "elab" | "proof" | "check" | "policy"` — how far checking got
+- `phase`: `"io" | "parse" | "elab" | "proof" | "check" | "policy"` — how far checking got
 - `file`: input filename
 - `result`: object when `ok` is `true`, `null` when it is `false`
 - `warnings`: warning objects (for example sorry-related warnings)
@@ -85,8 +85,8 @@ Failure responses include at least one diagnostic:
 
 Fields:
 
-- `phase`: `"parse" | "elab" | "proof" | "check" | "policy"` — where the error occurred
-- `code`: `"parse_error" | "type_mismatch" | "unknown_variable" | "unknown_type" | "proof_error" | "check_error" | "policy_error" | "error"`
+- `phase`: `"io" | "parse" | "elab" | "proof" | "check" | "policy"` — where the error occurred
+- `code`: `"io_error" | "parse_error" | "type_mismatch" | "unknown_variable" | "unknown_type" | "proof_error" | "check_error" | "policy_error" | "error"`
 - `message`: short human-readable summary
 - `range`: source location (`null` if unavailable)
 - `expected` / `actual`: type mismatch details (`null` if not applicable)
@@ -113,6 +113,11 @@ Example:
   "error": null
 }
 ```
+
+## Before checking starts
+
+`phase: "io"`, `code: "io_error"` — the file could not be read. It is a full v2
+document like any other failure, with `result: null` and one diagnostic.
 
 ## Late failures
 

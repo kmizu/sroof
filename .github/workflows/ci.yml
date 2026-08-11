@@ -130,13 +130,23 @@ jobs:
           sudo apt-get update -q
           sudo apt-get install -y clang lld libunwind-dev
 
-      - name: Compile native modules
-        run: sbt cliNative/compile
+      - name: Compile and test native modules
+        # The native modules share the JVM modules' sources, so this is the same code
+        # — but not the same runtime. CI compiled it and never ran a test against it,
+        # which left `nativeRoot/test` (documented in CLAUDE.md) unverified and any
+        # javalib gap in a *test* source invisible until someone ran it by hand.
+        run: sbt cliNative/compile cliNative/test
 
       - name: Link native binary
         run: sbt cliNative/nativeLink
 
       - name: Smoke-test native binary
+        # Deliberately still only `check`. Everything the *logic* does is covered by
+        # `cliNative/test` above, which runs the whole cli suite against the native
+        # runtime. What a smoke test would add on top is the real binary's process
+        # behaviour — stdin at end of input, exit codes — and that could not be
+        # verified while writing this (linking needs several GB of scratch space).
+        # An unverified CI step that can hang the build is worse than the gap.
         run: |
           BINARY=$(find cli-native/target -name "sroof-cli-native" -type f | head -1)
           echo "Binary: $BINARY ($(du -sh $BINARY | cut -f1))"

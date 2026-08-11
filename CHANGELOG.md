@@ -5,6 +5,34 @@ All release detail lives here. Earlier releases also had per-version
 favour of this one file. The long-form notes for v0.3–v0.9 remain published on
 the [GitHub releases page](https://github.com/kmizu/sroof/releases).
 
+## [0.26.0] - 2026-08-12
+
+### Fixed
+- **`sroof check --json` on an unreadable file emitted a document that was not
+  schema v2.** The branch printed `{"ok":false,"error":"…","phase":"io"}` — no
+  `schemaVersion`, and none of the keys the schema says every response carries — so
+  a consumer written against v2 could not parse the one response it gets when the
+  path is wrong. It is now a full v2 document with `result: null` and one diagnostic,
+  and the `io` phase and `io_error` code are in `docs/json-schema.md`.
+
+### Changed
+- **CI runs the native test suite.** The native job compiled `cliNative` and linked
+  the binary, then smoke-tested it on two files; `nativeRoot/test` is documented in
+  `CLAUDE.md` and CI never ran it. Since the native modules share the JVM modules'
+  *test* sources too, a test using something Scala Native's javalib lacks would break
+  `nativeRoot/test` while `cliNative/compile` stayed green. CI now runs
+  `cliNative/test` — 182 cases against the native runtime, verified green locally
+  before this change.
+
+### Known gap
+- The native **binary** smoke test still only runs `check` on two files. What it
+  should also cover is the real binary's process behaviour — stdin at end of input,
+  and exit codes — which is exactly where two of this week's defects lived. That
+  could not be verified while writing this (`nativeLink` needs several GB of scratch
+  space and the machine had none), and an unverified CI step that can hang the build
+  is worse than the gap. The *logic* those steps would exercise is covered by
+  `cliNative/test`.
+
 ## [0.25.0] - 2026-08-12
 
 Two commands that reported failure and returned success.
