@@ -190,11 +190,15 @@ object Main:
           System.err.println(s"Error reading file: ${e.getMessage}")
           sys.exit(1)
 
-    processSource(source, filePath) match
+    processSourceWithWarnings(source, filePath) match
       case Left(err) =>
         System.err.println(s"Error: $err")
         sys.exit(1)
-      case Right((env, _)) =>
+      case Right((env, _, warnings)) =>
+        // Extraction erases proofs, so a `sorry` does not make the emitted code
+        // wrong — but "extract from a verified file" is what this command claims,
+        // and a file with a `sorry` in it is not one.
+        warnings.foreach(w => System.err.println(s"warning: $w"))
         println(Extractor.extractProgram(env))
 
   // ---- Check command ----
@@ -311,8 +315,14 @@ object Main:
           given GlobalEnv = elabResult.env
           val computed = Checker
             .checkAllWithWarnings(elabResult)
-            .map { case (env, warnings) =>
-              (env, warnings, elabResult.defspecs.size)
+            .flatMap { case (env, warnings) =>
+              // A `#check` is part of checking a file, and this path left it out —
+              // so `sroof extract`, which comes through here, emitted code from a
+              // file that `sroof check` rejects. The cache key already covers the
+              // checks (`programHashFor` includes `checksPart`), so the outcome can
+              // be cached with the rest.
+              Checker.evalChecks(elabResult)(using env)
+                .map(_ => (env, warnings, elabResult.defspecs.size))
             }
           proofCache.update(safeFileKey, ProofCacheEntry(programHash, computed))
           computed

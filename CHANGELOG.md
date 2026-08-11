@@ -5,6 +5,27 @@ All release detail lives here. Earlier releases also had per-version
 favour of this one file. The long-form notes for v0.3–v0.9 remain published on
 the [GitHub releases page](https://github.com/kmizu/sroof/releases).
 
+## [0.23.0] - 2026-08-12
+
+The third time the same defect shipped, and the test that should stop a fourth.
+
+### Fixed
+- **`sroof extract` emitted code from a file `sroof check` rejects.** Extraction goes
+  through the cached path (`processSourceWithIncrementalStats`), which ran the proof
+  phase but not `#check`. A file whose `#check` does not type-check was rejected by
+  `sroof check` and extracted happily by `sroof extract`. The cache key already
+  covered the checks, so the outcome is now computed and cached with the rest.
+- `sroof extract` prints `sorry` warnings to stderr. Extraction erases proofs, so a
+  `sorry` does not make the emitted code wrong — but "extract from a verified file"
+  is what the command claims, and a file with a `sorry` in it is not one.
+
+### Added
+- `cli/EntryPointAgreementSuite` — the same six sources through all six entry points
+  into the pipeline, asserting they agree in both directions. The accepting half is
+  not decoration: an entry point that rejected everything would pass the rejecting
+  half on its own. It fails on the previous tree, naming the three paths that
+  disagreed.
+
 ## [0.22.0] - 2026-08-11
 
 The rest of the REPL. Having tests for it turned up two more.
