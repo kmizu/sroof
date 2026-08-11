@@ -597,11 +597,17 @@ object Main:
       decls  <- Parser.parseProgram(input).left.map(e => s"Parse error:\n$e")
       result <- Elaborator.elaborate(decls, globalEnv).left.map(e => s"Elaboration error: ${e.message}")
       newEnv <- Checker.checkAll(result)
+      // A `#check` is an assertion the user just typed. Before this it was
+      // elaborated and dropped: nothing was printed, and `#check Nat.succ(Bool.tru)`
+      // reported OK. Files stopped doing that in v0.15; the REPL is a second path
+      // through the same pipeline and kept doing it.
+      checks <- Checker.evalChecks(result)(using newEnv)
     yield
       val indNames   = newEnv.inductives.keys.toList.sorted
       val defNames   = newEnv.defs.keys.toList.sorted
       val specNames  = result.defspecs.keys.toList.sorted
-      val summary    = buildSummary(indNames, defNames, specNames)
+      val checkLines = checks.map((expr, tpe) => s"#check $expr : $tpe")
+      val summary    = (checkLines :+ buildSummary(indNames, defNames, specNames)).mkString("\n")
       (newEnv, summary)
 
   /** Summarise what is now defined in the environment. */

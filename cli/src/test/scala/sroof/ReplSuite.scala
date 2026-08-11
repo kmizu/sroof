@@ -71,6 +71,35 @@ class ReplSuite extends FunSuite:
     assert(out.exists(_.contains("inductive: Nat")), s"the session should continue: $out")
     assertEquals(out.last, "Goodbye.")
 
+  // ---- #check ----
+
+  private val nat = "inductive Nat { case zero: Nat  case succ(n: Nat): Nat }"
+
+  test("#check reports the type it worked out"):
+    // It reported nothing at all: the result was computed and dropped, and the
+    // session printed the environment summary as though nothing had been asked.
+    val out = session(nat, "#check Nat.succ(Nat.zero)")
+    assert(out.exists(l => l.contains("#check") && l.contains(": Nat")),
+      s"the type should be shown: $out")
+
+  test("an ill-typed #check is an error, not an OK"):
+    // The same silent failure files stopped having in v0.15. The REPL is a second
+    // path through the same pipeline and kept it.
+    val out = session(nat, "inductive Bool { case tru: Bool }", "#check Nat.succ(Bool.tru)")
+    assert(out.exists(_.startsWith("Error:")), s"an ill-typed #check must be reported: $out")
+    assert(out.exists(_.contains("#check")), s"the message must name #check: $out")
+
+  test("a #check on an unknown name is an error"):
+    assert(session(nat, "#check nothingNamedThis").exists(_.startsWith("Error:")))
+
+  // ---- defspec ----
+
+  test("a defspec is proved, and a false one is rejected"):
+    assert(session(nat, "defspec t: Nat.zero = Nat.zero { by trivial }")
+      .exists(_.contains("proved: t")))
+    assert(session(nat, "defspec f: Nat.zero = Nat.succ(Nat.zero) { by trivial }")
+      .exists(_.startsWith("Error:")))
+
   // ---- the reader on its own ----
 
   test("readMultiLine keeps reading while braces are open"):

@@ -5,6 +5,22 @@ All release detail lives here. Earlier releases also had per-version
 favour of this one file. The long-form notes for v0.3–v0.9 remain published on
 the [GitHub releases page](https://github.com/kmizu/sroof/releases).
 
+## [0.22.0] - 2026-08-11
+
+The rest of the REPL. Having tests for it turned up two more.
+
+### Fixed
+- **`#check` printed nothing in the REPL.** The result was computed and dropped, and
+  the session printed its environment summary as though nothing had been asked.
+- **An ill-typed `#check` was accepted in the REPL.** `#check Nat.succ(Bool.tru)`
+  reported OK. Files stopped doing this in v0.15; the REPL is a second path through
+  the same pipeline and kept doing it. `processDeclaration` now runs
+  `Checker.evalChecks` and reports both the type and the failure.
+
+### Added
+- `ReplSuite` cases for `#check` (good, ill-typed, unknown name) and for `defspec`
+  (proved, and a false one rejected).
+
 ## [0.21.0] - 2026-08-11
 
 The REPL, which had no tests, and the proof agent, which had one.
