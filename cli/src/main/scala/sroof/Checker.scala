@@ -5,6 +5,7 @@ import scala.util.boundary.break
 import sroof.core.{Term, Context, GlobalEnv, Subst, MatchCase, DefEntry}
 import sroof.syntax.{ElabResult, SProof, STactic, STacticCase, SType, SCalcStep, SExpr}
 import sroof.tactic.{TacticM, Builtins, TacticError, ProofStatePretty, Eq, Goal}
+import sroof.checker.Bidirectional
 import sroof.kernel.Kernel
 
 /** Checks and proves all declarations from an elaboration result.
@@ -573,27 +574,44 @@ object Checker:
           rhs <- Elaborator.elabExprPublic(step.rhs, env, nameEnv) match
             case Right(t) => TacticM.pure(t)
             case Left(e)  => TacticM.fail(TacticError.Custom(s"calc: RHS elaboration: ${e.message}"))
-          stepProp  = Eq.mkType(Term.Meta(-1), lhs, rhs)
+          // The 2-arg form is the one the checker can type; `Eq.mkType` with a
+          // `Meta` for the element type produces a proposition `inferUniverse`
+          // does not recognise, and a `Meta` the evaluator refuses outright.
+          stepProp  = Eq.mkPropType(lhs, rhs)
           stepProof <- executeProof(goal.ctx, stepProp, step.proof) match
             case Right(t) => TacticM.pure(t)
             case Left(e)  => TacticM.fail(TacticError.Custom(s"calc: step proof failed: $e"))
           result    <- rest match
             case Nil => TacticM.pure(stepProof)
             case _   =>
-              buildCalcChain(goal, nameEnv, rest, Some(rhs)).map { restProof =>
-                buildTransProof(stepProof, restProof, lhs, rhs)
-              }
+              // The transitivity motive binds a variable ranging over the element
+              // type, so that type has to be inferred — the midpoint *term* is not
+              // it.  Only needed when there is a next step.
+              for
+                midTpe <- Bidirectional.infer(goal.ctx, rhs) match
+                  case Right(t) => TacticM.pure(t)
+                  case Left(e)  => TacticM.fail(TacticError.Custom(
+                    s"calc: cannot infer the type of '${rhs.show}': ${e.getMessage}"))
+                restProof <- buildCalcChain(goal, nameEnv, rest, Some(rhs))
+              yield buildTransProof(stepProof, restProof, lhs, midTpe)
         yield result
 
   /** Build a transitivity proof: given `h1 : lhs = mid` and `h2 : mid = rhs`,
    *  returns a proof of `lhs = rhs` via J-rule elimination on `h2`.
    *
-   *  Proof term: `Mat(h2, [refl => shift(1, h1)], Lam("y", _, lhs_shifted = Var(0)))`
+   *  Proof term: `Mat(h2, [refl => shift(1, h1)], Lam("y", midTpe, lhs_shifted = Var(0)))`
+   *
+   *  `midTpe` is the type the chain's values live in — `Nat` for a chain of `Nat`s.
+   *  This used to be handed the midpoint *term*, producing `λy:Nat.zero. …`: a
+   *  binder whose declared type is a value.  Together with a `Meta` element type in
+   *  the motive body, which the evaluator refuses, that made every multi-step `calc`
+   *  fail with a beta-redex the checker could not reduce.  Single-step chains never
+   *  reach here, which is why the tactic looked like it worked.
    */
-  private def buildTransProof(h1: Term, h2: Term, lhs: Term, mid: Term): Term =
+  private def buildTransProof(h1: Term, h2: Term, lhs: Term, midTpe: Term): Term =
     val shiftedLhs  = Subst.shift(1, lhs)
-    val motiveBody  = Eq.mkType(Term.Meta(-1), shiftedLhs, Term.Var(0))
-    val motive      = Term.Lam("y", Subst.shift(1, mid), motiveBody)
+    val motiveBody  = Eq.mkPropType(shiftedLhs, Term.Var(0))
+    val motive      = Term.Lam("y", midTpe, motiveBody)
     val branchBody  = Subst.shift(1, h1)
     Term.Mat(h2, List(MatchCase("refl", 1, branchBody)), motive)
 

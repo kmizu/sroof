@@ -159,6 +159,12 @@ python3 scripts/benchmark.py --runs 3 --thresholds benchmarks/thresholds.json --
 - published releases: <https://github.com/kmizu/sroof/releases>
 - publishing setup: [`docs/publishing.md`](docs/publishing.md)
 
+### Migration Notes (v0.16 -> v0.17)
+
+- **`calc` chains of more than one step now work.** They were always rejected; if
+  you avoided `calc` because of it, it is worth another look.
+- Nothing else changes what is accepted. 647 tests, all 640 pre-existing ones pass.
+
 ### Migration Notes (v0.15 -> v0.16)
 
 - **Nothing breaks** for supported code; 632 tests, all 631 pre-existing ones pass.

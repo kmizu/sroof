@@ -487,23 +487,45 @@ object Main:
     val payload = decls.map(_.toString).mkString("\u241F")
     hashString(payload)
 
+  /** The elaboration-level key for the proof cache.
+   *
+   *  It must mention everything that can change what checking a file produces.
+   *  The surface-AST hash upstream is the first guard and currently catches every
+   *  source edit on its own, which is why the omissions below were invisible — but
+   *  this function is the one that reads as "the invalidation key", so leaving out
+   *  an input that changes behaviour is a landmine rather than a saving.
+   *
+   *  Added since: constructor return indices (they decide typing as of v0.10), each
+   *  definition's declared type (checked as of v0.14), the `@[simp]` set (it decides
+   *  what a bare `simplify` does), structures, and operators.
+   */
   private def programHashFor(result: ElabResult): String =
     val inductivePart = result.env.inductives.toList.sortBy(_._1).map { case (name, ind) =>
       val params = ind.params.map(p => s"${p.name}:${p.tpe.show}").mkString(",")
       val indices = ind.indices.map(i => s"${i.name}:${i.tpe.show}").mkString(",")
-      val ctors = ind.ctors.map(c => s"${c.name}:${c.argTpes.map(_.show).mkString("->")}").mkString(";")
+      val ctors = ind.ctors.map { c =>
+        val ret = c.retIndices.map(_.show).mkString(",")
+        s"${c.name}:${c.argTpes.map(_.show).mkString("->")}:$ret"
+      }.mkString(";")
       s"$name|$params|$indices|$ctors"
     }.mkString("||")
     val defsPart = result.defs.toList.sortBy(_._1).map { case (name, term) =>
-      s"$name=${term.show}"
+      val declaredTpe = result.env.lookupDef(name).map(_.tpe.show).getOrElse("")
+      s"$name:$declaredTpe=${term.show}"
     }.mkString("||")
+    val simpPart = result.env.simpSet.toList.sorted.mkString(",")
+    val structPart = result.env.structures.toList.sortBy(_._1).map { case (name, st) =>
+      s"$name{${st.fields.map((f, t) => s"$f:${t.show}").mkString(",")}}"
+    }.mkString("||")
+    val operatorPart = result.env.operators.toList.sortBy(_._1).map((op, d) => s"$op=>$d").mkString(",")
     val defspecPart = result.defspecs.toList.sortBy(_._1).map { case (name, (params, prop, proof)) =>
       val paramPart = params.map(p => s"${p._1}:${p._2.show}").mkString(",")
       s"$name|$paramPart|${prop.show}|${proof.toString}"
     }.mkString("||")
     val defspecOrderPart = result.defspecOrder.mkString("||")
     val checksPart = result.checks.map(_.toString).mkString("||")
-    hashString(s"$inductivePart###$defsPart###$defspecPart###$defspecOrderPart###$checksPart")
+    hashString(s"$inductivePart###$defsPart###$defspecPart###$defspecOrderPart###$checksPart" +
+               s"###$simpPart###$structPart###$operatorPart")
 
   // ---- REPL ----
 

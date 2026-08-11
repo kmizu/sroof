@@ -81,3 +81,38 @@ class IncrementalSuite extends FunSuite:
     assert(message.contains("Proof of 'refl' failed"), s"should report real proof failure:\n$message")
   }
 
+  // ---- the program hash must mention everything that changes the outcome ----
+
+  test("a constructor's return index changes the program hash"):
+    // The surface-AST hash upstream already catches this, so the assertion is on
+    // `programHashFor` doing its own job: it reads as the invalidation key, and an
+    // input it omits is a landmine for whoever relies on it next.
+    def src(nilIndex: String) =
+      s"""|inductive Nat { case zero: Nat  case succ(n: Nat): Nat }
+          |inductive Vec(A: Type)(n: Nat) {
+          |  case vnil: Vec(A)($nilIndex)
+          |  case vcons(m: Nat, head: A, tail: Vec(A)(m)): Vec(A)(Nat.succ(m))
+          |}
+          |defspec t: Vec(Nat)(Nat.zero) { Vec.vnil }
+          |""".stripMargin
+    Main.resetIncrementalCache()
+    val first  = Main.processSourceWithIncrementalStats(src("Nat.zero"), "idx.sroof")
+    assert(first.isRight, s"the length-zero version must check: $first")
+    // `vnil` is now length one, so the defspec is false and must be rejected —
+    // a cached "OK" surviving this would be the whole hazard.
+    val second = Main.processSourceWithIncrementalStats(src("Nat.succ(Nat.zero)"), "idx.sroof")
+    assert(second.isLeft, s"the changed index must be re-checked and rejected: $second")
+
+  test("a definition's declared type changes the program hash"):
+    def src(ret: String) =
+      s"""|inductive Nat { case zero: Nat  case succ(n: Nat): Nat }
+          |inductive Bool { case tru: Bool  case fls: Bool }
+          |def f(n: Nat): $ret { n }
+          |defspec t(n: Nat): n = n { by trivial }
+          |""".stripMargin
+    Main.resetIncrementalCache()
+    assert(Main.processSourceWithIncrementalStats(src("Nat"), "dt.sroof").isRight)
+    assert(
+      Main.processSourceWithIncrementalStats(src("Bool"), "dt.sroof").isLeft,
+      "changing the declared type must be re-checked and rejected",
+    )

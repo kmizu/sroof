@@ -5,6 +5,64 @@ All release detail lives here. Earlier releases also had per-version
 favour of this one file. The long-form notes for v0.3–v0.9 remain published on
 the [GitHub releases page](https://github.com/kmizu/sroof/releases).
 
+## [0.17.0] - 2026-08-11
+
+Multi-step `calc` never worked. That is the headline; the rest of the release is
+a sweep that found it.
+
+### Fixed
+- **A `calc` chain of more than one step was always rejected.** Two mistakes in
+  the transitivity term, both in `Checker.buildTransProof`:
+
+  - It was handed the midpoint **term** where the motive needed that value's
+    **type**, producing a binder whose declared type is a value: `λy:Nat.zero. …`.
+  - The motive body used the 3-argument `Eq` form with a `Meta` element type.
+    `inferUniverse` does not recognise that form, and the evaluator refuses a
+    `Meta` outright, so the motive could not even be reduced.
+
+  Together they produced a beta-redex the checker could not touch:
+
+  ```
+  expected: ((λy:zero. (((Eq ?-1) zero) y)) zero)
+  actual:   ((Eq zero) zero)
+  ```
+
+  A single-step chain returns before reaching that code, which is why the tactic
+  looked like it worked. The type is now inferred and the 2-argument `Eq` form
+  used throughout.
+
+- **`programHashFor` omitted inputs that change the outcome**: constructor return
+  indices (which decide typing as of v0.10), each definition's declared type
+  (checked as of v0.14), the `@[simp]` set, structures and operators.
+
+  The surface-AST hash upstream catches every source edit on its own, so nothing
+  was observably wrong — probing confirmed a changed return index and a changed
+  declared type are both re-checked. But this function reads as *the* invalidation
+  key, and an input it omits is a landmine for whoever relies on it next.
+
+### Added
+- `CalcSuite`: five cases, including a chain whose steps do real work rather than
+  `zero = zero` twice, and two soundness cases — a step that does not hold, and a
+  chain that does not reach the goal.
+- Two `IncrementalSuite` cases pinning cache invalidation across a return-index and
+  a declared-type change.
+
+### Probed and found correct
+Every logic tactic — `tauto`, `decide`, `contradiction`, `assumption`,
+`constructor`, `left`, `split`, `repeat`, `try`, `all_goals`, `first`, `skip` —
+rejects a false statement. `try` and `skip` in particular do not leave a goal open
+and call it proved.
+
+The incremental cache is sound: a changed constructor return index and a changed
+declaration type are both re-checked, because the surface-AST hash invalidates
+everything downstream.
+
+### Verification
+647 tests. The two multi-step `calc` cases fail on the v0.16 tree; the soundness
+cases are rejected on both, which is what they are for.
+
+All 640 pre-existing tests pass unchanged.
+
 ## [0.16.0] - 2026-08-11
 
 A release about the **trusted bridge** — the part of sroof the kernel cannot check.
