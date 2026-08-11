@@ -5,6 +5,37 @@ All release detail lives here. Earlier releases also had per-version
 favour of this one file. The long-form notes for v0.3–v0.9 remain published on
 the [GitHub releases page](https://github.com/kmizu/sroof/releases).
 
+## [0.19.0] - 2026-08-11
+
+A measurement. v0.18 fixed two defects that made *every* extraction invalid;
+sweeping the whole shipped corpus afterwards showed the rest of the gap.
+
+**8 of the 26 shipped `.sroof` files extract to Scala that compiles.**
+
+### Found
+The 18 that do not fail for one dominant reason. A `.sroof` definition takes its
+type parameter as an ordinary `Type`-valued parameter — `def poly_length(A: Type,
+xs: PolyList(A))` — and `Extractor.termToScalaType` renders the resulting
+unresolved `Var(i)` as the literal name `T0`, `T1`, …, a type that is never
+declared:
+
+```
+E.scala:21: Missing type parameter for [A] =>> PList[<error Not found: type T0>]
+```
+
+The fix is to promote `Type`-valued parameters to Scala type parameters, so that
+`poly_length` extracts as `def polyLength[A](xs: PList[A]): Nat`. That is a real
+feature rather than a patch, and it is not in this release.
+
+### Added
+- `ExtractionCorpusSuite`, pinning both halves: the eight files that compile must
+  keep compiling, and the count that do not must not grow. It is written so that
+  *fixing* the gap also fails the test and forces the lists to be updated — a
+  measurement, not an endorsement.
+- `docs/stdlib.md` records the status and the diagnosis.
+
+Proof checking is unaffected throughout; this is the extraction back end only.
+
 ## [0.18.0] - 2026-08-11
 
 **Extracted Scala did not compile.** `sbt "cli/run extract ..."` is a documented

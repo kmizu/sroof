@@ -54,3 +54,23 @@ Each file is self-contained and checker-runnable by itself.
 - Existing lemma names in v1 are stable.
 - New lemmas can be added in a backward-compatible way.
 - Removing or renaming existing exported lemmas requires a major stdlib revision.
+
+## Extraction status
+
+Extraction produces Scala that compiles for **8 of the 26** shipped `.sroof` files
+(`scala-it/ExtractionCorpusSuite` pins both halves).
+
+The 18 that do not fail for one dominant reason: a `.sroof` definition takes its
+type parameter as an ordinary `Type`-valued parameter — `def poly_length(A: Type,
+xs: PolyList(A))` — and `Extractor.termToScalaType` renders the resulting
+unresolved `Var(i)` as the literal name `T0`, `T1`, …, which is never declared:
+
+```
+E.scala:21: Missing type parameter for [A] =>> PList[<error Not found: type T0>]
+```
+
+The fix is to promote `Type`-valued parameters to Scala type parameters, so that
+`poly_length` extracts as `def polyLength[A](xs: PList[A]): Nat`. Until then every
+polymorphic definition — and every file containing one — is lost in extraction.
+
+Proof checking is unaffected; this is the extraction back end only.
