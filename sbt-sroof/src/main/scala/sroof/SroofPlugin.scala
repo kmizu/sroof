@@ -20,7 +20,7 @@ object SroofPlugin extends AutoPlugin {
     // Settings
     val sroofSources  = settingKey[Seq[File]]("Directories containing .sroof source files")
     val sroofOutput   = settingKey[File]("Output directory for extracted Scala sources")
-    val sroofVersion  = settingKey[String]("Version of the sroof CLI to use")
+    val sroofVersion  = settingKey[String]("Version of the sroof CLI (informational; no task reads it yet)")
     val sroofJar      = settingKey[Option[File]]("Path to the sroof CLI uber-JAR (None = use `sroof` on PATH)")
     val sroofJvmOpts  = settingKey[Seq[String]]("JVM options when forking the sroof CLI")
   }
@@ -55,7 +55,9 @@ object SroofPlugin extends AutoPlugin {
   // ---- Default settings ----
 
   override lazy val projectSettings: Seq[Setting[?]] = Seq(
-    sroofVersion := "0.1.0",
+    // Informational only: no task reads this yet. The CLI is located by `sroofJar`
+    // or found on the PATH.
+    sroofVersion := "0.25.0",
     sroofSources := Seq(sourceDirectory.value / "main" / "sroof"),
     sroofOutput  := (Compile / sourceManaged).value / "sroof",
     sroofJar     := None,

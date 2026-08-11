@@ -84,8 +84,14 @@ object Main:
       case "agent" :: filePath :: Nil =>
         runAgent(filePath)
 
-      case "extract" :: filePath :: Nil =>
-        runExtract(filePath)
+      case "extract" :: tail =>
+        parseExtractOptions(tail) match
+          case Left(err) =>
+            System.err.println(s"Error: $err")
+            printUsage()
+            sys.exit(1)
+          case Right((filePath, output)) =>
+            runExtract(filePath, output)
 
       case "repl" :: Nil =>
         given GlobalEnv = GlobalEnv.empty
@@ -94,6 +100,31 @@ object Main:
       case _ =>
         printUsage()
         sys.exit(1)
+
+  /** `extract <file.sroof> [--output <file.scala>]`.
+    *
+    * `sbt-sroof` has always invoked `extract` with `--output`, which the CLI did not
+    * accept: it printed the usage text and exited 1, so `sroofExtract` — wired into
+    * `Compile / sourceGenerators` — failed every build that enabled the plugin. The
+    * plugin is compiled by CI and never run, so nothing caught it.
+    */
+  private[sroof] def parseExtractOptions(args: List[String]): Either[String, (String, Option[String])] =
+    def loop(rest: List[String], file: Option[String], out: Option[String])
+        : Either[String, (String, Option[String])] =
+      rest match
+        case Nil =>
+          file.toRight("Missing <file.sroof> for extract").map((_, out))
+        case "--output" :: path :: more =>
+          if out.isDefined then Left("Duplicate --output")
+          else loop(more, file, Some(path))
+        case "--output" :: Nil =>
+          Left("Missing <file.scala> after --output")
+        case arg :: more if arg.startsWith("--") =>
+          Left(s"Unknown option for extract: $arg")
+        case arg :: more =>
+          if file.isDefined then Left(s"Unexpected extra argument for extract: $arg")
+          else loop(more, Some(arg), out)
+    loop(args, None, None)
 
   private[sroof] def parseCheckOptions(args: List[String]): Either[String, CheckCliOptions] =
     def loop(
@@ -174,12 +205,27 @@ object Main:
           sys.exit(1)
     val json = processSourceJson(source, filePath, failOnSorry = failOnSorry)
     println(json)
-    if failOnSorry && json.contains("\"phase\":\"policy\"") then
-      sys.exit(1)
+    val code = jsonExitCode(json)
+    if code != 0 then sys.exit(code)
+
+  /** The exit code that goes with a `--json` payload.
+    *
+    * This used to be `if failOnSorry && json.contains("\"phase\":\"policy\"")`, so
+    * every other failure — a parse error, a failed proof, an ill-typed `#check` —
+    * printed `"ok":false` and exited **0**. A CI step running `sroof check --json`
+    * and trusting the exit code passed every broken file. The plain path exits 1 for
+    * all of them.
+    *
+    * Matched at the start of the document, not with `contains`: `"ok":false` also
+    * appears inside `checks[]`, where it means one `#check` failed and says nothing
+    * about the file as a whole.
+    */
+  private[sroof] def jsonExitCode(json: String): Int =
+    if json.startsWith("""{"schemaVersion":2,"ok":false""") then 1 else 0
 
   // ---- Extract command ----
 
-  private def runExtract(filePath: String): Unit =
+  private def runExtract(filePath: String, output: Option[String] = None): Unit =
     val source =
       try Source.fromFile(filePath).mkString
       catch
@@ -199,7 +245,14 @@ object Main:
         // wrong — but "extract from a verified file" is what this command claims,
         // and a file with a `sorry` in it is not one.
         warnings.foreach(w => System.err.println(s"warning: $w"))
-        println(Extractor.extractProgram(env))
+        val scala = Extractor.extractProgram(env)
+        output match
+          case None       => println(scala)
+          case Some(path) =>
+            val f = java.io.File(path)
+            Option(f.getParentFile).foreach(_.mkdirs())
+            java.nio.file.Files.writeString(f.toPath, scala + "\n")
+            System.err.println(s"Extracted to $path")
 
   // ---- Check command ----
 
@@ -686,7 +739,8 @@ object Main:
          |  sroof check --json <file.sroof>                   Same, but output JSON (for tooling/agents).
          |  sroof check --fail-on-sorry <file.sroof>          Treat any sorry warning as an error (exit 1).
          |  sroof check --json --fail-on-sorry <file.sroof>   JSON output + fail policy.
-         |  sroof extract <file.sroof>        Extract Scala 3 code from a verified sroof file.
+         |  sroof extract <file.sroof>                        Extract Scala 3 code to stdout.
+         |  sroof extract <file.sroof> --output <file.scala>  Write the extracted Scala to a file.
          |  sroof agent <file.sroof>          Auto-repair sorry proofs using the proof agent.
          |  sroof repl                         Start the interactive REPL.
          |""".stripMargin

@@ -5,6 +5,37 @@ All release detail lives here. Earlier releases also had per-version
 favour of this one file. The long-form notes for v0.3–v0.9 remain published on
 the [GitHub releases page](https://github.com/kmizu/sroof/releases).
 
+## [0.25.0] - 2026-08-12
+
+Two commands that reported failure and returned success.
+
+### Fixed
+- **`sroof check --json` exited 0 on every failure except a sorry-policy
+  violation.** The exit code was
+  `if failOnSorry && json.contains("\"phase\":\"policy\"")`, so a parse error, a
+  failed proof, or an ill-typed `#check` printed `"ok":false` and exited **0** — a CI
+  step running `--json` and trusting the exit code passed every broken file, while
+  the same file failed the plain command. The exit code is now taken from the
+  payload's top-level `ok`, matched at the start of the document rather than with
+  `contains` (`"ok":false` also occurs inside `checks[]`, where it says nothing about
+  the file as a whole).
+- **`sroof extract` did not accept `--output`, which `sbt-sroof` has always passed.**
+  `sroofExtract` invokes `extract <file> --output <file>` and is wired into
+  `Compile / sourceGenerators`; the CLI printed its usage text and exited 1, so every
+  build that enabled the plugin failed. CI compiles the plugin and never runs it, so
+  nothing caught it. `extract` now takes `--output <file.scala>`, writing there
+  instead of to stdout, and rejects malformed arguments with a message naming them
+  instead of falling through to the usage text.
+
+### Added
+- `cli/ExitCodeSuite` — the agreement property: `--json` exits non-zero exactly when
+  the plain path rejects, over every failure mode. Plus the `extract` argument
+  shapes, including the one the sbt plugin passes.
+
+### Changed
+- `sbt-sroof`'s `sroofVersion` default was `0.1.0` and no task reads it. Bumped, and
+  the key now says it is informational.
+
 ## [0.24.0] - 2026-08-12
 
 `docs/json-schema.md` is the contract tooling reads. Nothing tested it, and the
