@@ -41,6 +41,24 @@ object Checker:
     boundary:
       val sorryWarnings = scala.collection.mutable.ListBuffer.empty[String]
       val candidates = scala.collection.mutable.ListBuffer.empty[ProofCandidate]
+      // A `@[simp] defspec` used to be registered in `simpSet` by the elaborator,
+      // which runs before any proof does, while its `DefEntry` is only added below
+      // as each proof succeeds. Between those two points the default lemma set
+      // held a name that resolved to nothing: `simplify` with no lemmas picked it
+      // up and silently degraded to `trivial`, and the guard that reports an
+      // unresolvable name is deliberately skipped for the default set — on the
+      // grounds, stated in `Builtins.checkLemmaNames`, that those names "exist by
+      // construction". For a defspec they did not.
+      //
+      // The set is also what `simplify` uses *implicitly*, while sorry-taint is
+      // propagated from the lemma names a proof actually writes. A sorry-tainted
+      // `@[simp]` lemma reached that way would leave no trace in the warnings.
+      //
+      // So a defspec joins `simpSet` here, once its proof has been produced and is
+      // not sorry-tainted — the discipline `frontend.ModuleVerifier` already
+      // states for the Scala path, where a theorem "enters simpSet only after the
+      // kernel has accepted its proof".
+      val simpDefspecs = result.simpDefspecs
       var proofEnv = env
       // Track which defspecs are tainted by sorry (directly or transitively)
       val sorryTainted = scala.collection.mutable.Set.empty[String]
@@ -84,6 +102,8 @@ object Checker:
                 // Make previously proved theorems available to later proofs.
                 // This enables proof reuse via term proofs / exact theorem calls.
                 proofEnv = proofEnv.addDef(DefEntry(name, fullPropTerm, fullProofTerm))
+                if simpDefspecs.contains(name) && !skipKernel then
+                  proofEnv = proofEnv.addToSimpSet(name)
 
       Right((candidates.toList, sorryWarnings.toList))
 

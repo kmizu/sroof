@@ -15,6 +15,19 @@ case class ElabResult(
   defspecOrder: List[String] = Nil,
   /** Surface expressions from `#check` declarations, in order of appearance. */
   checks:   List[SExpr] = Nil,
+  /** Names of `@[simp] defspec`s, which are **not** in `env.simpSet`.
+    *
+    * A `@[simp] def` can join the set here: its definition exists as soon as it
+    * is elaborated. A defspec's does not — `cli.Checker` adds it only once the
+    * proof has been produced. Registering the name at elaboration time therefore
+    * put a name in the default lemma set that resolved to nothing, and
+    * `Builtins.checkLemmaNames` deliberately skips the unresolvable-name guard
+    * for the default set, so it degraded to `trivial` in silence. It also meant
+    * an unproved — or `sorry`-tainted — lemma sat in the set that `simplify` uses
+    * *implicitly*, where sorry-taint tracking, which reads the names a proof
+    * writes, could not see it.
+    */
+  simpDefspecs: Set[String] = Set.empty,
 )
 
 /** Elaborator: converts surface AST to core terms with De Bruijn indices.
@@ -51,6 +64,7 @@ object Elaborator:
     var defspecs = Map.empty[String, (List[(String, Term)], Term, SProof)]
     var defspecOrder = List.empty[String]
     var checks   = List.empty[SExpr]
+    var simpDefspecs = Set.empty[String]
 
     for decl <- decls do
       decl match
@@ -154,7 +168,10 @@ object Elaborator:
                 case Right((elabParams, propT)) =>
                   defspecs = defspecs + (name -> (elabParams, propT, proof))
                   defspecOrder = defspecOrder :+ name
-                  if attr == "simp" then env = env.addToSimpSet(name)
+                  // Deliberately not `env.addToSimpSet`: the proof does not exist
+                  // yet, so the name would not resolve. `cli.Checker` registers it
+                  // once the proof is produced and un-tainted.
+                  if attr == "simp" then simpDefspecs = simpDefspecs + name
 
             case _ =>
               // For other declaration kinds, attrs are currently ignored
@@ -163,7 +180,7 @@ object Elaborator:
         case SDecl.SCheck(expr) =>
           checks = checks :+ expr
 
-    Right(ElabResult(env, defs, defspecs, defspecOrder, checks))
+    Right(ElabResult(env, defs, defspecs, defspecOrder, checks, simpDefspecs))
 
   /** Helper: elaborate a defspec declaration, returning (elabParams, propTerm). */
   private def elabDefspec(

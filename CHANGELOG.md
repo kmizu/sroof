@@ -5,6 +5,49 @@ All release detail lives here. Earlier releases also had per-version
 favour of this one file. The long-form notes for v0.3–v0.9 remain published on
 the [GitHub releases page](https://github.com/kmizu/sroof/releases).
 
+## [0.30.0] - 2026-08-12
+
+### Fixed
+- **An unproved lemma sat in the default simp set.** The elaborator registered a
+  `@[simp] defspec`'s name in `simpSet` immediately, while its definition is added
+  by `Checker` only once the proof has been produced. Between those points the
+  default lemma set held a name that resolved to nothing — and the guard that
+  reports an unresolvable `simplify` lemma is *deliberately skipped* for the
+  default set, on a premise stated in `Builtins.checkLemmaNames`: that those names
+  come from `@[simp]` annotations "on definitions that exist by construction". For
+  a defspec they did not. `simplify` with no lemmas therefore degraded to `trivial`
+  in silence.
+
+  A `@[simp] defspec` now joins `simpSet` in `Checker`, once its proof exists and
+  is not `sorry`-tainted — the discipline `frontend.ModuleVerifier` already states
+  for the Scala path, where a theorem "enters simpSet only after the kernel has
+  accepted its proof". The two frontends had been doing opposite things.
+
+  The `sorry` half of this is the one to watch: `simpSet` is what `simplify`
+  consults *implicitly*, while sorry-taint is propagated from the lemma names a
+  proof writes down. A tainted lemma reached implicitly leaves no trace in the
+  warnings, and `--fail-on-sorry` would not see it. That path is now closed by
+  construction. **It is not, however, demonstrated**: no input could be
+  constructed in which an implicit `@[simp] defspec` lemma actually fires — see
+  below.
+
+### Found while fixing, not fixed
+`SimpSetSuite`'s "simplify with no lemmas uses @[simp] defspec from simpSet" does
+not test that. Its goal is `plus(Nat.zero, k) = k`, which `trivial` closes on its
+own, and the assertion is only `isRight` — so it passes whether or not the simp
+lemma is consulted. Every attempt here to make an `@[simp] defspec` visibly change
+a proof's outcome failed, which is consistent with the feature not working at all,
+and equally consistent with the goals chosen being the wrong shape. That question
+is left open rather than answered by assertion; what ships is the invariant, which
+is checkable.
+
+### Added
+- Four cases in `cli/SimpSetSuite`, one of which fails on the previous tree: every
+  name in the default simp set must resolve to a definition. The other three are
+  controls — an `@[simp] def` must still register at elaboration (withholding
+  everything would satisfy the first test and lose the feature), the defspec name
+  must be recorded rather than dropped, and the file must still check.
+
 ## [0.29.0] - 2026-08-12
 
 The same question v0.28 asked of the Scala frontend, asked of the `.sroof` path.

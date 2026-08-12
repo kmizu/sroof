@@ -1021,8 +1021,12 @@ object Builtins:
    *  Proven `defspec`s are registered as definitions (`Checker` adds each one to the
    *  environment as it is proved), so lemmas are covered by the same lookup.
    *
-   *  Only checked for names the user wrote.  The default `simpSet` comes from
-   *  `@[simp]` annotations on definitions that exist by construction.
+   *  Only checked for names the user wrote.  The default `simpSet` is expected to
+   *  contain only names that resolve — but that is an invariant its *producer*
+   *  has to maintain, not a fact about `@[simp]`: the elaborator registers a
+   *  `@[simp] defspec` before its proof exists, so `cli.Checker` withholds those
+   *  names until the proof is produced and un-tainted.  If another producer is
+   *  added, it owes the same guarantee or this check has to stop being skipped.
    */
   private def checkLemmaNames(
     goal:      Goal,
