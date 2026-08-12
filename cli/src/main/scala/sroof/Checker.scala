@@ -64,6 +64,11 @@ object Checker:
               sorryWarnings += s"warning: '$name' depends on sorry-tainted defspec(s): ${taintedRefs.mkString(", ")} — proof is transitively unsound"
               sorryTainted += name
 
+            wellFormedProp(proofCtx, propTerm)(using proofEnv) match
+              case Left(why) =>
+                break(Left(s"Statement of '$name' is not a proposition: $why"))
+              case Right(())  => ()
+
             executeProof(proofCtx, propTerm, proof)(using proofEnv) match
               case Left(err) =>
                 break(Left(s"Proof of '$name' failed: $err"))
@@ -157,6 +162,48 @@ object Checker:
       (candidates, warnings) = generated
       _ <- finalizeProofCandidates(candidates)
     yield (result.env, warnings)
+
+  /** Check that a defspec's statement is a proposition before proving it.
+    *
+    * An ill-typed statement was not accepted before this — `executeProof` catches
+    * the evaluator exception it causes — but it was *diagnosed* as
+    * "Internal error while running the proof: … This is a bug in sroof", which
+    * blames the tool for something the author wrote. A statement like
+    * `plus(Bool.tru, Nat.zero) = plus(Bool.tru, Nat.zero)` is not a bug in sroof;
+    * it is not a proposition, and saying so names the actual problem.
+    *
+    * `Bidirectional.inferUniverse` cannot answer this on its own: it returns
+    * `Right(0)` for an applied `Eq` **without inspecting the arguments**, taking
+    * the shape as evidence. What makes `Eq A a b` a proposition is that both sides
+    * are typeable at one type, so that is what is checked.
+    */
+  private def wellFormedProp(ctx: Context, prop: Term)(using GlobalEnv): Either[String, Unit] =
+    // Rejection-safe: `Eval` throws on a term it cannot reduce, and an ill-typed
+    // statement is exactly such a term. A throw here becomes a rejection, never an
+    // acceptance.
+    try
+      Eq.extract(prop) match
+        case Some((_, lhs, rhs)) =>
+          for
+            tpe <- Bidirectional.infer(ctx, lhs).left.map(_.getMessage)
+            _   <- Bidirectional.check(ctx, rhs, tpe).left.map(_.getMessage)
+          yield ()
+        case None =>
+          // Deliberately unchecked, and the reason is a real limitation rather
+          // than caution. A defspec may state a bare type to be inhabited, and
+          // for a family with a phantom index — one that declares indices its
+          // constructors do not state — the *applied* form cannot be typed at
+          // all: `infer` on `Ind(name, …)` folds over the parameters only, so
+          // `PVec(Nat)(zero)` reaches `Expected function type`. Requiring this
+          // shape to type-check rejected a file the tool proves today
+          // (`IndexedFamilySuite`, "a family whose constructors omit their
+          // indices is unchanged"). The blind spot being closed here is specific
+          // to `Eq` anyway: `inferUniverse` answers `Right(0)` for an applied
+          // `Eq` without looking at the arguments.
+          Right(())
+    catch
+      case scala.util.control.NonFatal(e) =>
+        Left(Option(e.getMessage).getOrElse(e.getClass.getName))
 
   /** Count sorry usages in a surface proof. */
   private def countSorry(proof: SProof): Int = proof match

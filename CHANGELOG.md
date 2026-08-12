@@ -5,6 +5,47 @@ All release detail lives here. Earlier releases also had per-version
 favour of this one file. The long-form notes for v0.3–v0.9 remain published on
 the [GitHub releases page](https://github.com/kmizu/sroof/releases).
 
+## [0.29.0] - 2026-08-12
+
+The same question v0.28 asked of the Scala frontend, asked of the `.sroof` path.
+The answer was better — and still wrong in a way the author could not act on.
+
+### Fixed
+- **An ill-typed statement was blamed on the tool.** A defspec such as
+  `plus(Bool.tru, Nat.zero) = plus(Bool.tru, Nat.zero)` was never accepted —
+  `executeProof` catches the evaluator exception it causes, so there is no
+  soundness hole here — but it was reported as:
+
+  > Internal error while running the proof: Non-exhaustive match: no case for
+  > constructor 'tru'. **This is a bug in sroof** — the proof is rejected rather
+  > than accepted.
+
+  It is not a bug in sroof. The statement is not a proposition, and nothing had
+  checked whether it was: `Bidirectional.inferUniverse` answers `Right(0)` for an
+  applied `Eq` **without inspecting the arguments**, taking the shape as evidence.
+  `Checker.wellFormedProp` now infers the left side and checks the right against
+  that type, so the report is an ordinary type mismatch — `expected: Nat`,
+  `actual: Bool` — naming the term the author wrote.
+- `Diagnostics.DefspecFailurePattern` now also matches "Statement of '…'".
+  Every message that names a defspec has to be in that pattern or the range falls
+  through to a needle search; the new wording would otherwise have pointed at the
+  first textual `tru` in the file, eight lines above the declaration.
+
+### Note — the check is deliberately narrower than it could be
+It applies to `Eq` statements only. A defspec may instead state a bare type to be
+inhabited, and for a family with a *phantom* index — one that declares indices its
+constructors do not state — the applied form cannot be typed at all: `infer` on
+`Ind(name, …)` folds over the parameters only, so `PVec(Nat)(zero)` reaches
+`Expected function type`. Requiring every statement to type-check rejected a file
+the tool proves today. That was found by running the suite, not by reasoning about
+it, and it is why the first version of this fix does not ship: measuring the
+corpus (26/26 files still check) and the suite is what set the scope.
+
+### Added
+- `cli/StatementSuite` — four cases, two of which fail on the previous tree. The
+  third passes on both and is there for the opposite reason: it pins the message
+  wording to the range pattern, which is what the new wording nearly broke.
+
 ## [0.28.0] - 2026-08-12
 
 Three defects on the Scala 3 frontend, all of the same shape: the kernel was asked

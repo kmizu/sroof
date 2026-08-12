@@ -22,7 +22,12 @@ final case class Diagnostic(
 
 object Diagnostics:
   private val ParseLocPattern = raw"\(line\s+(\d+),\s*column\s+(\d+)\)".r
-  private val DefspecFailurePattern = raw"(?:Kernel rejected proof of|Proof of) '([^']+)'".r
+  // Every message that names a defspec has to be listed here, or the diagnostic
+  // falls through to a needle search and points at the first textual match of some
+  // term elsewhere in the file. "Statement of" was added in v0.29 and is exactly
+  // the case where the declaration line is the right place to point.
+  private val DefspecFailurePattern =
+    raw"(?:Kernel rejected proof of|Proof of|Statement of) '([^']+)'".r
 
   def fromFailure(source: String, phase: String, error: String): List[Diagnostic] =
     List(buildDiagnostic(source, phase, error))
