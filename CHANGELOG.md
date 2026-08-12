@@ -5,6 +5,34 @@ All release detail lives here. Earlier releases also had per-version
 favour of this one file. The long-form notes for v0.3–v0.9 remain published on
 the [GitHub releases page](https://github.com/kmizu/sroof/releases).
 
+## [0.31.0] - 2026-08-12
+
+Closes the question v0.30 left open, and corrects what that entry implied.
+
+### Added
+- **Three cases that establish `@[simp]` on a defspec does something.**
+  `SimpSetSuite`'s existing "simplify with no lemmas uses @[simp] defspec from
+  simpSet" does not: its goal is `plus(Nat.zero, k) = k`, which `trivial` closes on
+  its own, and the assertion is only `isRight`, so it passes whether or not the
+  lemma is consulted. The new cases share one goal `trivial` cannot close and differ
+  only in how the lemma is offered:
+
+  | proof | outcome |
+  |---|---|
+  | `by trivial` | rejected — so the goal genuinely needs the lemma |
+  | `by simplify [collapse_zero]` | accepted |
+  | `by simplify` | accepted |
+
+  The first is the one that makes the other two mean anything.
+
+### Correction to v0.30.0
+That entry said the `sorry`-tainted-lemma path "is now closed by construction" but
+was "not demonstrated". Tested since: on the **previous** tree the same file is
+rejected too — a `sorry`-proved lemma does not fire as a rewrite rule, so there was
+no live leak to close. The v0.30 fix stands on the defect that was demonstrated —
+an unresolvable name in the default set — and the taint argument was a hypothesis
+that did not survive being checked.
+
 ## [0.30.0] - 2026-08-12
 
 ### Fixed

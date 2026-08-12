@@ -163,6 +163,51 @@ class SimpSetSuite extends FunSuite:
     // produced and un-tainted.
     assertEquals(elaborated.simpDefspecs, Set("double_zero"))
 
+  // ---- does @[simp] on a defspec actually change anything? ----
+  //
+  // "simplify with no lemmas uses @[simp] defspec from simpSet", above, does not
+  // establish that: its goal is `plus(Nat.zero, k) = k`, which `trivial` closes on
+  // its own, so it passes whether or not the lemma is consulted. These three share
+  // one goal that `trivial` cannot close, and differ only in how the lemma is
+  // offered — which is what makes the answer mean something.
+
+  private def collapseSrc(proof: String) =
+    s"""|inductive Nat {
+        |  case zero: Nat
+        |  case succ(n: Nat): Nat
+        |}
+        |def collapse(n: Nat): Nat {
+        |  match n {
+        |    case Nat.zero    => Nat.zero
+        |    case Nat.succ(k) => collapse(k)
+        |  }
+        |}
+        |@[simp] defspec collapse_zero(n: Nat): collapse(n) = Nat.zero {
+        |  by induction n {
+        |    case zero => trivial
+        |    case succ k ih => simplify [ih]
+        |  }
+        |}
+        |defspec target(m: Nat): collapse(Nat.succ(m)) = Nat.zero { by $proof }
+        |""".stripMargin
+
+  test("the goal needs the lemma: trivial alone does not close it"):
+    // Without this the other two prove nothing — a goal `trivial` can close is
+    // closed whatever the simp set contains.
+    assert(check(collapseSrc("trivial")).isLeft,
+      "the fixture goal is closed by trivial, so it cannot discriminate")
+
+  test("naming the lemma closes it"):
+    assert(check(collapseSrc("simplify [collapse_zero]")).isRight,
+      s"an explicitly named lemma did not close the goal: ${check(collapseSrc("simplify [collapse_zero]"))}")
+
+  test("@[simp] alone closes it, with no lemma named"):
+    // The claim the older test's name makes. `collapse_zero` reaches `simplify`
+    // only through the default set, and only because `Checker` registered it after
+    // proving it.
+    assert(check(collapseSrc("simplify")).isRight,
+      s"@[simp] did not put the lemma in the default set: ${check(collapseSrc("simplify"))}")
+
   test("the file still checks"):
     val js = Main.processSourceJson(source, "t.sroof")
     assert(js.contains("\"ok\":true"), s"the fixture stopped checking:\n$js")
