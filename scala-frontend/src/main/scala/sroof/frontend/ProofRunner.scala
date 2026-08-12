@@ -49,6 +49,14 @@ object ProofRunner:
       // is Var(0), matching the context built above.
       goal       <- CoreTranslator.translateProp(
                       theorem.goal, allParams.reverse.map(_.id), tenv, theorem.name)
+      // The closed proposition, built before anything tries to prove it: a proof
+      // of a statement that is not a proposition would mean nothing, and the
+      // message for it should name that, not whatever the tactic engine hits
+      // first while evaluating an ill-typed term.
+      fullProp    = allParams.zip(paramTpes).foldRight(goal) { case ((p, t), cod) =>
+                      Term.Pi(p.name, t, cod)
+                    }
+      _          <- wellFormedProp(fullProp, theorem)
       script     <- buildTactic(theorem.tactic, tenv, theorem.name, env)
       candidate  <- TacticM.prove(ctx, goal)(script).left.map { err =>
                       FrontendError.tacticError(theorem.name,
@@ -59,14 +67,59 @@ object ProofRunner:
       fullProof   = allParams.zip(paramTpes).foldRight(candidate) { case ((p, t), body) =>
                       Term.Lam(p.name, t, body)
                     }
-      fullProp    = allParams.zip(paramTpes).foldRight(goal) { case ((p, t), cod) =>
-                      Term.Pi(p.name, t, cod)
-                    }
       _          <- Kernel.verify(Context.empty, fullProof, fullProp).left.map { err =>
                       FrontendError.kernelError(theorem.name,
                         s"kernel rejected the generated proof: ${err.message}", theorem.span)
                     }
     yield VerifiedTheorem(theorem.name, DefEntry(theorem.name, fullProp, fullProof), theorem.isSimp)
+
+  /** Check that a theorem's statement is a type before anyone proves it.
+   *
+   *  Nothing did this.  The kernel is asked whether the generated term has the
+   *  claimed type; it is never asked whether the claim *is* a type, and the claim
+   *  is produced by `CoreTranslator.translateProp`, which is inside the trust
+   *  boundary.
+   *
+   *  Two details make that gap reachable rather than theoretical.
+   *  `translateProp` discards the declared type and emits the **2-argument** `Eq`
+   *  form, whose type slot is `Meta(-1)`; and `Kernel.check`'s `refl` case
+   *  returns success on a `Meta` slot without checking the term has a type at
+   *  all, on the recorded assumption that the caller already checked it.  For
+   *  this caller the assumption did not hold, so a module could export a
+   *  "verified theorem" whose statement was not a proposition — and later proofs
+   *  cite verified theorems as lemmas.
+   */
+  private def wellFormedProp(
+    prop:    Term,
+    theorem: ResolvedTheorem,
+  )(using GlobalEnv): Either[FrontendError, Unit] =
+    import sroof.checker.{Bidirectional, TypeError}
+
+    // `inferUniverse` answers `Right(0)` for an applied `Eq` **without looking at
+    // the arguments** — the shape alone is taken as evidence. So asking it here
+    // would accept exactly the statements this is meant to reject. What makes
+    // `Eq A a b` a proposition is that both sides are typeable at one type, so
+    // that is what gets checked: infer the left, check the right against it.
+    def go(ctx: Context, t: Term): Either[TypeError, Unit] = t match
+      case Term.Pi(name, dom, cod) =>
+        for
+          _ <- Bidirectional.inferUniverse(ctx, dom)
+          _ <- go(ctx.extend(name, dom), cod)
+        yield ()
+      case _ =>
+        sroof.tactic.Eq.extract(t) match
+          case Some((_, lhs, rhs)) =>
+            for
+              tpe <- Bidirectional.infer(ctx, lhs)
+              _   <- Bidirectional.check(ctx, rhs, tpe)
+            yield ()
+          case None =>
+            Bidirectional.inferUniverse(ctx, t).map(_ => ())
+
+    go(Context.empty, prop).left.map { err =>
+      FrontendError.theoremError(theorem.name,
+        s"statement is not a proposition: ${err.getMessage}", theorem.span)
+    }
 
   /** Build the `TacticM` script for a resolved tactic. */
   private def buildTactic(

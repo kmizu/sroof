@@ -111,6 +111,27 @@ The same holds for `@theorem` proofs on the Scala path, via
 `Kernel.verify` in `frontend.ProofRunner`. The Scala path has no `sorry`, no
 warning-only mode, and no path that accepts a theorem without the kernel.
 
+**The kernel answers one question, and it is narrower than it looks.** It is asked
+whether a term has a claimed type. It is not asked whether the claim *is* a type,
+and it is not asked about anything the caller did not hand it. Two consequences
+were live defects until v0.28:
+
+- A **definition** on the Scala path was never checked against its declared type.
+  `CoreTranslator` produced the body and then trusted itself, and it is inside the
+  TCB, so an ill-typed body had no one left to catch it. The `.sroof` path had
+  closed this in v0.14 (`Checker.checkDefBodies`); `ModuleVerifier.verifyDefBody`
+  is the same check on the other path.
+- A **theorem statement** was never checked to be a proposition. `translateProp`
+  emits the 2-argument `Eq` form, and `Bidirectional.inferUniverse` answers
+  `Right(0)` for an applied `Eq` *without inspecting the arguments* — the shape
+  alone is taken as evidence. `Kernel.check`'s `refl` case then skips the type
+  check on that form, recording the assumption that the caller already made it.
+  `ProofRunner.wellFormedProp` now makes it: infer the left side, check the right
+  against that type.
+
+If you add a caller of `Kernel.verify`, ask what *else* that caller is asserting
+that the kernel is not being shown.
+
 ## Kernel API Contract
 
 Callers must provide:

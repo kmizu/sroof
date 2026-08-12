@@ -1,6 +1,7 @@
 package sroof.frontend
 
-import sroof.core.GlobalEnv
+import sroof.core.{Context, DefEntry, GlobalEnv}
+import sroof.kernel.Kernel
 
 /** Verifies one `@proofModule` end to end.
  *
@@ -30,6 +31,25 @@ object ModuleVerifier:
    *  catch-all branch that yields an empty theorem set on failure.
    */
   def verify(module: ResolvedModule): Either[FrontendError, VerifiedModule] =
+    // The promise above ("returned, never thrown") was not kept. `Eval` throws on
+    // a term it cannot reduce — an unbound index, a match with no branch for the
+    // scrutinee's constructor — and every such term here comes from an ill-typed
+    // core term, which is precisely what a bridge bug produces. On the `.sroof`
+    // path each entry to evaluation is wrapped (`Checker.executeProof`,
+    // `Bidirectional.whnf`, `Kernel.check`); on this path nothing was, so the
+    // exception left `verify` and reached the compiler as a crash with no source
+    // position instead of an error on the offending theorem.
+    //
+    // Rejection-safe by construction: the handler produces a `Left`, so an
+    // exception can only lose a proof, never manufacture one.
+    try verifyUnguarded(module)
+    catch
+      case scala.util.control.NonFatal(e) =>
+        Left(FrontendError.moduleError(FrontendStage.KernelVerification,
+          s"verification of '${module.name}' failed while evaluating a term: " +
+          s"${Option(e.getMessage).getOrElse(e.getClass.getName)}", module.span))
+
+  private def verifyUnguarded(module: ResolvedModule): Either[FrontendError, VerifiedModule] =
     for
       indDefs <- module.inductives.foldLeft[Either[FrontendError, List[sroof.core.IndDef]]](Right(Nil)) {
                    (acc, ind) =>
@@ -48,6 +68,7 @@ object ModuleVerifier:
                         state <- acc
                         (tenv, env) = state
                         entry <- CoreTranslator.translateDef(rd, tenv)
+                        _     <- verifyDefBody(entry, rd.name, rd.span)(using env)
                       yield (tenv.copy(defs = tenv.defs + (rd.id -> entry)), env.addDef(entry))
                     }
       (tenv, envWithDefs) = translated
@@ -66,3 +87,30 @@ object ModuleVerifier:
                     }
       (finalEnv, theorems) = proved
     yield VerifiedModule(module.name, finalEnv, theorems)
+
+  /** Put a translated definition's body through the kernel, against its own
+   *  declared type.
+   *
+   *  Nothing else does this.  `translateDef` checks termination and then trusts
+   *  itself: the body is produced by `CoreTranslator`, which is *inside* the
+   *  trust boundary, so a mistranslation that yields an ill-typed core term had
+   *  no one to catch it.  The Scala typer does not help here — it checks the
+   *  Scala program, and the question is whether the core term still means the
+   *  same thing.  The `.sroof` frontend closed this exact gap in v0.14
+   *  (`Checker.checkDefBodies`); this is the second frontend saying the same
+   *  thing, so a definition cannot say one thing and mean another on either
+   *  path.
+   *
+   *  Calls to other definitions are inlined (core `Term` has no
+   *  global-reference node), so the body is closed and `Context.empty` is the
+   *  right context.  The environment carries the inductives it mentions.
+   */
+  private def verifyDefBody(
+    entry: DefEntry,
+    name:  String,
+    span:  SourceSpan,
+  )(using GlobalEnv): Either[FrontendError, Unit] =
+    Kernel.verify(Context.empty, entry.body, entry.tpe).left.map { err =>
+      FrontendError.kernelError(name,
+        s"definition does not match its declared type: ${err.message}", span)
+    }

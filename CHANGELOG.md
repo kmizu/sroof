@@ -5,6 +5,56 @@ All release detail lives here. Earlier releases also had per-version
 favour of this one file. The long-form notes for v0.3–v0.9 remain published on
 the [GitHub releases page](https://github.com/kmizu/sroof/releases).
 
+## [0.28.0] - 2026-08-12
+
+Three defects on the Scala 3 frontend, all of the same shape: the kernel was asked
+one question and the answer was read as though it covered more.
+
+### Fixed
+- **A definition was never checked against its declared type.**
+  `CoreTranslator.translateDef` checked termination and then trusted itself — and it
+  is *inside* the trust boundary, being the component that decides what core term a
+  Scala definition is about, so an ill-typed body had no one left to catch it. The
+  Scala typer does not help here: it checks the Scala program, and the open question
+  is whether the core term still says the same thing. The `.sroof` path closed this
+  in v0.14 (`Checker.checkDefBodies`); the newer path never grew the equivalent.
+  `ModuleVerifier.verifyDefBody` now puts every translated body through the kernel.
+- **A theorem's statement was never checked to be a proposition.**
+  `ProofRunner` asked the kernel whether the generated term had the claimed type; it
+  never asked whether the claim *was* a type. Two details made that reachable rather
+  than theoretical: `translateProp` discards the declared type and emits the
+  2-argument `Eq` form, and `Kernel.check`'s `refl` case returns success on that
+  form's `Meta` type slot without checking the term has a type at all — on the
+  recorded assumption that "a was already type-checked by the bidirectional
+  checker", which for this caller was not true. So a module could export a verified
+  theorem whose statement was not a proposition, and later proofs cite verified
+  theorems as lemmas.
+  Note `Bidirectional.inferUniverse` is *not* the check to use here: it answers
+  `Right(0)` for an applied `Eq` without inspecting the arguments, so it accepts
+  exactly what needed rejecting. `wellFormedProp` infers the left side and checks
+  the right against that type.
+- **An unreducible term crashed the compiler instead of failing the proof.**
+  `ModuleVerifier.verify` documented that errors are "returned, never thrown". They
+  were not. `Eval` throws on a term it cannot reduce, and every such term at this
+  layer comes from an ill-typed core term — precisely what a bridge bug produces. On
+  the `.sroof` path every entry to evaluation is wrapped; on this path nothing was,
+  so the exception left `verify` and reached dotc as a crash with no source position
+  rather than an error on the offending theorem. The handler produces a `Left`, so it
+  is rejection-safe by construction: an exception can lose a proof, never make one.
+
+### Added
+- `scala-frontend/DefBodySuite`, `PropWellFormedSuite`, `VerifierRobustnessSuite` —
+  seven cases, of which **five fail on the previous tree** and two are controls that
+  pass on both (a well-typed definition, a well-formed statement) so that a fix which
+  rejected everything could not pass for progress. The IR is built by hand, which is
+  what a `TreeExtractor` bug looks like from the verifier's side: a resolved
+  definition or statement whose declared type and whose term disagree.
+
+### Note
+The measurement came first and is worth recording: with the def-body check in place,
+`scalaExamples/compile` and all 97 integration tests still passed. No mistranslation
+is live in the current tree — these close the gap that would have hidden one.
+
 ## [0.27.0] - 2026-08-12
 
 ### Fixed
