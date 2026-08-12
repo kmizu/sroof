@@ -5,6 +5,23 @@ All release detail lives here. Earlier releases also had per-version
 favour of this one file. The long-form notes for v0.3–v0.9 remain published on
 the [GitHub releases page](https://github.com/kmizu/sroof/releases).
 
+## [0.27.0] - 2026-08-12
+
+### Fixed
+- **A diagnostic pointed at the first declaration in the file, whatever the error
+  was.** `rangeFor` ended in a fallback that returned the first non-whitespace
+  character of the source, so an unknown name on line 40 was reported at line 1 —
+  and an editor underlined innocent code with complete confidence. Two things
+  changed: an "unknown ...: x" error now points at `x` where it is written, and when
+  nothing is known the range is `null`, which is what the schema provides for exactly
+  that and is the honest answer.
+
+### Added
+- `cli/DiagnosticRangeSuite`. The existing assertions checked that the `range` *key*
+  was present, which it is even when the value is `null`; nothing checked where it
+  pointed. Two of its four cases fail on the previous tree, including the one that
+  states the property directly: moving the bad line has to move the range.
+
 ## [0.26.0] - 2026-08-12
 
 ### Fixed

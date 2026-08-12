@@ -151,7 +151,12 @@ object Diagnostics:
   ): Option[DiagnosticRange] =
     defspecRange(source, error)
       .orElse(term.flatMap(t => findNeedleRange(source, t)))
-      .orElse(fallbackRange(source))
+      .orElse(unknownNameRange(source, error))
+    // Deliberately no fallback. `fallbackRange` returned the first non-whitespace
+    // character of the file, so an error anywhere in it was reported as an error on
+    // the first declaration and an editor underlined innocent code with complete
+    // confidence. `null` is what the schema provides for "not known", and it is the
+    // honest answer when nothing above matched.
 
   private def defspecRange(source: String, error: String): Option[DiagnosticRange] =
     val nameOpt = DefspecFailurePattern.findFirstMatchIn(error).map(_.group(1))
@@ -166,17 +171,24 @@ object Diagnostics:
       }
     }
 
+  /** The name an "unknown …: x" error is complaining about.
+    *
+    * The elaborator says which name it could not resolve, so the diagnostic can point
+    * at it instead of guessing.
+    */
+  private val UnknownNamePattern = """(?i)unknown[^:]*:\s*([A-Za-z_][A-Za-z0-9_.']*)""".r
+
+  private def unknownNameRange(source: String, error: String): Option[DiagnosticRange] =
+    UnknownNamePattern.findFirstMatchIn(error)
+      .map(_.group(1))
+      .flatMap(name => findNeedleRange(source, name))
+
   private def findNeedleRange(source: String, needle: String): Option[DiagnosticRange] =
     val clean = needle.trim
     if clean.isEmpty || clean.startsWith("#") then None
     else
       val idx = source.indexOf(clean)
       Option.when(idx >= 0)(rangeFromOffsets(source, idx, idx + clean.length))
-
-  private def fallbackRange(source: String): Option[DiagnosticRange] =
-    source.indexWhere(!_.isWhitespace) match
-      case -1 => None
-      case i  => Some(rangeFromOffsets(source, i, i + 1))
 
   private def rangeFromOffsets(source: String, startOffset: Int, endOffsetExclusive: Int): DiagnosticRange =
     DiagnosticRange(
