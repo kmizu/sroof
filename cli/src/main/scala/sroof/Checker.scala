@@ -240,7 +240,23 @@ object Checker:
     case STactic.STry(t)          => countSorryTactic(t)
     case STactic.SAllGoals(t)     => countSorryTactic(t)
     case STactic.SHave(_, _, p, cont) => countSorry(p) + countSorryTactic(cont)
-    case _                        => 0
+    case STactic.SCalc(steps)     => steps.map(s => countSorry(s.proof)).sum
+    case STactic.SObtain(_, _, cont)     => countSorryTactic(cont)
+    case STactic.SSpecialize(_, _, cont) => countSorryTactic(cont)
+    // Enumerated rather than defaulted. The `case _ => 0` this replaces swallowed
+    // three tactics that carry a proof: `obtain` and `specialize` each continue
+    // into another tactic, and `calc` holds a proof per step. A `sorry` in any of
+    // them was counted as zero, so the file reported OK with no warning at all and
+    // `--fail-on-sorry` — whose whole job is to find `sorry` — exited 0. Adding a
+    // tactic now fails to compile here instead of silently reporting no `sorry`.
+    case STactic.STrivial | STactic.STriv | STactic.SRfl | STactic.SSkip |
+         STactic.SAssumption | STactic.SContradiction | STactic.SDecide |
+         STactic.SSplit | STactic.SConstructor | STactic.SLeft | STactic.SRight |
+         STactic.STauto => 0
+    case STactic.SAssume(_) | STactic.SApply(_) | STactic.SExact(_) |
+         STactic.SSimplify(_) | STactic.SSimp(_) | STactic.SRewrite(_) |
+         STactic.SRw(_) | STactic.SUse(_) | STactic.SExists(_) |
+         STactic.SByContra(_) => 0
 
   /** Collect all lemma names referenced in a proof (via simplify, rewrite, etc.). */
   private def collectLemmaRefs(proof: SProof): Set[String] = proof match
@@ -294,7 +310,21 @@ object Checker:
     case STactic.STry(t)              => collectLemmaRefsTactic(t)
     case STactic.SAllGoals(t)         => collectLemmaRefsTactic(t)
     case STactic.SHave(_, _, p, cont) => collectLemmaRefs(p) ++ collectLemmaRefsTactic(cont)
-    case _                            => Set.empty
+    case STactic.SUse(expr)           => collectLemmaRefsExpr(expr)
+    case STactic.SExists(expr)        => collectLemmaRefsExpr(expr)
+    // The hypothesis name is included: it is usually a local, but it resolves
+    // against globals too, so a tainted lemma reached this way should count. Over-
+    // reporting taint is the safe direction; under-reporting is what this fixes.
+    case STactic.SObtain(_, hyp, cont)        =>
+      Set(hyp) ++ collectLemmaRefsTactic(cont)
+    case STactic.SSpecialize(hyp, args, cont) =>
+      Set(hyp) ++ args.flatMap(a => collectLemmaRefsExpr(a)).toSet ++ collectLemmaRefsTactic(cont)
+    // Enumerated, not defaulted — see `countSorryTactic`.
+    case STactic.STrivial | STactic.STriv | STactic.SRfl | STactic.SSkip |
+         STactic.SAssumption | STactic.SContradiction | STactic.SDecide |
+         STactic.SSplit | STactic.SConstructor | STactic.SLeft | STactic.SRight |
+         STactic.STauto => Set.empty
+    case STactic.SAssume(_) | STactic.SSorry | STactic.SByContra(_) => Set.empty
 
   private def defspecNamesInSourceOrder(result: ElabResult): List[String] =
     if result.defspecOrder.isEmpty then

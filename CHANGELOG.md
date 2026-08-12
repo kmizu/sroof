@@ -5,6 +5,41 @@ All release detail lives here. Earlier releases also had per-version
 favour of this one file. The long-form notes for v0.3–v0.9 remain published on
 the [GitHub releases page](https://github.com/kmizu/sroof/releases).
 
+## [0.32.0] - 2026-08-12
+
+### Fixed
+- **`--fail-on-sorry` exited 0 on a file containing `sorry`.** `countSorryTactic`
+  ended in `case _ => 0`, and three tactics that carry a proof fell into it:
+  `obtain` and `specialize` each continue into another tactic, and `calc` holds a
+  proof per step. A `sorry` in any of them counted as zero, so this file printed a
+  plain `OK` with no warning at all, and the flag whose entire job is to find
+  `sorry` reported success:
+
+  ```
+  defspec hidden_sorry(h: Nat -> Nat): Nat.zero = Nat.zero {
+    by specialize h Nat.zero ; sorry
+  }
+  ```
+
+  The count also drives `skipKernel`, so the placeholder stopped behaving like
+  one: with a goal that is not trivially true, the proof went to the kernel and
+  came back as a type mismatch about `(refl zero)` — a term the author never
+  wrote, and no mention of `sorry` anywhere in the message.
+- The same catch-all hid the same three tactics from `collectLemmaRefs`, which is
+  how `sorry`-taint propagates to later defspecs. `use`/`exists` were missing from
+  it too.
+
+### Changed
+- Both traversals now enumerate every `STactic` case; the catch-alls are gone. A
+  tactic added to the surface AST fails to compile here instead of silently
+  reporting no `sorry`. That is the actual fix — the three missing cases were a
+  symptom of a default that made forgetting invisible.
+
+### Added
+- `cli/SorryGateSuite` — four cases, two of which fail on the previous tree
+  (`specialize`, `calc`), plus two controls: a plain `sorry` must still be
+  reported, and a `sorry`-free file must not be.
+
 ## [0.31.0] - 2026-08-12
 
 Closes the question v0.30 left open, and corrects what that entry implied.
