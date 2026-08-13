@@ -104,3 +104,113 @@ class TerminationSuite extends FunSuite:
     )
     val result = TerminationChecker.check(loop)
     assert(result.isLeft, s"Expected Left (rejected), got $result")
+
+  // ---- The guard used to have two holes, and either one proves False ----
+  //
+  // Measured on the previous tree: `sroof check` reported **OK, exit 0** on a
+  // file whose only defspec was `Nat.zero = Nat.succ(Nat.zero)`. See
+  // `cli/TerminationGateSuite`. These are the two shapes underneath.
+
+  test("REJECT: the smaller argument is in a position the match did not take apart"):
+    // fix f. λn. λm. match m { zero => zero; succ(k) => f(k, m) }
+    //
+    // `k` is a subterm of `m`, so the old rule ("some argument is smaller")
+    // accepted it. But the argument that shrank is passed in *n*'s position
+    // while `m` is handed straight back, so the very next match sees the same
+    // `m` and this runs forever. Verified: it reached StackOverflowError.
+    val loop = Term.Fix("f",
+      Term.Pi("n", natTpe, Term.Pi("m", natTpe, natTpe)),
+      Term.Lam("n", natTpe, Term.Lam("m", natTpe,
+        Term.Mat(
+          Term.Var(0), // m
+          List(
+            MatchCase("zero", 0, Term.Con("zero", "Nat", Nil)),
+            MatchCase("succ", 1,  // k = Var(0), m = Var(1), n = Var(2), f = Var(3)
+              Term.App(Term.App(Term.Var(3), Term.Var(0)), Term.Var(1))  // f(k, m)
+            ),
+          ),
+          natTpe,
+        )
+      ))
+    )
+    val result = TerminationChecker.check(loop)
+    assert(result.isLeft, s"a non-terminating function was accepted: $result")
+
+  test("REJECT: the recursive call is in the scrutinee"):
+    // fix f. λn. match f(n) { zero => zero; succ(k) => zero }
+    //
+    // `checkBody` looked only at the branches, so a call with nothing guarding
+    // it went unseen.
+    val loop = Term.Fix("f",
+      Term.Pi("n", natTpe, natTpe),
+      Term.Lam("n", natTpe,
+        Term.Mat(
+          Term.App(Term.Var(1), Term.Var(0)),  // f(n)
+          List(
+            MatchCase("zero", 0, Term.Con("zero", "Nat", Nil)),
+            MatchCase("succ", 1, Term.Con("zero", "Nat", Nil)),
+          ),
+          natTpe,
+        )
+      ))
+    val result = TerminationChecker.check(loop)
+    assert(result.isLeft, s"a recursive call in the scrutinee was accepted: $result")
+
+  test("REJECT: a recursive call in the scrutinee of a match with no cases"):
+    // fix f. λn. match f(n) { }  — the shape that types as `Nat -> Empty`, and
+    // from an `Empty` every proposition follows. There is no branch here, so a
+    // traversal that only walks branches cannot see anything at all.
+    val loop = Term.Fix("f",
+      Term.Pi("n", natTpe, Term.Ind("Empty", Nil, Nil)),
+      Term.Lam("n", natTpe,
+        Term.Mat(Term.App(Term.Var(1), Term.Var(0)), Nil, Term.Ind("Empty", Nil, Nil))
+      ))
+    val result = TerminationChecker.check(loop)
+    assert(result.isLeft, s"the route to a proof of False was accepted: $result")
+
+  test("REJECT: the match takes apart something bound outside the fixpoint"):
+    // A scrutinee that is not one of this function's own parameters gives no
+    // decreasing position, so its constructor variables are not a measure.
+    val loop = Term.Lam("outer", natTpe,
+      Term.Fix("f",
+        Term.Pi("n", natTpe, natTpe),
+        Term.Lam("n", natTpe,
+          Term.Mat(
+            Term.Var(2), // outer
+            List(
+              MatchCase("zero", 0, Term.Con("zero", "Nat", Nil)),
+              // k = Var(0), n = Var(1), f = Var(2), outer = Var(3)
+              MatchCase("succ", 1, Term.App(Term.Var(2), Term.Var(0))),  // f(k)
+            ),
+            natTpe,
+          )
+        )))
+    // `check` only inspects a top-level Fix, so hand it the Fix itself.
+    val fix = loop.asInstanceOf[Term.Lam].body
+    val result = TerminationChecker.check(fix)
+    assert(result.isLeft, s"a measure taken from outside the fixpoint was accepted: $result")
+
+  test("ACCEPT: recursion on the second argument still passes"):
+    // The control. Pinning the decreasing position must not collapse into
+    // "only the first argument may decrease" — this is the `matches(derive(r,c), t)`
+    // shape the checker was written for, and it has to keep working.
+    val f = Term.Fix("f",
+      Term.Pi("r", natTpe, Term.Pi("t", natTpe, natTpe)),
+      Term.Lam("r", natTpe, Term.Lam("t", natTpe,
+        Term.Mat(
+          Term.Var(0), // t
+          List(
+            MatchCase("zero", 0, Term.Var(1)),  // r
+            MatchCase("succ", 1,  // k = Var(0), t = Var(1), r = Var(2), f = Var(3)
+              // f(succ(r), k) — the first argument may even grow
+              Term.App(
+                Term.App(Term.Var(3), Term.Con("succ", "Nat", List(Term.Var(2)))),
+                Term.Var(0))
+            ),
+          ),
+          natTpe,
+        )
+      ))
+    )
+    val result = TerminationChecker.check(f)
+    assert(result.isRight, s"a terminating function was rejected: $result")

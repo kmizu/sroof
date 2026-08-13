@@ -8,13 +8,25 @@ package sroof.core
  *
  *  Algorithm:
  *  1. For Fix(f, tpe, body), the body has Var(0) = f (self-reference).
- *  2. Find all occurrences of f in body.
- *  3. For each recursive call f(a1)(a2)...(an), verify that at least one ai
- *     is a structurally smaller variable, and that all other arguments do not
+ *  2. Walk under the lambdas to the match that takes a parameter apart. **That
+ *     parameter's position is the decreasing one** — call it `p`.
+ *  3. For each recursive call f(a1)(a2)...(an), verify that `a_p` specifically
+ *     is a structurally smaller variable, and that the other arguments do not
  *     contain an unguarded reference to f.
  *
  *  This supports multi-argument functions where any argument may be the
- *  decreasing one (e.g. `matches(derive(r,c), t)` where t, not r, decreases).
+ *  decreasing one (e.g. `matches(derive(r,c), t)` where t, not r, decreases) —
+ *  the match picks it out.
+ *
+ *  Step 3 used to accept a call where *any* argument was smaller, which does not
+ *  imply termination: `def loop(n, m) = match m { case succ(k) => loop(k, m) }`
+ *  passes a subterm of `m` in `n`'s position while `m` itself never shrinks, and
+ *  loops forever. Step 2's scrutinee check is likewise load-bearing: the
+ *  scrutinee was not looked at, so `match loop(n) { ... }` — a recursive call
+ *  with nothing guarding it — was accepted. Either one certifies a
+ *  non-terminating definition, which in a dependent type theory proves False.
+ *  See CHANGELOG v0.35.0.
+ *
  *  This is a simplified version of Coq's guard condition.
  */
 object TerminationChecker:
@@ -40,29 +52,45 @@ object TerminationChecker:
     body match
       // Lambda: the main case. We look for the pattern:
       //   λx. match x { case C(y1..yn) => ...f(yi)... }
-      case Term.Lam(_, _, lamBody) =>
-        // Under this lambda, fixIdx shifts up by 1
-        checkBody(name, fixIdx + 1, lamBody)
+      case Term.Lam(_, tp, lamBody) =>
+        // A parameter type is part of the body too. A signature cannot mention
+        // the function being defined, so this only ever fires on a term the
+        // front end should not have produced — but it costs nothing to say so.
+        if containsFixRef(tp, fixIdx) then
+          Left(s"Termination check failed: '$name' appears in a parameter type")
+        else
+          // Under this lambda, fixIdx shifts up by 1
+          checkBody(name, fixIdx + 1, lamBody)
 
       // Match: binds constructor sub-components as smaller variables
-      case Term.Mat(scrutinee, cases, _) =>
-        // The scrutinee must be a variable for us to track what's "smaller"
-        val scrutIdx = scrutinee match
-          case Term.Var(i) => Some(i)
-          case _           => None
+      case Term.Mat(scrutinee, cases, rt) =>
+        // The scrutinee and the return type are part of the body. A recursive
+        // call in either is unguarded — and a match with no cases has no branch
+        // to catch it, so skipping them accepted `match f(n) { }` outright.
+        if containsFixRef(scrutinee, fixIdx) then
+          Left(s"Termination check failed: '$name' is called in the scrutinee of a match")
+        else if containsFixRef(rt, fixIdx) then
+          Left(s"Termination check failed: '$name' appears in the return type of a match")
+        else
+          // Which parameter is taken apart decides which argument position has
+          // to shrink. `fixIdx` is the number of lambdas walked under, so the
+          // i-th parameter (outermost first) is Var(fixIdx - 1 - i). A scrutinee
+          // bound outside this Fix is nobody's parameter and yields no measure.
+          val decrPos: Option[Int] = scrutinee match
+            case Term.Var(i) if i < fixIdx => Some(fixIdx - 1 - i)
+            case _                         => None
 
-        cases.foldLeft[Either[String, Unit]](Right(())) { (acc, mc) =>
-          acc.flatMap { _ =>
-            // Inside this case branch, fixIdx shifts by mc.bindings
-            val newFixIdx = fixIdx + mc.bindings
-            // The constructor-bound variables (Var(0)..Var(mc.bindings-1))
-            // are structurally smaller than the scrutinee
-            val smallerVars: Set[Int] = scrutIdx match
-              case Some(_) => (0 until mc.bindings).toSet
-              case None    => Set.empty
-            checkGuarded(name, newFixIdx, mc.body, smallerVars)
+          cases.foldLeft[Either[String, Unit]](Right(())) { (acc, mc) =>
+            acc.flatMap { _ =>
+              // Inside this case branch, fixIdx shifts by mc.bindings
+              val newFixIdx = fixIdx + mc.bindings
+              // The constructor-bound variables (Var(0)..Var(mc.bindings-1))
+              // are structurally smaller than the scrutinee
+              val smallerVars: Set[Int] =
+                if decrPos.isDefined then (0 until mc.bindings).toSet else Set.empty
+              checkGuarded(name, newFixIdx, mc.body, smallerVars, decrPos)
+            }
           }
-        }
 
       // If the body is just a reference to f with no lambda wrapping, that's
       // a bare self-reference (non-terminating)
@@ -92,11 +120,15 @@ object TerminationChecker:
    *  `smallerVars` contains the De Bruijn indices (at current depth) of variables
    *  that are structurally smaller than the decreasing argument.
    *
-   *  For a call f(a1)(a2)...(an), we accept if at least one ai is a structurally
-   *  smaller variable and all other arguments don't contain unguarded fix references.
-   *  This supports functions that recurse on any one of their arguments.
+   *  `decrPos` is the argument position the top-level match took apart. For a call
+   *  f(a1)(a2)...(an) we accept only if `a_decrPos` is a structurally smaller
+   *  variable, and the other arguments don't contain unguarded fix references.
+   *  A smaller value in some *other* position is not progress: the scrutinised
+   *  argument would be passed along unchanged and the function would loop.
    */
-  private def checkGuarded(name: String, fixIdx: Int, t: Term, smallerVars: Set[Int]): Either[String, Unit] =
+  private def checkGuarded(
+    name: String, fixIdx: Int, t: Term, smallerVars: Set[Int], decrPos: Option[Int],
+  ): Either[String, Unit] =
     t match
       case Term.Var(i) if i == fixIdx =>
         // Bare reference to f without application — this is a higher-order escape
@@ -106,56 +138,64 @@ object TerminationChecker:
         val (fn, args) = peelArgs(app)
         fn match
           case Term.Var(fIdx) if fIdx == fixIdx =>
-            // Recursive call f(a1)(a2)...(an): at least one ai must be a smaller variable;
-            // all remaining args must not contain unguarded fix references.
-            val smallerIdx = args.indexWhere {
+            // Recursive call f(a1)(a2)...(an): the argument in the decreasing
+            // position must be a smaller variable; the rest must not contain
+            // unguarded fix references.
+            val smallerHere = decrPos.flatMap(args.lift).exists {
               case Term.Var(i) => smallerVars.contains(i)
               case _           => false
             }
-            if smallerIdx < 0 then
-              Left(s"Termination check failed: '$name' is called with a non-structurally-smaller argument")
+            if !smallerHere then
+              decrPos match
+                case Some(p) =>
+                  Left(
+                    s"Termination check failed: '$name' matches on argument ${p + 1}, so the " +
+                    s"recursive call must pass a structurally smaller value in that position"
+                  )
+                case None =>
+                  Left(s"Termination check failed: '$name' is called with a non-structurally-smaller argument")
             else
-              val otherArgs = args.zipWithIndex.filterNot(_._2 == smallerIdx).map(_._1)
+              val otherArgs = args.zipWithIndex.filterNot(_._2 == decrPos.get).map(_._1)
               otherArgs.foldLeft[Either[String, Unit]](Right(())) { (acc, a) =>
-                acc.flatMap(_ => checkGuarded(name, fixIdx, a, smallerVars))
+                acc.flatMap(_ => checkGuarded(name, fixIdx, a, smallerVars, decrPos))
               }
           case _ =>
             // Non-recursive application: check fn and all args
             for
-              _ <- checkGuarded(name, fixIdx, fn, smallerVars)
+              _ <- checkGuarded(name, fixIdx, fn, smallerVars, decrPos)
               _ <- args.foldLeft[Either[String, Unit]](Right(())) { (acc, a) =>
-                     acc.flatMap(_ => checkGuarded(name, fixIdx, a, smallerVars))
+                     acc.flatMap(_ => checkGuarded(name, fixIdx, a, smallerVars, decrPos))
                    }
             yield ()
 
       case Term.Lam(_, tp, body) =>
         for
-          _ <- checkGuarded(name, fixIdx, tp, smallerVars)
-          _ <- checkGuarded(name, fixIdx + 1, body, smallerVars.map(_ + 1))
+          _ <- checkGuarded(name, fixIdx, tp, smallerVars, decrPos)
+          _ <- checkGuarded(name, fixIdx + 1, body, smallerVars.map(_ + 1), decrPos)
         yield ()
 
       case Term.Pi(_, dom, cod) =>
         for
-          _ <- checkGuarded(name, fixIdx, dom, smallerVars)
-          _ <- checkGuarded(name, fixIdx + 1, cod, smallerVars.map(_ + 1))
+          _ <- checkGuarded(name, fixIdx, dom, smallerVars, decrPos)
+          _ <- checkGuarded(name, fixIdx + 1, cod, smallerVars.map(_ + 1), decrPos)
         yield ()
 
       case Term.Let(_, tp, defn, body) =>
         for
-          _ <- checkGuarded(name, fixIdx, tp, smallerVars)
-          _ <- checkGuarded(name, fixIdx, defn, smallerVars)
-          _ <- checkGuarded(name, fixIdx + 1, body, smallerVars.map(_ + 1))
+          _ <- checkGuarded(name, fixIdx, tp, smallerVars, decrPos)
+          _ <- checkGuarded(name, fixIdx, defn, smallerVars, decrPos)
+          _ <- checkGuarded(name, fixIdx + 1, body, smallerVars.map(_ + 1), decrPos)
         yield ()
 
       case Term.Con(_, _, args) =>
         args.foldLeft[Either[String, Unit]](Right(())) { (acc, arg) =>
-          acc.flatMap(_ => checkGuarded(name, fixIdx, arg, smallerVars))
+          acc.flatMap(_ => checkGuarded(name, fixIdx, arg, smallerVars, decrPos))
         }
 
       case Term.Mat(scrut, cases, rt) =>
         for
-          _ <- checkGuarded(name, fixIdx, scrut, smallerVars)
-          _ <- checkGuarded(name, fixIdx, rt, smallerVars)
+          _ <- checkGuarded(name, fixIdx, scrut, smallerVars, decrPos)
+          _ <- checkGuarded(name, fixIdx, rt, smallerVars, decrPos)
           _ <- cases.foldLeft[Either[String, Unit]](Right(())) { (acc, mc) =>
             acc.flatMap { _ =>
               val n = mc.bindings
@@ -166,15 +206,15 @@ object TerminationChecker:
                   (0 until n).toSet
                 case _ => Set.empty[Int]
               val newSmaller = smallerVars.map(_ + n) ++ scrutSmaller
-              checkGuarded(name, newFixIdx, mc.body, newSmaller)
+              checkGuarded(name, newFixIdx, mc.body, newSmaller, decrPos)
             }
           }
         yield ()
 
       case Term.Fix(_, tp, body) =>
         for
-          _ <- checkGuarded(name, fixIdx, tp, smallerVars)
-          _ <- checkGuarded(name, fixIdx + 1, body, smallerVars.map(_ + 1))
+          _ <- checkGuarded(name, fixIdx, tp, smallerVars, decrPos)
+          _ <- checkGuarded(name, fixIdx + 1, body, smallerVars.map(_ + 1), decrPos)
         yield ()
 
       case _ => Right(())  // Var (not fixIdx), Uni, Meta, Ind

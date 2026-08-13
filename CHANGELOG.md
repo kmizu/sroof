@@ -5,6 +5,86 @@ All release detail lives here. Earlier releases also had per-version
 favour of this one file. The long-form notes for v0.3–v0.9 remain published on
 the [GitHub releases page](https://github.com/kmizu/sroof/releases).
 
+## [0.35.0] - 2026-08-13
+
+### Fixed
+- **`sroof check` proved `0 = 1` and printed `OK`.** Not a hang, not a crash, no
+  `sorry`, no warning — a false theorem with a green check on it and exit 0. This
+  file did it on the previous tree:
+
+  ```
+  inductive Nat { case zero: Nat  case succ(n: Nat): Nat }
+  inductive Empty { }
+
+  def toEmpty(n: Nat): Empty {
+    match toEmpty(n) { }
+  }
+
+  defspec zero_is_one: Nat.zero = Nat.succ(Nat.zero) {
+    by exact match toEmpty(Nat.zero) { }
+  }
+  ```
+
+  `TerminationChecker.checkBody` walked a match's *branches* and never looked at
+  its **scrutinee**. So `match toEmpty(n) { }` — a recursive call with nothing
+  guarding it, in a match that has no branches to walk in the first place — was
+  accepted. That types `toEmpty : Nat -> Empty`, and from an `Empty` scrutinee
+  every proposition follows. Nothing diverges along the way: the kernel checks the
+  proof term by *type*, and the term does have that type, so `toEmpty` is never
+  run.
+
+  **The kernel could not have caught this.** `Kernel.verify` answers whether a term
+  has a claimed type, and this one does. Termination is the front end's to enforce,
+  which is exactly why the front end's version of it has to be right. Same lens as
+  v0.28.0: ask what the caller is asserting that the kernel was never shown.
+
+- **The termination guard did not pin *which* argument has to decrease.** It
+  accepted a recursive call if *any* argument was a structurally smaller variable.
+  That does not imply termination:
+
+  ```
+  def loop(n: Nat, m: Nat): Nat {
+    match m {
+      case Nat.zero    => Nat.zero
+      case Nat.succ(k) => loop(k, m)   // k is smaller than m — but it goes in n's slot
+    }
+  }
+  ```
+
+  `m` is handed straight back in the position that was matched on, so the next call
+  takes the same `m` apart and this runs forever. Measured on the previous tree:
+  accepted with `OK`, then `java.lang.StackOverflowError` as soon as a defspec
+  forced it to evaluate — and because `StackOverflowError` is an `Error` rather
+  than `NonFatal`, none of the existing rejection-safe catches saw it.
+
+  The decreasing position is now the position of the parameter the match takes
+  apart, and the recursive call must pass a structurally smaller value **there**.
+  Recursion on any argument still works — the match picks it out, which is what
+  `stdlib/Regex.sroof`'s `matches(derive(r, c), t)` relies on.
+
+- A match on a scrutinee bound **outside** the fixpoint no longer yields a
+  measure; its constructor variables are not subterms of any parameter. A
+  parameter type mentioning the function being defined, and a match whose return
+  type does, are both rejected rather than skipped.
+
+### Added
+- `checker/TerminationSuite` — the four rejections above plus a control: recursion
+  on the *second* argument must still pass, so the fix cannot have collapsed into
+  "only the first parameter may decrease".
+- `cli/TerminationGateSuite` — the `0 = 1` file end-to-end, each hole on its own,
+  and two controls (ordinary recursion, and recursion on the second argument).
+  All three negative tests pass `OK` on the previous tree; that is what makes them
+  worth having.
+
+### Notes
+- Corpus unchanged: 26/26 `.sroof` files still check, `scalaExamples/compile`
+  (plugin-gated) and `scalaIt` still pass. The Scala 3 frontend calls the same
+  checker from `CoreTranslator`, so it had the same hole and gets the same fix.
+- `PositivityChecker` has a related shape — a self-occurrence's own arguments and
+  another inductive's parameters are not traversed — but the `.sroof` parser will
+  not put a function type inside a type application, so it is not reachable from
+  either front end today. Left as recorded, not fixed blind.
+
 ## [0.34.0] - 2026-08-13
 
 ### Fixed

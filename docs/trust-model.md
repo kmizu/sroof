@@ -132,6 +132,28 @@ were live defects until v0.28:
 If you add a caller of `Kernel.verify`, ask what *else* that caller is asserting
 that the kernel is not being shown.
 
+**Termination and positivity are not the kernel's to check, and v0.35 is what that
+costs when the front end gets one wrong.** `Kernel.verify` type-checks a term; it
+does not run it, and it does not re-derive that the definitions the term mentions
+are well-founded. `PositivityChecker` and `TerminationChecker` are called once
+each, from `syntax.Elaborator` and `frontend.CoreTranslator` — the two front ends —
+and nowhere else. So they are as trusted as the kernel is, with none of the
+kernel's re-checking behind them.
+
+Until v0.35, `TerminationChecker.checkBody` walked a match's branches and never
+looked at its scrutinee. `match toEmpty(n) { }` — an unguarded recursive call, in a
+match with no branches to walk — was accepted, which types `toEmpty : Nat -> Empty`
+and makes every proposition provable. `sroof check` reported `OK` on a file whose
+only theorem was `Nat.zero = Nat.succ(Nat.zero)`. The kernel was working correctly
+throughout: the proof term really does have that type. Nothing diverged, because
+nothing ever evaluated `toEmpty`.
+
+The lesson generalises past that one traversal: **a checker outside the kernel gets
+exactly one attempt.** When auditing one, the question is not "is each case right"
+but "which sub-terms does it never visit" — the scrutinee, a return type, a
+parameter's type annotation, the arguments of a self-occurrence. `case _ =>` in
+such a traversal is where the missed ones go to hide.
+
 ## Kernel API Contract
 
 Callers must provide:
