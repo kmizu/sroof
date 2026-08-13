@@ -154,6 +154,18 @@ but "which sub-terms does it never visit" — the scrutinee, a return type, a
 parameter's type annotation, the arguments of a self-occurrence. `case _ =>` in
 such a traversal is where the missed ones go to hide.
 
+Since v0.37 the kernel does enforce one thing here itself: **every `Fix` inside a
+proof term must pass the structural termination guard.** The bidirectional
+checker types `Fix(f, T, body)` with `f : T` assumed, so `Fix("pf", P, Var(0))`
+was a well-typed proof of any `P` by appeal to itself — and `Kernel.verify`
+accepted it (measured). Tactics are untrusted and every induction proof is
+`Fix`-shaped, so without this the arbiter was enforcing nothing about
+well-foundedness of proofs. No route from today's surface syntax to such a term
+is known — but after v0.36, "no known route" is stated as exactly that, and the
+kernel is the one component whose job is to not depend on it. A useful side
+effect: defs are inlined into proof terms, so a non-terminating def reaching a
+proof now gets caught a second time, by the kernel.
+
 v0.36 made the same point about *polarity*, one day later. `PositivityChecker` did
 visit an application's arguments — at the ambient polarity, which is only correct
 when the head uses its parameters covariantly. `Neg(A) { mk(f: A -> Empty) }`

@@ -5,6 +5,49 @@ All release detail lives here. Earlier releases also had per-version
 favour of this one file. The long-form notes for v0.3–v0.9 remain published on
 the [GitHub releases page](https://github.com/kmizu/sroof/releases).
 
+## [0.37.0] - 2026-08-14
+
+### Fixed
+- **The kernel certified `Fix("pf", P, Var(0))` — a proof of any `P` by appeal
+  to itself.** Measured on the previous tree: `Kernel.verify` returned
+  `Right(())` for that term against `Eq zero (succ zero)`, while correctly
+  rejecting an honestly wrong term. The bidirectional checker types
+  `Fix(f, T, body)` with `f : T` assumed in scope, which is sound only if the
+  recursion is well-founded — and types alone cannot see that.
+
+  The trust model says tactics are untrusted and the kernel is the sole
+  arbiter. For every `Fix`-shaped proof — which is every proof by `induction` —
+  that arbiter was enforcing nothing about well-foundedness: the front ends run
+  the termination check on `def` bodies only, and proof terms never passed
+  through it. Any tactic defect (present or future) that emits a circular
+  fixpoint would have been certified.
+
+  No route from today's surface syntax to such a term is *known*: `exact`
+  expressions cannot spell a raw `Fix`, and circular lemma references
+  (`defspec` proved by `simplify` of itself, or two defspecs each citing the
+  other) were measured and are rejected. After v0.36, that claim is stated as
+  what it is — the absence of a known route, not the absence of a route. The
+  kernel is the component whose job is to not depend on that distinction.
+
+  `Kernel.check` now walks the proof term and runs `TerminationChecker` on
+  every `Fix` node it contains — each fixpoint guards its own self-reference,
+  so nested fixpoints get their own check. Rejections surface as
+  `Kernel guard: Termination check failed: …`.
+
+### Added
+- `kernel/KernelSuite` — the self-referential proof, the same `Fix` buried
+  inside a constructor argument (the guard walks the whole term, not the
+  root), and an accept-control in the exact shape the induction tactic emits.
+  Both rejections pass on the previous tree.
+
+### Notes
+- **Zero false negatives measured**: all 741 tests and the 26-file corpus pass
+  with the guard active — every legitimate tactic-generated fixpoint satisfies
+  the position-pinned structural guard from v0.35. Benchmarks are within
+  thresholds (the guard is one linear walk per proof term).
+- This is the kernel's first behavioural change since the hunt began; the TCB
+  grows by one traversal whose failure mode is rejection, never acceptance.
+
 ## [0.36.0] - 2026-08-14
 
 ### Fixed

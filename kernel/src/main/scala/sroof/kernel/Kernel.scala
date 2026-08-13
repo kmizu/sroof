@@ -1,6 +1,6 @@
 package sroof.kernel
 
-import sroof.core.{Term, Context, GlobalEnv}
+import sroof.core.{Term, Context, GlobalEnv, TerminationChecker}
 import sroof.checker.{Bidirectional, TypeError}
 import sroof.eval.{Quote, EnvBuilder}
 import sroof.tactic.Eq
@@ -36,7 +36,70 @@ object Kernel:
    *  Returns Right(()) on success, Left(TypeError) on failure.
    *  Special-cases the Eq/refl encoding used in Phase 2.
    */
+  /** Every `Fix` in an accepted proof must be structurally decreasing.
+   *
+   *  The bidirectional checker types `Fix(f, T, body)` with `f : T` assumed in
+   *  scope — sound only if the recursion is well-founded, which types alone
+   *  cannot see: `Fix("pf", P, Var(0))` is a well-typed "proof" of any `P` by
+   *  appeal to itself, and without this check [[verify]] accepted it (measured;
+   *  see `KernelSuite`). The front ends run the termination check on `def`
+   *  bodies, but proof terms come from the tactic layer, which is *untrusted* —
+   *  so the kernel, as sole arbiter, has to run it here. Nested `Fix` nodes
+   *  each get their own check: `TerminationChecker.check` guards one fixpoint's
+   *  own self-reference, not those of fixpoints inside it.
+   */
+  private def guardFixes(t: Term)(using env: GlobalEnv): Either[TypeError, Unit] = t match
+    case fix @ Term.Fix(_, tp, body) =>
+      TerminationChecker.check(fix) match
+        case Left(msg) => Left(TypeError.Custom(s"Kernel guard: $msg"))
+        case Right(()) =>
+          for
+            _ <- guardFixes(tp)
+            _ <- guardFixes(body)
+          yield ()
+    case Term.App(fn, arg) =>
+      for
+        _ <- guardFixes(fn)
+        _ <- guardFixes(arg)
+      yield ()
+    case Term.Lam(_, tp, body) =>
+      for
+        _ <- guardFixes(tp)
+        _ <- guardFixes(body)
+      yield ()
+    case Term.Pi(_, dom, cod) =>
+      for
+        _ <- guardFixes(dom)
+        _ <- guardFixes(cod)
+      yield ()
+    case Term.Let(_, tp, defn, body) =>
+      for
+        _ <- guardFixes(tp)
+        _ <- guardFixes(defn)
+        _ <- guardFixes(body)
+      yield ()
+    case Term.Con(_, _, args) =>
+      args.foldLeft[Either[TypeError, Unit]](Right(())) { (acc, a) =>
+        acc.flatMap(_ => guardFixes(a))
+      }
+    case Term.Mat(s, cases, rt) =>
+      for
+        _ <- guardFixes(s)
+        _ <- guardFixes(rt)
+        _ <- cases.foldLeft[Either[TypeError, Unit]](Right(())) { (acc, c) =>
+               acc.flatMap(_ => guardFixes(c.body))
+             }
+      yield ()
+    case Term.Var(_) | Term.Uni(_) | Term.Ind(_, _, _) | Term.Meta(_) =>
+      Right(())
+
   def check(ctx: Context, proof: Term, claimedType: Term)(using env: GlobalEnv): Either[TypeError, Unit] =
+    for
+      _ <- guardFixes(proof)
+      _ <- checkTyped(ctx, proof, claimedType)
+    yield ()
+
+  private def checkTyped(ctx: Context, proof: Term, claimedType: Term)(using env: GlobalEnv): Either[TypeError, Unit] =
     // Special case: refl(a) must have type Eq T a a.
     // We do NOT whnf the claimed type here because our NbE evaluation of Ind("Eq",...)
     // loses the constructor name — use the raw syntactic structure of claimedType instead.

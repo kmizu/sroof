@@ -111,3 +111,53 @@ class KernelSuite extends FunSuite:
     // Claim it proves Eq Type1 Type0 Type1 (false)
     val falseTpe = Eq.mkType(Term.Uni(1), Term.Uni(0), Term.Uni(1))
     assert(Kernel.check(empty, Term.Uni(0), falseTpe).isLeft)
+
+  // --- the guard on Fix (v0.37) ---
+  //
+  // The bidirectional checker types `Fix(f, T, body)` with `f : T` assumed in
+  // scope. Types alone cannot see whether the recursion is well-founded, so
+  // without a guard the kernel certified `Fix("pf", P, Var(0))` — a proof of
+  // any P by appeal to itself (measured: Right(()) on the previous tree).
+  // Tactics are untrusted; if the kernel is the sole arbiter, the arbiter has
+  // to check this.
+
+  test("REJECT: a proof of P by appeal to itself"):
+    given sroof.core.GlobalEnv = sroof.core.GlobalEnv.withNat
+    val zero = Term.Con("zero", "Nat", Nil)
+    val one  = Term.Con("succ", "Nat", List(zero))
+    val prop = Term.App(Term.App(Term.Ind("Eq", Nil, Nil), zero), one)
+    val circular = Term.Fix("pf", prop, Term.Var(0))
+    val result = Kernel.verify(empty, circular, prop)
+    assert(result.isLeft, s"a circular proof of 0 = 1 was certified: $result")
+
+  test("REJECT: the circular Fix is buried inside the proof term"):
+    // The guard has to walk the whole term, not just look at the root.
+    given sroof.core.GlobalEnv = sroof.core.GlobalEnv.withNat
+    val natTpe = Term.Ind("Nat", Nil, Nil)
+    val zero   = Term.Con("zero", "Nat", Nil)
+    // succ(fix pf: Nat. pf) : Nat — the unguarded Fix rides inside a Con arg.
+    val buried = Term.Con("succ", "Nat", List(Term.Fix("pf", natTpe, Term.Var(0))))
+    val result = Kernel.verify(empty, buried, natTpe)
+    assert(result.isLeft, s"a buried circular Fix was certified: $result")
+
+  test("ACCEPT: a structurally decreasing Fix still verifies"):
+    // The control, in the exact shape the induction tactic emits:
+    // fix f. λn. match n { zero => zero; succ(k) => f(k) } : Nat -> Nat.
+    // The 738-test suite and the 26-file corpus are the broad control; this
+    // pins one instance next to the rejections.
+    given sroof.core.GlobalEnv = sroof.core.GlobalEnv.withNat
+    val natTpe = Term.Ind("Nat", Nil, Nil)
+    val fn = Term.Fix("f",
+      Term.Pi("n", natTpe, natTpe),
+      Term.Lam("n", natTpe,
+        Term.Mat(
+          Term.Var(0),
+          List(
+            MatchCase("zero", 0, Term.Con("zero", "Nat", Nil)),
+            MatchCase("succ", 1, Term.App(Term.Var(2), Term.Var(0))),
+          ),
+          natTpe,
+        )
+      ))
+    val result = Kernel.verify(empty, fn, Term.Pi("n", natTpe, natTpe))
+    assert(result.isRight, s"a legitimate structural recursion was rejected: $result")
