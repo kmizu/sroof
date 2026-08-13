@@ -51,14 +51,17 @@ object ModuleVerifier:
 
   private def verifyUnguarded(module: ResolvedModule): Either[FrontendError, VerifiedModule] =
     for
-      indDefs <- module.inductives.foldLeft[Either[FrontendError, List[sroof.core.IndDef]]](Right(Nil)) {
-                   (acc, ind) =>
-                     for
-                       done <- acc
-                       d    <- CoreTranslator.translateInductive(ind)
-                     yield done :+ d
-                 }
-      envWithInds = indDefs.foldLeft(GlobalEnv.empty)(_.addInd(_))
+      // The environment grows as inductives are translated, in declaration
+      // order: the positivity check for inductive k needs the constructors of
+      // the inductives it nests inside, which must therefore come before it.
+      envWithInds <- module.inductives.foldLeft[Either[FrontendError, GlobalEnv]](
+                       Right(GlobalEnv.empty)
+                     ) { (acc, ind) =>
+                       for
+                         genv <- acc
+                         d    <- CoreTranslator.translateInductive(ind)(using genv)
+                       yield genv.addInd(d)
+                     }
       tenv0       = CoreTranslator.TranslationEnv(module)
       ordered    <- CoreTranslator.orderDefinitions(module)
       translated <- ordered.foldLeft[Either[FrontendError, (CoreTranslator.TranslationEnv, GlobalEnv)]](

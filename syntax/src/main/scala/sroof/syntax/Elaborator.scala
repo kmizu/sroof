@@ -72,7 +72,7 @@ object Elaborator:
           if env.lookupInd(name).isDefined then
             return Left(ElabError(s"Duplicate inductive type: $name"))
           val indDef = elabInductive(name, params, ctors, indices, env)
-          PositivityChecker.check(name, indDef.ctors) match
+          PositivityChecker.check(name, indDef.ctors)(using env) match
             case Left(err) => return Left(ElabError(err))
             case Right(()) => ()
           env = env.addInd(indDef)

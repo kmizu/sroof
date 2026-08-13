@@ -154,6 +154,17 @@ but "which sub-terms does it never visit" — the scrutinee, a return type, a
 parameter's type annotation, the arguments of a self-occurrence. `case _ =>` in
 such a traversal is where the missed ones go to hide.
 
+v0.36 made the same point about *polarity*, one day later. `PositivityChecker` did
+visit an application's arguments — at the ambient polarity, which is only correct
+when the head uses its parameters covariantly. `Neg(A) { mk(f: A -> Empty) }`
+turns `Neg(Bad)` into a function out of `Bad` with no arrow at the occurrence, and
+`sroof check` again certified `0 = 1` — this time with the termination checker
+*correctly* silent, because the recursion rides in the data. v0.35 had recorded
+this hole as unreachable ("the parser will not put an arrow inside a type
+application") — an argument about one spelling, not about the semantics, and it
+did not have a measurement behind it. Reachability claims about a soundness gate
+get measured, not argued.
+
 ## Kernel API Contract
 
 Callers must provide:

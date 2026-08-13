@@ -78,7 +78,7 @@ object CoreTranslator:
    *  Runs the existing strict-positivity check: an enum that Scala accepts can
    *  still be logically unsound as an inductive definition.
    */
-  def translateInductive(ind: ResolvedInductive): Either[FrontendError, IndDef] =
+  def translateInductive(ind: ResolvedInductive)(using GlobalEnv): Either[FrontendError, IndDef] =
     val m = ind.typeParams.length
 
     // Constructor field types follow the *progressive* De Bruijn convention that

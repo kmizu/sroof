@@ -56,7 +56,7 @@ class CoreTranslatorSuite extends FunSuite:
   }
 
   test("the translated plus type-checks against its own declared type") {
-    val ind = CoreTranslator.translateInductive(NatFixture.natInd).fold(e => fail(e.render), identity)
+    val ind = CoreTranslator.translateInductive(NatFixture.natInd)(using GlobalEnv.empty).fold(e => fail(e.render), identity)
     given GlobalEnv = GlobalEnv.empty.addInd(ind)
     val entry = CoreTranslator.translateDef(NatFixture.plusDef, tenv)
       .fold(e => fail(e.render), identity)
@@ -66,7 +66,7 @@ class CoreTranslatorSuite extends FunSuite:
   }
 
   test("core plus agrees with Scala plus on small values (differential check)") {
-    val ind = CoreTranslator.translateInductive(NatFixture.natInd).fold(e => fail(e.render), identity)
+    val ind = CoreTranslator.translateInductive(NatFixture.natInd)(using GlobalEnv.empty).fold(e => fail(e.render), identity)
     given GlobalEnv = GlobalEnv.empty.addInd(ind)
     val entry = CoreTranslator.translateDef(NatFixture.plusDef, tenv)
       .fold(e => fail(e.render), identity)

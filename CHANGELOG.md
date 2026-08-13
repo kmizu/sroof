@@ -5,6 +5,76 @@ All release detail lives here. Earlier releases also had per-version
 favour of this one file. The long-form notes for v0.3–v0.9 remain published on
 the [GitHub releases page](https://github.com/kmizu/sroof/releases).
 
+## [0.36.0] - 2026-08-14
+
+### Fixed
+- **`sroof check` proved `0 = 1` a second way — through the positivity checker.**
+  v0.35 recorded the `PositivityChecker` gap as unreachable because the `.sroof`
+  grammar will not put a function type inside a type application. That was the
+  wrong conclusion from the right observation: the parser only blocks the arrow's
+  *direct* spelling. Wrap the negativity in another inductive and no arrow
+  appears at the occurrence:
+
+  ```
+  inductive Neg(A: Type) {
+    case mk(f: A -> Empty): Neg(A)
+  }
+  inductive Bad {
+    case mk(w: Neg(Bad)): Bad
+  }
+  ```
+
+  Applied types are `App` spines, and `checkPolarity` traversed an application's
+  arguments **at the ambient polarity** — so `Bad` inside `Neg(Bad)` counted as a
+  positive occurrence, even though `Neg` puts its parameter to the left of an
+  arrow. From the accepted `Bad`, the Curry-style construction (`notBad(b) =
+  match b … f(b)`; `bad = Bad.mk(Neg.mk(notBad))`) proves `Empty` with **no
+  recursion at the term level** — the termination checker is correctly silent,
+  because the recursion rides in the data, which is precisely what strict
+  positivity exists to forbid. Measured on the previous tree: a file whose only
+  defspec was `Nat.zero = Nat.succ(Nat.zero)` printed `OK … 1 defspec(s)`, exit 0.
+
+  The rule now: an occurrence of the type being defined inside an argument of an
+  applied inductive `D` requires (a) the ambient position to be positive, (b) the
+  occurrence to be strictly positive *within* that argument, and (c) `D` to use
+  that parameter strictly positively in all of its constructors — checked
+  recursively through nested inductives (a negative use two levels deep is still
+  a negative use), with a seen-set so self-nestings like `List(A)`'s tail
+  terminate. A cycle without a violation is fine: a genuine violation is a
+  finite path ending at an arrow, flagged before any cycle closes.
+
+  Conservative edges, stated rather than implied: an occurrence in an **index**
+  argument is rejected outright; so is one inside an inductive that cannot be
+  looked up (including the type being defined nesting in its *own* parameters —
+  its constructors are not in the environment yet). `Eq` is a built-in absent
+  from the environment and is allowed explicitly: `refl` carries no fields, so
+  its parameters are trivially strictly positive.
+
+  `PositivityChecker.check` now takes `(using GlobalEnv)` — it needs other
+  inductives' constructors. On the Scala path, `ModuleVerifier` now grows the
+  environment *through* the inductive fold (declaration order), instead of
+  building it only after every inductive was already translated; the same hole
+  existed there via the shared checker.
+
+### Added
+- `checker/PositivitySuite` — nested-occurrence cases: negative one level deep,
+  negative **two** levels deep (`Fwd(A) { mk(x: Neg(A)) }`), benign nesting
+  through a positive parameter, the seen-set cycle, the unknown-inductive and
+  index-argument conservative rejections, and the `Eq` allowance.
+- `cli/PositivityGateSuite` — the `0 = 1` file end-to-end, the declaration alone,
+  and a control: rose-tree-style nesting (`Tree { node(w: Wrap(Tree)) }`) still
+  checks and still proves things. Both negative tests pass `OK` on the previous
+  tree.
+
+### Notes
+- Corpus unchanged: 26/26 `.sroof` files, 738 tests, `scalaExamples`/`scalaIt`
+  green, benchmarks within thresholds.
+- The v0.35 "recorded, not fixed blind" note on `PositivityChecker` is hereby
+  corrected: the hole was reachable, and is now fixed. The reachability argument
+  ("the parser will not accept it") was about one spelling, not about the
+  semantics — an argument of that shape needs a measurement behind it, and this
+  one did not have it.
+
 ## [0.35.0] - 2026-08-13
 
 ### Fixed
