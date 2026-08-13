@@ -5,6 +5,34 @@ All release detail lives here. Earlier releases also had per-version
 favour of this one file. The long-form notes for v0.3–v0.9 remain published on
 the [GitHub releases page](https://github.com/kmizu/sroof/releases).
 
+## [0.33.0] - 2026-08-13
+
+### Fixed
+- **`sroof agent` overwrote the file it was given.** The output path was
+  `filePath.replaceAll("\\.sroof$", ".repaired.sroof")`, which is the *identity*
+  on any name not ending in `.sroof`. So `sroof agent proof.txt` wrote the repaired
+  source over `proof.txt` — while printing
+
+  > Repaired file written to: proof.txt
+
+  which reads like a separate output. The original was gone, with no backup and
+  nothing to undo it. Nothing restricts the command to `.sroof` names, so reaching
+  this needed only a file called `proof.txt`, `nat.sroof.bak`, or a path with no
+  extension at all. Observed directly, before and after: the input file's contents
+  changed on the previous tree and are untouched now.
+
+  `repairedPathFor` shortens the stem for a `.sroof` name and appends otherwise, so
+  its result is never its argument, and running the command twice produces a second
+  file rather than clobbering the first. The write is additionally guarded — the
+  cost of being wrong here is the user's source file, so it is checked rather than
+  reasoned about.
+
+### Added
+- `cli/RepairedPathSuite` — the three name shapes plus the property itself, that
+  the output path is never the input path, over the names that make a suffix rule
+  tempting to get wrong (`.sroof`, `nat.sroof.bak`, `a.repaired.sroof`, `sroof`,
+  `x.SROOF`).
+
 ## [0.32.0] - 2026-08-12
 
 ### Fixed

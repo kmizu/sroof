@@ -2,7 +2,7 @@
   "name": "vscode-sroof",
   "displayName": "sroof",
   "description": "Language support for the sroof theorem prover",
-  "version": "0.32.0",
+  "version": "0.33.0",
   "publisher": "sroof",
   "repository": {
     "type": "git",

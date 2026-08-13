@@ -180,16 +180,41 @@ object Main:
             allSolved = false
       }
       if allSolved then
-        val repaired  = FileRepairer.repair(source, filePath)
-        val outPath   = filePath.replaceAll("\\.sroof$", ".repaired.sroof")
-        java.nio.file.Files.writeString(java.nio.file.Paths.get(outPath), repaired)
-        println(s"  Repaired file written to: $outPath")
+        writeRepaired(source, filePath, "Repaired")
       else
         println("  Partial repair — some proofs remain as sorry.")
-        val repaired = FileRepairer.repair(source, filePath)
-        val outPath  = filePath.replaceAll("\\.sroof$", ".repaired.sroof")
-        java.nio.file.Files.writeString(java.nio.file.Paths.get(outPath), repaired)
-        println(s"  Partial repaired file written to: $outPath")
+        writeRepaired(source, filePath, "Partial repaired")
+
+  /** Where `sroof agent` puts its output.
+    *
+    * This used to be `filePath.replaceAll("\\.sroof$", ".repaired.sroof")`, which
+    * is the identity on any name not ending in `.sroof` — so `sroof agent
+    * proof.txt` **overwrote the input file** while printing "Repaired file written
+    * to: proof.txt", as though it were a separate output. The original was gone,
+    * with no backup and nothing to undo it. Nothing restricts the command to
+    * `.sroof` names, so this needed only a file called `proof.txt`, `nat.sroof.bak`,
+    * or a path with no extension at all.
+    *
+    * The result is never equal to the input: the `.sroof` branch always shortens
+    * the stem before appending, and the other branch always appends. Running the
+    * command twice therefore produces a second file rather than clobbering the
+    * first.
+    */
+  private[sroof] def repairedPathFor(filePath: String): String =
+    if filePath.endsWith(".sroof") then s"${filePath.stripSuffix(".sroof")}.repaired.sroof"
+    else s"$filePath.repaired.sroof"
+
+  private def writeRepaired(source: String, filePath: String, label: String): Unit =
+    val repaired = sroof.agent.FileRepairer.repair(source, filePath)
+    val outPath  = repairedPathFor(filePath)
+    // Belt and braces: `repairedPathFor` cannot return its argument, but the cost
+    // of being wrong here is the user's source file, so it is checked rather than
+    // reasoned about.
+    if outPath == filePath then
+      System.err.println(s"Error: refusing to overwrite the input file: $filePath")
+    else
+      java.nio.file.Files.writeString(java.nio.file.Paths.get(outPath), repaired)
+      println(s"  $label file written to: $outPath")
 
   // ---- Check --json command ----
 
