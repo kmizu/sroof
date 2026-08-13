@@ -5,6 +5,31 @@ All release detail lives here. Earlier releases also had per-version
 favour of this one file. The long-form notes for v0.3–v0.9 remain published on
 the [GitHub releases page](https://github.com/kmizu/sroof/releases).
 
+## [0.34.0] - 2026-08-13
+
+### Fixed
+- **`sroof extract --output <the input file>` destroyed the proof source and
+  reported success.** The path is the user's to choose, so overwriting it is
+  normally their call — except when it is the file just read. Extraction emits
+  Scala, so the result is not a `.sroof` file and cannot be re-checked or
+  re-extracted: the source is gone with nothing to recover it from, and a typo is
+  enough. Measured on the previous tree: the `.sroof` file came back containing
+  `enum Nat:`, and the command exited **0**.
+
+  The guard compares canonicalised paths, so `./nat.sroof`, `nat.sroof`, and a path
+  through `..` or a symlink all count as the same file; a string comparison misses
+  every one of those. Canonicalisation touches the filesystem and can fail, so it
+  falls back to absolute paths rather than throwing — a guard that took the command
+  down with it would be its own defect.
+
+  Same family as v0.33.0's `sroof agent` overwrite. Both file-writing paths in the
+  CLI have now been enumerated and checked; those two are all there are.
+
+### Added
+- `cli/OverwriteGuardSuite` — the aliasing cases that a string comparison misses,
+  a control (a genuinely different path must not be blocked), and the
+  cannot-canonicalise fallback.
+
 ## [0.33.0] - 2026-08-13
 
 ### Fixed

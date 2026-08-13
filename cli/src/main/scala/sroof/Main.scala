@@ -200,6 +200,21 @@ object Main:
     * command twice therefore produces a second file rather than clobbering the
     * first.
     */
+  /** Does an `--output` path name the very file being read?
+    *
+    * Compared after canonicalisation, so `./nat.sroof`, `nat.sroof`, and a path
+    * through a symlink or `..` all count as the same file — a string comparison
+    * would miss every one of those. Canonicalisation touches the filesystem and
+    * can fail; on failure the absolute paths are compared instead, which is
+    * weaker but never worse than the string form.
+    */
+  private[sroof] def wouldOverwriteInput(input: String, output: String): Boolean =
+    def key(p: String): String =
+      val f = java.io.File(p)
+      try f.getCanonicalPath
+      catch case scala.util.control.NonFatal(_) => f.getAbsolutePath
+    key(input) == key(output)
+
   private[sroof] def repairedPathFor(filePath: String): String =
     if filePath.endsWith(".sroof") then s"${filePath.stripSuffix(".sroof")}.repaired.sroof"
     else s"$filePath.repaired.sroof"
@@ -288,6 +303,14 @@ object Main:
         val scala = Extractor.extractProgram(env)
         output match
           case None       => println(scala)
+          case Some(path) if wouldOverwriteInput(filePath, path) =>
+            // The user named this path, so overwriting it is their call — except
+            // when it is the file just read. Extraction emits Scala, so the result
+            // is not a `.sroof` file and cannot be re-checked or re-extracted: the
+            // proof source would be gone with nothing to recover it from. A typo
+            // is enough (`--output nat.sroof`), and the loss is total.
+            System.err.println(s"Error: --output would overwrite the input file: $filePath")
+            sys.exit(1)
           case Some(path) =>
             val f = java.io.File(path)
             Option(f.getParentFile).foreach(_.mkdirs())
